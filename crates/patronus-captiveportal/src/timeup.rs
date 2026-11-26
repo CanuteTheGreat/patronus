@@ -1,7 +1,7 @@
 //! "Time's up" and grace-warning pages for parental time limits.
 //!
-//! Unlike the guest portal in [`crate::portal`] (in-memory state, started
-//! from the CLI), this part reads the config store: the enforcement ticker in
+//! Unlike the captive portal (`crate::engine`: sign-in sessions), this part
+//! only reads the config store: the enforcement ticker in
 //! `patronus_firewall::seg_time` writes one row per limited device into
 //! `seg_time_state`, and the plain-HTTP requests of blocked devices (and, for
 //! a short while, of devices in their grace period) are redirected to this

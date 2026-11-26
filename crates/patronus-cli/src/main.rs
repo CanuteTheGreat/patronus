@@ -232,7 +232,7 @@ enum Commands {
         action: FirewallCommands,
     },
 
-    /// Guest WiFi captive portal
+    /// Captive portal: signed-in sessions, disconnects, voucher codes
     CaptivePortal {
         #[command(subcommand)]
         action: CaptivePortalCommands,
@@ -654,15 +654,21 @@ enum FirewallCommands {
 
 #[derive(Subcommand)]
 enum CaptivePortalCommands {
-    /// Start the captive portal HTTP server
-    Serve {
-        /// Bind address for the portal HTTP server
-        #[arg(short, long)]
-        addr: Option<String>,
-
-        /// Network interface to intercept guest traffic on
-        #[arg(short, long)]
-        interface: Option<String>,
+    /// List signed-in clients (id, zone, IP, MAC, login, user, state)
+    Sessions {
+        /// Include ended sessions (kept for captive.session_retention_days)
+        #[arg(long)]
+        all: bool,
+    },
+    /// Sign a client out (the portal ends the session within seconds)
+    Disconnect {
+        /// Session id (from `sessions`)
+        id: i64,
+    },
+    /// Print the codes of a voucher roll
+    Vouchers {
+        /// Roll name
+        roll: String,
     },
 }
 
@@ -932,8 +938,14 @@ async fn main() -> anyhow::Result<()> {
         },
 
         Commands::CaptivePortal { action } => match action {
-            CaptivePortalCommands::Serve { addr, interface } => {
-                captiveportal::handle_captiveportal_command(addr, interface).await?;
+            CaptivePortalCommands::Sessions { all } => {
+                captiveportal::run(captiveportal::Action::Sessions { all }, cli.db).await?
+            }
+            CaptivePortalCommands::Disconnect { id } => {
+                captiveportal::run(captiveportal::Action::Disconnect { id }, cli.db).await?
+            }
+            CaptivePortalCommands::Vouchers { roll } => {
+                captiveportal::run(captiveportal::Action::Vouchers { roll }, cli.db).await?
             }
         },
 

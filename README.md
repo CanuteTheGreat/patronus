@@ -302,6 +302,16 @@ that are not finished are listed separately under
   The guest Wi-Fi name is served by its own hostapd with client isolation; a
   voucher stops working when it expires. [C81] Not on an access-point unit or in
   the embedded router images: the page says so and why.
+- Captive portal (USE=captive-portal, off until a zone is added): clients of a
+  portal zone (an interface, VLAN or guest network) reach nothing beyond the
+  router until they sign in on a page at `https://router-address/`; their web
+  requests are sent there. Sign-in by accepting the terms, with a portal user,
+  with a voucher from a printable roll, or against a RADIUS server (with
+  accounting Start/Stop); idle and hard timeouts, logout and a disconnect from
+  the Captive portal page end the session and block the client again. MAC/IP
+  passthrough and allowed destinations, per-client download/upload limits, the
+  RFC 8908 API handed out in DHCP option 114, and every page text are settings
+  (configuration export, history, rollback, API, `patronus captive-portal`). [C87]
 - Packet capture (admin API `POST /api/system/capture`): captures packets on one
   interface with tcpdump, filtered by protocol, host and port (at most 500
   packets or 30 seconds), and returns the decoded lines. [C72]
@@ -364,12 +374,11 @@ They are being wired up one subsystem at a time; each moves to
 [What works today](#what-works-today) only together with its CI proof.
 
 - Firewall: GeoIP/threat-feed blocking, URL-table aliases, IPv6 NPt.
-- LAN services: DNS over TLS upstreams, DHCP-registered hostnames in DNS,
-  captive portal.
+- LAN services: DNS over TLS upstreams, DHCP-registered hostnames in DNS.
 - Routing: DHCPv6 prefix delegation on the WAN, dynamic routing via FRR.
 - VPN: OpenVPN, IPsec road warriors (EAP / certificates), L2TP.
 - Firewall HA (VRRP + state sync), LDAP/RADIUS login, API keys,
-  metrics/alerts, diagnostics, captive portal, IDS/IPS, traffic shaping.
+  metrics/alerts, diagnostics, IDS/IPS, traffic shaping.
 - SD-WAN path selection and policies in the dashboard.
 
 Many Gentoo USE flags currently only pull in dependencies for these.

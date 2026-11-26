@@ -112,6 +112,8 @@ pub mod mdns;
 #[cfg(feature = "nat64")]
 pub mod nat64;
 
+#[cfg(feature = "captive-portal")]
+pub mod captive;
 #[cfg(feature = "guest")]
 pub mod guest;
 #[cfg(feature = "l2tp")]
