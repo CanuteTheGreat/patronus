@@ -112,10 +112,10 @@ pub mod mdns;
 pub mod monagent;
 #[cfg(feature = "smart")]
 pub mod smart;
-#[cfg(feature = "ups")]
-pub mod ups;
 #[cfg(feature = "udp-relay")]
 pub mod udprelay;
+#[cfg(feature = "ups")]
+pub mod ups;
 
 #[cfg(feature = "nat64")]
 pub mod nat64;
