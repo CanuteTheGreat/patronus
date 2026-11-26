@@ -677,6 +677,9 @@ enum UpdateCommands {
         /// Binary package host URL, or "none"
         #[arg(long)]
         binhost: Option<String>,
+        /// Directory of the overlay on this system ("" = the default)
+        #[arg(long)]
+        location: Option<String>,
     },
     /// Sync the overlay and list pending updates (background job)
     Check {
@@ -1037,7 +1040,19 @@ async fn main() -> anyhow::Result<()> {
                 set,
                 mirror,
                 binhost,
-            } => commands::update::channel(cli.db.as_deref(), set, mirror, binhost).await?,
+                location,
+            } => {
+                commands::update::channel(
+                    cli.db.as_deref(),
+                    commands::update::ChannelArgs {
+                        set,
+                        mirror,
+                        binhost,
+                        location,
+                    },
+                )
+                .await?
+            }
             UpdateCommands::Check { no_sync } => {
                 commands::update::job(cli.db.as_deref(), "update_check", !no_sync, "world").await?
             }

@@ -389,6 +389,14 @@ jobs:
         env:
           REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
         run: ci/netlab/lan-services.sh systemd
+      # Update channel (System > Updates / `patronus update channel`): the Portage files it writes make
+      # the image's real Portage pick a release on stable, an rc on testing, the live ebuild on
+      # development (ci/netlab/update-channel-test.sh; overlay = what overlay-sync.yml publishes).
+      - name: Update channel against real Portage (Gentoo stage3)
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          NETLAB_TEST: update-channel-test.sh
+        run: ci/netlab/lan-services.sh openrc
       # Lanes F + H in the same Gentoo images (ci/netlab/vpn-services-test.sh):
       # an IKEv2 tunnel configured through the API of a patronus-web running
       # as user patronus (applyd as root) comes up against a second charon,

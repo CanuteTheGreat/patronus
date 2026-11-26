@@ -31,21 +31,25 @@ fn print_settings(s: &updates::UpdateSettings) {
     println!("overlay:  {}", s.repo_location);
 }
 
-pub async fn channel(
-    db: Option<&Path>,
-    set: Option<String>,
-    mirror: Option<String>,
-    binhost: Option<String>,
-) -> anyhow::Result<()> {
+/// `patronus update channel` options (None = unchanged).
+pub struct ChannelArgs {
+    pub set: Option<String>,
+    pub mirror: Option<String>,
+    pub binhost: Option<String>,
+    pub location: Option<String>,
+}
+
+pub async fn channel(db: Option<&Path>, a: ChannelArgs) -> anyhow::Result<()> {
     let store = open_store(db).await?;
-    let change = set.is_some() || mirror.is_some() || binhost.is_some();
+    let change = a.set.is_some() || a.mirror.is_some() || a.binhost.is_some() || a.location.is_some();
     if change {
         let before = updates::save(
             &store,
             &UpdateInput {
-                channel: set,
-                overlay_uri: mirror,
-                binhost_uri: binhost,
+                channel: a.set,
+                overlay_uri: a.mirror,
+                binhost_uri: a.binhost,
+                repo_location: a.location,
                 ..Default::default()
             },
         )
