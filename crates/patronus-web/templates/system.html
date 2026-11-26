@@ -24,17 +24,18 @@
     </dl>
     <p class="text-sm" style="margin:var(--s-2) 0 0"><a href="#display-card">Warning levels</a></p></div>
 </section>
-<nav id="sys-index" class="sys-index" aria-label="On this page"><span class="sys-index-title">On this page</span></nav>
+<details class="sys-index-box" id="sys-index-box"><summary>On this page</summary><nav id="sys-index" class="sys-index" aria-label="On this page"></nav></details>
 <style>
     .sys-summary { margin-bottom: var(--s-3); }
-    .sys-index { display: flex; flex-wrap: wrap; gap: 2px var(--s-3); align-items: baseline; margin: 0 0 var(--s-4); padding: var(--s-2) var(--s-3);
-        background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--r-md); font-size: var(--fs-sm); }
-    .sys-index-title { font-weight: 600; color: var(--c-ink-2); margin-right: var(--s-2); }
+    .sys-index-box { margin: 0 0 var(--s-4); padding: var(--s-2) var(--s-3); background: var(--c-surface); border: 1px solid var(--c-border);
+        border-radius: var(--r-md); font-size: var(--fs-sm); }
+    .sys-index-box > summary { font-weight: 600; color: var(--c-ink-2); cursor: pointer; min-height: 28px; line-height: 28px; }
+    .sys-index { display: flex; flex-wrap: wrap; gap: 2px var(--s-3); align-items: baseline; padding-top: var(--s-1, 4px); }
     .sys-index a { color: var(--c-accent); text-decoration: none; padding: 4px 0; }
     .sys-index a:hover, .sys-index a:focus-visible { text-decoration: underline; }
     .sys-index a[hidden] { display: none; }
     .content .card[id], .content section.ui-panel[id] { scroll-margin-top: 72px; }
-    @media (max-width: 900px) { .sys-index { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; } }
+    @media (max-width: 900px) { .sys-index { display: grid; grid-template-columns: 1fr 1fr; } .sys-index a { padding: 8px 0; } }
     .sys-summary .ui-kv { grid-template-columns: max-content minmax(0, 28rem); }
 </style>
 
@@ -786,6 +787,8 @@ async function fwFeedDownload() {
     // section titles (a section without an id gets one from its title)
     (function () {
         const nav = document.getElementById('sys-index'); if (!nav) return;
+        // open on wide screens; on a phone it is one tap away instead of a wall of links
+        if (window.matchMedia('(min-width: 901px)').matches) document.getElementById('sys-index-box').open = true;
         const used = new Set();
         const heads = [...document.querySelectorAll('.content .card > .card-header h2, .content section.ui-panel > .ui-panel-head h2')];
         for (const h of heads) {
