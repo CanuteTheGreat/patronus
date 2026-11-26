@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}Boot environments - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Boot environments</h1>
+    <p class="page-subtitle">On a ZFS install every update first takes a snapshot of the system, and each boot environment keeps
+        its own kernels. Pick the environment the router starts next time, roll back to a snapshot taken before an update, or
+        free space by deleting old ones. Your configuration, logs and other data live outside the boot environments and are kept
+        whichever one you boot. <a href="/system">Back to System</a></p>
+</div>
+<div class="card">
+    <p id="be-state" class="text-sm text-muted" role="status" aria-live="polite">Loading...</p>
+    <div id="be-body" hidden>
+        <h3>Environments</h3>
+        <div style="overflow-x:auto"><table class="lan" aria-label="Boot environments">
+            <thead><tr><th scope="col">Name</th><th scope="col">State</th><th scope="col">Kernel</th><th scope="col">Created</th><th scope="col">Size</th><th scope="col">Actions</th></tr></thead>
+            <tbody id="be-envs"></tbody>
+        </table></div>
+        <h3>Snapshots</h3>
+        {% if is_admin %}<p><button class="btn btn-secondary" type="button" onclick="beOp('snapshot', null)">Take a snapshot now</button></p>{% endif %}
+        <div style="overflow-x:auto"><table class="lan" aria-label="Snapshots">
+            <thead><tr><th scope="col">Snapshot</th><th scope="col">Kernel</th><th scope="col">Created</th><th scope="col">Size</th><th scope="col">Actions</th></tr></thead>
+            <tbody id="be-snaps"></tbody>
+        </table></div>
+        <p id="be-boot" class="text-sm text-muted"></p>
+    </div>
+    <div id="be-result" class="text-sm" role="status" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere"></div>
+</div>
+<script>
+    const BE_ADMIN = {{ is_admin }};
+    const fmtSize = b => b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : (b / 1048576).toFixed(0) + ' MB';
+    const fmtTime = t => t ? new Date(t * 1000).toLocaleString() : '';
+    function cell(tr, text) { const td = document.createElement('td'); td.textContent = text; tr.appendChild(td); return td; }
+    function button(td, label, op, name, confirmText) {
+        if (!BE_ADMIN) return;
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'btn btn-secondary btn-sm'; b.textContent = label;
+        b.onclick = () => { if (!confirmText || confirm(confirmText)) beOp(op, name); };
+        td.appendChild(b); td.appendChild(document.createTextNode(' '));
+    }
+    async function loadBe() {
+        const st = document.getElementById('be-state');
+        let d;
+        try {
+            const r = await fetch('/api/system/boot-environments', {credentials: 'same-origin'});
+            d = await r.json();
+            if (!r.ok) { st.textContent = d.error || ('Could not read the boot environments (HTTP ' + r.status + ').'); return; }
+        } catch (e) { st.textContent = 'Could not read the boot environments: ' + e; return; }
+        if (!d.available) { st.textContent = 'No boot environments here: ' + (d.reason || 'not a ZFS install') + '.'; return; }
+        st.textContent = 'Running: ' + d.running + '. Starts next time: ' + d.active + '.';
+        document.getElementById('be-body').hidden = false;
+        const envs = document.getElementById('be-envs'); envs.textContent = '';
+        for (const e of d.environments || []) {
+            const tr = document.createElement('tr');
+            cell(tr, e.name);
+            cell(tr, [e.running ? 'running' : '', e.active ? 'next boot' : '', e.pinned ? 'pinned' : ''].filter(x => x).join(', ') || '-');
+            cell(tr, e.kernel || '-'); cell(tr, fmtTime(e.created)); cell(tr, fmtSize(e.used || 0));
+            const td = cell(tr, '');
+            if (!e.active) button(td, 'Boot this next', 'activate', e.name, null);
+            button(td, e.pinned ? 'Unpin' : 'Pin', e.pinned ? 'unpin' : 'pin', e.name, null);
+            if (!e.running && !e.active) button(td, 'Delete', 'destroy', e.name, 'Delete boot environment ' + e.name + '? This cannot be undone.');
+            envs.appendChild(tr);
+        }
+        const snaps = document.getElementById('be-snaps'); snaps.textContent = '';
+        for (const s of (d.snapshots || []).slice().reverse()) {
+            const id = s.be + '@' + s.name, tr = document.createElement('tr');
+            cell(tr, id + (s.auto ? ' (before an update)' : '')); cell(tr, s.kernel || '-'); cell(tr, fmtTime(s.created)); cell(tr, fmtSize(s.used || 0));
+            const td = cell(tr, '');
+            button(td, 'Roll back to this', 'rollback', id, 'Create a new boot environment from ' + id + ' and boot it next time? The current one stays in the boot menu.');
+            button(td, s.pinned ? 'Unpin' : 'Pin', s.pinned ? 'unpin' : 'pin', id, null);
+            if (!s.pinned) button(td, 'Delete', 'destroy-snapshot', id, 'Delete snapshot ' + id + '?');
+            snaps.appendChild(tr);
+        }
+        if (d.boot) document.getElementById('be-boot').textContent = 'Boot partition: ' + fmtSize(d.boot.free || 0) + ' free of ' + fmtSize(d.boot.total || 0) + '.';
+    }
+    async function beOp(op, name) {
+        const out = document.getElementById('be-result');
+        out.textContent = 'Working...';
+        const r = await fetch('/api/system/boot-environments/' + encodeURIComponent(op), {method: 'POST', credentials: 'same-origin',
+            headers: {'content-type': 'application/json'}, body: JSON.stringify({name: name})});
+        let j = {}; try { j = await r.json(); } catch (_) {}
+        out.textContent = r.ok ? ('Done. ' + (j.output || '') + (op === 'rollback' || op === 'activate' ? ' Restart the router to boot it.' : ''))
+            : (j.error || ('Failed (HTTP ' + r.status + ').'));
+        loadBe();
+    }
+    document.addEventListener('DOMContentLoaded', loadBe);
+</script>
+{% endblock %}
