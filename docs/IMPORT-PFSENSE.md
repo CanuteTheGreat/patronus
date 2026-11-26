@@ -41,7 +41,7 @@ plan says so. The console menu's import item (20) relies on this, so assign WAN 
 
 ## Imported
 
-- System: host name, time zone, NTP servers.
+- System: host name, domain, time zone, NTP servers.
 - Interfaces (`wan`, `lan`, `optN`): device, role, enabled, MTU, IPv4 static/DHCP/PPPoE, IPv6
   static/DHCPv6/SLAAC; `track6` becomes DHCPv6 prefix delegation from the WAN to that interface.
 - VLANs and PPPoE links (the PPPoE password is decoded and stored).

@@ -225,6 +225,8 @@ pub struct ExtPlan {
     pub wifi_clients: Vec<WifiClientPlan>,
     pub ntp: Option<(bool, Vec<String>, Vec<String>)>,
     pub general: Option<(Option<String>, Option<String>)>,
+    /// domain of the box (pfSense/OPNsense `<system><domain>`): General page
+    pub general_domain: Option<String>,
 }
 
 impl ExtPlan {
@@ -1774,11 +1776,13 @@ pub fn render_ext(x: &ExtPlan, o: &mut String, verb: &str) {
     for s in x.lan_settings.iter().chain(&x.sys_settings) {
         let _ = writeln!(o, "  {}", shown(s));
     }
-    if let Some((h, tz)) = &x.general {
+    if x.general.is_some() || x.general_domain.is_some() {
+        let (h, tz) = x.general.clone().unwrap_or_default();
         let _ = writeln!(
             o,
-            "  general: hostname {} timezone {}",
+            "  general: hostname {} domain {} timezone {}",
             h.as_deref().unwrap_or("-"),
+            x.general_domain.as_deref().unwrap_or("-"),
             tz.as_deref().unwrap_or("-")
         );
     }
@@ -1992,18 +1996,19 @@ pub async fn apply_ext(
             x.lan_settings.len() + x.sys_settings.len()
         ));
     }
-    if let Some((h, tz)) = &x.general {
+    if x.general.is_some() || x.general_domain.is_some() {
+        let (h, tz) = x.general.clone().unwrap_or_default();
         let r = patronus_network::general::save_settings(
             store,
             &patronus_network::general::GeneralInput {
-                hostname: h.clone(),
-                domain: None,
-                timezone: tz.clone(),
+                hostname: h,
+                domain: x.general_domain.clone(),
+                timezone: tz,
             },
         )
         .await;
         out.push(match r {
-            Ok(()) => "general: hostname/timezone written".into(),
+            Ok(()) => "general: hostname/domain/timezone written".into(),
             Err(x) => format!("general: skipped ({x})"),
         });
     }
