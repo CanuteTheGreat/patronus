@@ -1,0 +1,26 @@
+{
+  "product": "patronus",
+  "login_path": "/login",
+  "user_sel": "#username",
+  "pass_sel": "#password",
+  "submit_sel": "button[type=submit]",
+  "username": "admin",
+  "password_env": "ADMIN_PASSWORD",
+  "max_routes": 90,
+  "baseline": "live-crawl-baseline.json",
+  "private_fail": [
+    "git\\.canutethegreat\\.com",
+    "canutethegreat\\.com",
+    "redweek\\.(internal|com)",
+    "/home/canutethegreat"
+  ],
+  "private_warn": [
+    "\\b(gringotts|hogshead|madammalkins|ollivanders|azkaban|rw-man-\\d+)\\b"
+  ],
+  "forbidden_names": [
+    "\\bgnome[- ]light\\b",
+    "\\blive[- ]?(installer|iso)\\b",
+    "\\bforgejo\\b"
+  ],
+  "_note": "live pages show the machine's own addresses (interfaces, routes, uplink), so the SPA mock's private-address pattern is not used here; host names and private URLs still fail"
+}
