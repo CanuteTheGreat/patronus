@@ -48,11 +48,19 @@ pub fn parse_record(json: &str) -> Option<(Vec<(String, Advisory)>, bool)> {
     }
     let strs = |x: Option<&serde_json::Value>| -> Vec<String> {
         x.and_then(|a| a.as_array())
-            .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default()
     };
     let mut aliases = strs(v.get("aliases"));
-    aliases.extend(strs(v.get("related")).into_iter().filter(|r| r.starts_with("CVE-")));
+    aliases.extend(
+        strs(v.get("related"))
+            .into_iter()
+            .filter(|r| r.starts_with("CVE-")),
+    );
     aliases.sort();
     aliases.dedup();
     let summary = v
@@ -90,11 +98,21 @@ pub fn parse_record(json: &str) -> Option<(Vec<(String, Advisory)>, bool)> {
         }
         let name = p.get("name")?.as_str()?.to_string();
         let mut events = Vec::new();
-        for r in a.get("ranges").and_then(|r| r.as_array()).into_iter().flatten() {
+        for r in a
+            .get("ranges")
+            .and_then(|r| r.as_array())
+            .into_iter()
+            .flatten()
+        {
             if r.get("type").and_then(|t| t.as_str()) == Some("GIT") {
                 continue;
             }
-            for e in r.get("events").and_then(|e| e.as_array()).into_iter().flatten() {
+            for e in r
+                .get("events")
+                .and_then(|e| e.as_array())
+                .into_iter()
+                .flatten()
+            {
                 for kind in ["introduced", "fixed", "last_affected"] {
                     if let Some(ver) = e.get(kind).and_then(|x| x.as_str()) {
                         events.push(Event {
@@ -136,12 +154,19 @@ impl Advisory {
             .events
             .iter()
             .filter_map(|e| {
-                let ver = if e.version == "0" { "0.0.0-0" } else { &e.version };
+                let ver = if e.version == "0" {
+                    "0.0.0-0"
+                } else {
+                    &e.version
+                };
                 Some((SemVer::parse(ver)?, e.kind.as_str()))
             })
             .collect();
         // an introduced event at the same version as a fixed one applies after it
-        ev.sort_by(|a, b| a.0.cmp(&b.0).then((a.1 == "introduced").cmp(&(b.1 == "introduced"))));
+        ev.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then((a.1 == "introduced").cmp(&(b.1 == "introduced")))
+        });
         let mut affected = false;
         for (ver, kind) in &ev {
             match *kind {
@@ -299,8 +324,14 @@ mod tests {
             summary: String::new(),
             url: String::new(),
             events: vec![
-                Event { kind: "introduced".into(), version: "0".into() },
-                Event { kind: "last_affected".into(), version: "1.2.0".into() },
+                Event {
+                    kind: "introduced".into(),
+                    version: "0".into(),
+                },
+                Event {
+                    kind: "last_affected".into(),
+                    version: "1.2.0".into(),
+                },
             ],
             versions: vec!["3.0.0".into()],
         };
@@ -311,7 +342,9 @@ mod tests {
 
     #[test]
     fn withdrawn_records_are_dropped() {
-        let (rows, w) = parse_record(r#"{"id":"GHSA-x","withdrawn":"2024-01-01T00:00:00Z","affected":[]}"#).unwrap();
+        let (rows, w) =
+            parse_record(r#"{"id":"GHSA-x","withdrawn":"2024-01-01T00:00:00Z","affected":[]}"#)
+                .unwrap();
         assert!(w && rows.is_empty());
     }
 
@@ -333,7 +366,11 @@ mod tests {
         let hits = find_hits(
             &db,
             "patronus-web",
-            &[("h2".into(), "0.3.20".into()), ("h2".into(), "0.4.5".into()), ("serde".into(), "1.0.1".into())],
+            &[
+                ("h2".into(), "0.3.20".into()),
+                ("h2".into(), "0.4.5".into()),
+                ("serde".into(), "1.0.1".into()),
+            ],
         );
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].version, "0.3.20");
