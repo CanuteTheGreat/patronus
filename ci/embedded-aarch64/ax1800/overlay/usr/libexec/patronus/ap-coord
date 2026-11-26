@@ -8,7 +8,7 @@
 # as another block remains. Settings (board.sh defaults, ap.env, /api/wifi, export/plan): AP_COORD24 / AP_COORD5 (1 = on,
 # default), AP_COORD_PEERS (MACs of other units, any BSSID of a unit matches all its BSSes), AP_COORD_MIN_SIGNAL (dBm,
 # weaker peers are ignored), AP_COORD_DELAY (seconds after start before the first re-check), AP_COORD_INTERVAL (seconds
-# between later re-checks, 0 = only the first), AP_COORD_QUIET (hours "1-5" in which a re-check may move/restart a radio, whether
+# between later re-checks, 0 = only the first), AP_COORD_QUIET (hours "1-5" in which a check, the first one included, may move/restart a radio, whether
 # or not stations are connected; empty = any time), AP_COORD_SCAN_SECS (longest a scan, or the wait for a starting radio, may take).
 #   ap-coord plan BAND PHY   before hostapd starts: scan from a temporary interface, write/remove $OUTD/coord-BAND
 #   ap-coord check BAND [now]  on the running radio: when another unit sits on an overlapping block and this unit's
@@ -20,8 +20,8 @@
 # Tie-break: the unit whose phy MAC (last five octets: the first one differs between a radio's BSSes) is HIGHER moves.
 # Test hooks: AP_COORD_NOPLAN (skip the pre-start scan once), AP_BOARD, AP_RENDER_OUT (as for `ap`), AP_COORD_SCAN_FILE (parse this scan instead of scanning),
 #             AP_COORD_STATUS_FILE (hostapd_cli status text), AP_COORD_AP (path of the ap script), AP_COORD_NOW (hour),
-#             AP_COORD_STATE (dir of the restart-guard files, default /run), AP_COORD_EPOCH (now, seconds),
-#             AP_COORD_LOOP_SECS (how long a restart that ended on the same channel blocks the next one, 86400).
+#             AP_COORD_STATE (dir of the move-guard files, default /run), AP_COORD_EPOCH (now, seconds).
+# Move guard: a restart or channel move that leaves the radio on the same channel blocks the next one for 24 hours (fixed, not a setting).
 # Scan robustness (environment / board.sh knobs, defaults in the code): AP_COORD_RESCANS (repeats of an empty pre-start scan, 2),
 #             AP_COORD_SCAN_TRIES (most pre-start scans until two in a row agree, 5).
 . ${AP_BOARD:-/etc/patronus/board.sh}
@@ -166,7 +166,7 @@ plan() { # BAND PHY
 refresh() { # BAND IF: on the running radio: the other units' channels and the peers, heard now
   scan_peers "$1" "$2" ap-force; [ -x "$CHAN" ] && "$CHAN" remember "$1"; true; }
 
-stf() { echo "${AP_COORD_STATE:-/run}/patronus-ap-coord-restart-$1"; }  # BAND: "channel epoch" of the last restart this check made
+stf() { echo "${AP_COORD_STATE:-/run}/patronus-ap-coord-restart-$1"; }  # BAND: "channel epoch" of the last move/restart this check attempted
 
 hours_ok() { # AP_COORD_QUIET "1-5" (wraps over midnight): is it inside?
   q=${AP_COORD_QUIET:-}; [ -n "$q" ] || return 0
@@ -209,20 +209,25 @@ check() { # BAND [now]
   for h in $hit; do hk=$(echo "$h" | tr 'A-F' 'a-f' | cut -d: -f2-); [ "$hk" != "$mykey" ] && [ "$(printf "%s\n%s\n" "$hk" "$mykey" | sort | head -1)" = "$hk" ] && yield=1; done
   [ $yield = 1 ] || { say "$b GHz: shares channels with $hit; the other unit has the lower key and moves"; return 0; }
   # Outside AP_COORD_QUIET nothing moves, with or without stations: a unit's stations are not always visible (an idle
-  # station list says nothing about a sleeping phone) and a radio restart drops them all. Only the first check after a
-  # start (`now`) is exempt: the radio has just come up anyway.
-  if [ "${2:-}" != now ] && ! hours_ok; then
+  # station list says nothing about a sleeping phone) and a radio restart drops them all. This holds for the first check
+  # after a start (`now`) too: `now` only makes the check wait for the radio to come up; a later check moves it.
+  if ! hours_ok; then
     say "$b GHz: shares channels with $hit; outside the quiet hours (AP_COORD_QUIET=${AP_COORD_QUIET}), moving later"; return 0; fi
-  # Loop guard: a restart that lands on the same primary channel as before settles nothing (the pick is deterministic:
-  # same measurements, same best channel) and every such restart drops all stations. Once a restart left this radio on
-  # channel $pch, no further restart happens while it still sits there, for AP_COORD_LOOP_SECS (default 86400).
+  # Loop guard: a restart or move that lands on the same primary channel as before settles nothing (the pick is
+  # deterministic: same measurements, same best channel; a failed move leaves the radio where it was) and every restart
+  # drops all stations. Once an attempt was made on channel $pch, no further attempt happens while the radio still sits
+  # there, for 24 hours (LOOP_SECS, not a setting). The state is "channel epoch" in /run: gone at reboot, ignored when
+  # unreadable or when the clock went backwards.
+  LOOP_SECS=86400; nw=${AP_COORD_EPOCH:-$(date +%s)}
   if [ -s "$(stf "$b")" ]; then
-    read -r lch lts < "$(stf "$b")"; nw=${AP_COORD_EPOCH:-$(date +%s)}
-    if [ "$lch" = "$pch" ] && [ $((nw - lts)) -lt "$(num "${AP_COORD_LOOP_SECS:-}" 86400)" ]; then
-      say "$b GHz: shares channels with $hit; the last restart ended on this same channel ($pch), not restarting again"; return 0; fi
+    lch=; lts=; read -r lch lts < "$(stf "$b")"
+    case "$lch$lts" in ''|*[!0-9]*) lch=; lts=;; esac
+    if [ -n "$lts" ] && [ "$lch" = "$pch" ] && [ "$nw" -ge "$lts" ] && [ $((nw - lts)) -lt $LOOP_SECS ]; then
+      say "$b GHz: shares channels with $hit; the last attempt left this radio on the same channel ($pch), not moving again"; return 0; fi
     rm -f "$(stf "$b")"; fi
   # another unit's block: move with a channel switch announcement to the best measured free channel (ap-chan), so the
   # stations follow; a restart (ACS) only when there is no ap-chan or it found nothing
+  echo "$pch $nw" > "$(stf "$b")" 2>/dev/null
   if [ -x "$CHAN" ]; then
     l=$(echo "$s" | parse | busy "$b"); [ -n "$l" ] && echo "$l" > "$OUTD/coord-$b"
     best=$("$CHAN" pick "$b" "$ifc" ap 2>/dev/null | tail -1)
@@ -231,7 +236,6 @@ check() { # BAND [now]
       "$CHAN" move "$b" "$best" "another access point of this network ($hit) used the same block"; return 0; fi
   fi
   say "$b GHz: shares channels with $hit; restarting this radio so ACS picks another block"
-  echo "$pch ${AP_COORD_EPOCH:-$(date +%s)}" > "$(stf "$b")" 2>/dev/null
   "$APX" restart-band "$b"; }
 
 peers() { # BAND: parse output on stdin -> only the peers' lines (same filter as busy)

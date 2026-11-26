@@ -1230,11 +1230,12 @@ without a controller, from what each unit can hear. Default ON, per band.
   see: both units starting at the same second hear nobody. Overlap is judged on what each unit transmits: the peer's
   footprint (2.4 GHz: +-4 channels around its primary, the same rule the start-time plan uses to drop candidates)
   against this unit's own channel(s) only, so 20 MHz units on channels 6 and 11 do not overlap (comparing two widened
-  sets reported them as sharing 7-10 and restarted the 2.4 GHz radio every `AP_COORD_INTERVAL`). A move waits for the
-  quiet hours `AP_COORD_QUIET` ("1-5", empty = any time) whether or not stations are connected; the first check after
-  a start is not delayed (the clients just reconnected anyway). Loop guard: when a restart left the radio on the same
-  primary channel, no further restart happens while it still sits there (`AP_COORD_LOOP_SECS`, default 86400, state in
-  `/run/patronus-ap-coord-restart-BAND`); the log says "not restarting again".
+  sets reported them as sharing 7-10 and restarted the 2.4 GHz radio every `AP_COORD_INTERVAL`). A move or restart waits for the
+  quiet hours `AP_COORD_QUIET` ("1-5", empty = any time) whether or not stations are connected; this includes the first
+  check after a start. Loop guard: after a move or restart attempt, no further attempt happens while the radio still sits on
+  the same primary channel, for a fixed 24 hours (not a setting; a failed move is covered too; state in
+  `/run/patronus-ap-coord-restart-BAND`, gone at reboot, ignored when unreadable or the clock went backwards); the log says
+  "not moving again".
 - **Settings** (all typed, default in `board.sh`, `ap.env`, `/api/wifi`, the Wi-Fi page, `patronus ap-wifi export|plan|apply`):
   `AP_COORD5` / `AP_COORD24` (`coord5`, `coord24`, true), `AP_COORD_PEERS` (`coord_peers`, empty),
   `AP_COORD_MIN_SIGNAL` (`coord_min_signal`, -90 dBm, -100..-30), `AP_COORD_DELAY` (`coord_delay`, 120 s, 0..3600),
