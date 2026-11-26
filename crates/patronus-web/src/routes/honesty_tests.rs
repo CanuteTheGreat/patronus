@@ -467,6 +467,45 @@ async fn every_template_link_resolves_to_a_page() {
     }
 }
 
+/// The shared ui-kit and the Patronus theme are compiled in and served without a session (the login
+/// page needs them), with an ETag so a repeat load is a 304 and an update is never stuck in a cache.
+#[tokio::test]
+async fn ui_kit_assets_are_served_with_revalidation() {
+    let a = app().await;
+    for (path, ctype, marker) in [
+        ("/ui-kit/tokens.css", "text/css; charset=utf-8", "--c-canvas"),
+        ("/ui-kit/components.css", "text/css; charset=utf-8", ".ui-btn"),
+        ("/ui-kit/patronus.css", "text/css; charset=utf-8", "--c-brand"),
+        ("/ui-kit/ui.js", "text/javascript; charset=utf-8", "data-ui-grid"),
+    ] {
+        let r = a
+            .app
+            .clone()
+            .oneshot(req(Method::GET, path, None, None))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK, "{path} without a session");
+        assert_eq!(r.headers()[header::CONTENT_TYPE], ctype);
+        assert_eq!(r.headers()[header::CACHE_CONTROL], "no-cache");
+        let etag = r.headers()[header::ETAG].to_str().unwrap().to_string();
+        let body = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains(marker), "{path} content");
+        let mut again = req(Method::GET, path, None, None);
+        again
+            .headers_mut()
+            .insert(header::IF_NONE_MATCH, etag.parse().unwrap());
+        let r = a.app.clone().oneshot(again).await.unwrap();
+        assert_eq!(r.status(), StatusCode::NOT_MODIFIED, "{path} revalidates");
+    }
+    let r = a
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/ui-kit/nope.css", None, None))
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+}
+
 /// No page may reference an asset that 404s (the Firewall page logged a
 /// favicon 404 on every load; the login page linked a stylesheet that
 /// never existed). /favicon.ico is served without a session, since
