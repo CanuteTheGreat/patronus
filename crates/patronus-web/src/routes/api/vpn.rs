@@ -77,7 +77,7 @@ pub async fn list_ipsec_tunnels(State(state): State<AppState>) -> Response {
 pub async fn list_ovpn_tunnels() -> Response {
     error(
         StatusCode::NOT_IMPLEMENTED,
-        "OpenVPN is not managed or monitored by Patronus",
+        "OpenVPN is not managed or monitored by Patronus: this build has no OpenVPN engine; use WireGuard or IPsec",
     )
 }
 
