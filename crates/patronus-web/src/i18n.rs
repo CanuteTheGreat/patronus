@@ -538,7 +538,14 @@ async fn translate_response(resp: Response, lang: &str) -> Response {
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.starts_with("application/json"));
-    if !is_json {
+    // error bodies are one short sentence: anything big (or of unknown size) is left as it is
+    use axum::body::HttpBody;
+    let small = resp
+        .body()
+        .size_hint()
+        .upper()
+        .is_some_and(|n| n <= 64 * 1024);
+    if !is_json || !small {
         return resp;
     }
     let (mut parts, body) = resp.into_parts();
