@@ -315,8 +315,7 @@ G1 python3 -c "import socket; socket.setdefaulttimeout(2); socket.gethostbyname(
 guest_dhcp 1   # DHCP keeps answering: the guest keeps its address and just has no way out
 nl_ok "outside the hours: no internet, no DNS, DHCP still answers"
 nl_api PUT /svc/guest "{\"schedule_from\":\"$(hm -3600)\",\"schedule_to\":\"$(hm 3600)\",\"schedule_days\":\"$other\"}"; [ "$NL_CODE" = 200 ] || nl_fail "schedule (other weekday): $NL_CODE"
-internet_closed() { ! internet_ok "$1"; }
-nl_wait 8 internet_closed G1 || nl_fail "on a weekday outside the schedule the guest still has internet"
+nl_wait 8 internet_closed || nl_fail "on a weekday outside the schedule the guest still has internet"
 nl_ok "right hours, wrong weekday: closed"
 nl_api PUT /svc/guest "{\"schedule_days\":\"0,1,2,3,4,5,6\"}"; [ "$NL_CODE" = 200 ] || nl_fail "schedule (all days): $NL_CODE"
 nl_wait 5 internet_ok G1 || nl_fail "all weekdays + hours around now: still closed"
