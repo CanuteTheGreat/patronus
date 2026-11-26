@@ -56,6 +56,8 @@ cp ci/netlab/lib.sh "$OUT/"
 cp -r ci/netlab/fixtures "$OUT/"
 # lane T UI scenario drives this Playwright script
 cp ci/guest-page-e2e.py "$OUT/"
+# lane W UI scenario (language + API reference) drives this one
+cp ci/i18n-page-e2e.py "$OUT/"
 # lane J XDP data plane: the shipped BPF program source
 cp crates/patronus-ebpf/src/xdp_firewall.bpf.c "$OUT/"
 OLD_ENV=

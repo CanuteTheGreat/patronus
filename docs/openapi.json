@@ -3653,7 +3653,6 @@
     },
     "/api/auth/2fa/disable": {
       "post": {
-        "description": "POST /api/auth/2fa/disable {password, code}: turn one's own two-factor\nlogin off (needs both factors). Other sessions of the account end, as on\na password change.",
         "operationId": "post_api_auth_2fa_disable",
         "requestBody": {
           "content": {
@@ -3691,7 +3690,7 @@
             "description": "Error"
           }
         },
-        "summary": "Turn one's own two-factor login off (needs both factors). Other sessions of the account end, as on a password change.",
+        "summary": "Totp disable (auth/2fa/disable)",
         "tags": [
           "auth"
         ],
@@ -3701,7 +3700,6 @@
     },
     "/api/auth/2fa/enable": {
       "post": {
-        "description": "POST /api/auth/2fa/enable {code} -> {recovery_codes}: confirm with a\ncode from the app; from now on login needs a code. Other sessions of the\naccount end: one opened with the password alone (say, by whoever made the\nowner turn two-factor on) must not outlive the switch.\n\nWrong codes count as failed logins in the [`LoginThrottle`], and a\nlocked-out client is refused (429). Without that, a session holder could\ntry all 10^6 codes against a pending setup at full speed (about three\ncodes are valid at any moment), turn two-factor on with a secret the\nowner may never have scanned, and walk off with the recovery codes.",
         "operationId": "post_api_auth_2fa_enable",
         "requestBody": {
           "content": {
@@ -3739,7 +3737,7 @@
             "description": "Error"
           }
         },
-        "summary": "Confirm with a code from the app; from now on login needs a code. Other sessions of the account end: one opened with the",
+        "summary": "Totp enable (auth/2fa/enable)",
         "tags": [
           "auth"
         ],
@@ -3749,7 +3747,6 @@
     },
     "/api/auth/2fa/setup": {
       "post": {
-        "description": "POST /api/auth/2fa/setup {password} -> {secret, otpauth_uri, qr_svg}:\na new secret to scan; nothing changes for login until it is confirmed.",
         "operationId": "post_api_auth_2fa_setup",
         "requestBody": {
           "content": {
@@ -3787,7 +3784,7 @@
             "description": "Error"
           }
         },
-        "summary": "A new secret to scan; nothing changes for login until it is confirmed.",
+        "summary": "Totp setup (auth/2fa/setup)",
         "tags": [
           "auth"
         ],
@@ -3956,7 +3953,7 @@
             "description": "Error"
           }
         },
-        "summary": "Change one's own password (any role). Other sessions of the account end.",
+        "summary": "Change one's own password (any role).",
         "tags": [
           "auth"
         ],
@@ -4250,7 +4247,7 @@
             "description": "Error"
           }
         },
-        "summary": "Keep the new address. Only counts when this request reached the unit over one of the NEW addresses (the Host header), wh",
+        "summary": "Keep the new address.",
         "tags": [
           "device"
         ],
@@ -5687,7 +5684,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/events/kinds",
+        "summary": "Kinds (events/kinds)",
         "tags": [
           "events"
         ],
@@ -5724,7 +5721,7 @@
             "description": "Error"
           }
         },
-        "summary": "The optional features this build contains. The UI hides navigation entries for the rest (a router build has no VPN, HA, ",
+        "summary": "The optional features this build contains.",
         "tags": [
           "features"
         ],
@@ -5760,7 +5757,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/aliases",
+        "summary": "List aliases (firewall/aliases)",
         "tags": [
           "firewall"
         ],
@@ -5804,7 +5801,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/firewall/aliases",
+        "summary": "Create alias (firewall/aliases)",
         "tags": [
           "firewall"
         ],
@@ -5813,7 +5810,6 @@
     },
     "/api/firewall/aliases/refresh": {
       "post": {
-        "description": "POST /api/firewall/aliases/refresh  {\"names\": [..]} (empty = every\nURL table, GeoIP and threat alias)",
         "operationId": "post_api_firewall_aliases_refresh",
         "responses": {
           "200": {
@@ -5841,7 +5837,7 @@
             "description": "Error"
           }
         },
-        "summary": "[..]} (empty = every URL table, GeoIP and threat alias)",
+        "summary": "Refresh aliases (firewall/aliases/refresh)",
         "tags": [
           "firewall"
         ],
@@ -5882,7 +5878,7 @@
             "description": "Error"
           }
         },
-        "summary": "DELETE /api/firewall/aliases/:name",
+        "summary": "Delete alias (firewall/aliases)",
         "tags": [
           "firewall"
         ],
@@ -5926,7 +5922,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/aliases/:name",
+        "summary": "Get alias (firewall/aliases)",
         "tags": [
           "firewall"
         ],
@@ -6017,14 +6013,13 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/geoip",
+        "summary": "Get geoip (firewall/geoip)",
         "tags": [
           "firewall"
         ],
         "x-patronus-handler": "routes/api/firewall::get_geoip"
       },
       "put": {
-        "description": "PUT /api/firewall/geoip  {\"db_url\": \"\", \"refresh_days\": 30}",
         "operationId": "put_api_firewall_geoip",
         "requestBody": {
           "content": {
@@ -6057,7 +6052,7 @@
             "description": "Error"
           }
         },
-        "summary": "\"\", \"refresh_days\": 30}",
+        "summary": "Put geoip (firewall/geoip)",
         "tags": [
           "firewall"
         ],
@@ -6103,7 +6098,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/geoip/lookup?ip=1.2.3.4",
+        "summary": "Geoip lookup (firewall/geoip/lookup)",
         "tags": [
           "firewall"
         ],
@@ -6176,14 +6171,13 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/hardening",
+        "summary": "Get hardening (firewall/hardening)",
         "tags": [
           "firewall"
         ],
         "x-patronus-handler": "routes/api/firewall::get_hardening"
       },
       "put": {
-        "description": "PUT /api/firewall/hardening  {\"inbound_action\":\"reject\",\"synflood_protect\":true,\n\"synflood_rate\":\"25/second\",\"synflood_burst\":50,\"mss_clamp\":\"@wan\",\"drop_ipv4_options\":true}",
         "operationId": "put_api_firewall_hardening",
         "requestBody": {
           "content": {
@@ -6216,7 +6210,7 @@
             "description": "Error"
           }
         },
-        "summary": "PUT /api/firewall/hardening  {\"inbound_action\":\"reject\",\"synflood_protect\":true, \"synflood_rate\":\"25/second\",\"synflood_b",
+        "summary": "Put hardening (firewall/hardening)",
         "tags": [
           "firewall"
         ],
@@ -6284,7 +6278,7 @@
             "description": "Error"
           }
         },
-        "summary": "DELETE /api/firewall/logs",
+        "summary": "Clear logs (firewall/logs)",
         "tags": [
           "firewall"
         ],
@@ -6445,7 +6439,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/logs?rule=&action=&src=&dst=&proto=&port=&iface=&q=&minutes=&since_id=&limit=",
+        "summary": "Get logs (firewall/logs)",
         "tags": [
           "firewall"
         ],
@@ -6454,7 +6448,6 @@
     },
     "/api/firewall/logs/default-deny": {
       "put": {
-        "description": "PUT /api/firewall/logs/default-deny  {\"enabled\": true}",
         "operationId": "put_api_firewall_logs_default_deny",
         "requestBody": {
           "content": {
@@ -6487,7 +6480,7 @@
             "description": "Error"
           }
         },
-        "summary": "True}",
+        "summary": "Put default deny (firewall/logs/default-deny)",
         "tags": [
           "firewall"
         ],
@@ -6523,7 +6516,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/nat",
+        "summary": "List nat rules (firewall/nat)",
         "tags": [
           "firewall"
         ],
@@ -6567,7 +6560,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/firewall/nat",
+        "summary": "Add nat rule (firewall/nat)",
         "tags": [
           "firewall"
         ],
@@ -6603,14 +6596,13 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/nat/outbound",
+        "summary": "Get outbound (firewall/nat/outbound)",
         "tags": [
           "firewall"
         ],
         "x-patronus-handler": "routes/api/firewall::get_outbound"
       },
       "put": {
-        "description": "PUT /api/firewall/nat/outbound  {\"mode\": \"automatic\"|\"hybrid\"|\"manual\"|\"disabled\"}",
         "operationId": "put_api_firewall_nat_outbound",
         "requestBody": {
           "content": {
@@ -6643,7 +6635,7 @@
             "description": "Error"
           }
         },
-        "summary": "\"automatic\"|\"hybrid\"|\"manual\"|\"disabled\"}",
+        "summary": "Set outbound (firewall/nat/outbound)",
         "tags": [
           "firewall"
         ],
@@ -6690,7 +6682,7 @@
             "description": "Error"
           }
         },
-        "summary": "DELETE /api/firewall/nat/:id",
+        "summary": "Delete nat rule (firewall/nat)",
         "tags": [
           "firewall"
         ],
@@ -6735,7 +6727,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/nat/:id",
+        "summary": "Get nat rule (firewall/nat)",
         "tags": [
           "firewall"
         ],
@@ -6785,7 +6777,7 @@
             "description": "Error"
           }
         },
-        "summary": "PUT /api/firewall/nat/:id",
+        "summary": "Update nat rule (firewall/nat)",
         "tags": [
           "firewall"
         ],
@@ -6821,7 +6813,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/rules",
+        "summary": "List rules (firewall/rules)",
         "tags": [
           "firewall"
         ],
@@ -6865,7 +6857,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/firewall/rules",
+        "summary": "Add rule (firewall/rules)",
         "tags": [
           "firewall"
         ],
@@ -6901,7 +6893,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/firewall/rules/apply",
+        "summary": "Apply rules (firewall/rules/apply)",
         "tags": [
           "firewall"
         ],
@@ -6910,7 +6902,6 @@
     },
     "/api/firewall/rules/order": {
       "put": {
-        "description": "PUT /api/firewall/rules/order  {\"ids\": [..every non-system rule..]}",
         "operationId": "put_api_firewall_rules_order",
         "requestBody": {
           "content": {
@@ -6943,7 +6934,7 @@
             "description": "Error"
           }
         },
-        "summary": "[..every non-system rule..]}",
+        "summary": "Reorder rules (firewall/rules/order)",
         "tags": [
           "firewall"
         ],
@@ -6990,7 +6981,7 @@
             "description": "Error"
           }
         },
-        "summary": "DELETE /api/firewall/rules/:id",
+        "summary": "Delete rule (firewall/rules)",
         "tags": [
           "firewall"
         ],
@@ -7035,7 +7026,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/rules/:id",
+        "summary": "Get rule (firewall/rules)",
         "tags": [
           "firewall"
         ],
@@ -7090,7 +7081,7 @@
             "description": "Error"
           }
         },
-        "summary": "PUT /api/firewall/rules/:id",
+        "summary": "Update rule (firewall/rules)",
         "tags": [
           "firewall"
         ],
@@ -7099,7 +7090,6 @@
     },
     "/api/firewall/rules/{id}/move": {
       "post": {
-        "description": "POST /api/firewall/rules/:id/move  {\"direction\": \"up\"|\"down\"|\"top\"|\"bottom\"}",
         "operationId": "post_api_firewall_rules_id_move",
         "parameters": [
           {
@@ -7143,7 +7133,7 @@
             "description": "Error"
           }
         },
-        "summary": "\"up\"|\"down\"|\"top\"|\"bottom\"}",
+        "summary": "Move rule (firewall/rules/move)",
         "tags": [
           "firewall"
         ],
@@ -7179,7 +7169,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/schedules",
+        "summary": "List schedules (firewall/schedules)",
         "tags": [
           "firewall"
         ],
@@ -7223,7 +7213,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/firewall/schedules",
+        "summary": "Create schedule (firewall/schedules)",
         "tags": [
           "firewall"
         ],
@@ -7264,7 +7254,7 @@
             "description": "Error"
           }
         },
-        "summary": "DELETE /api/firewall/schedules/:name",
+        "summary": "Delete schedule (firewall/schedules)",
         "tags": [
           "firewall"
         ],
@@ -7313,7 +7303,7 @@
             "description": "Error"
           }
         },
-        "summary": "PUT /api/firewall/schedules/:name",
+        "summary": "Update schedule (firewall/schedules)",
         "tags": [
           "firewall"
         ],
@@ -7408,7 +7398,7 @@
             "description": "Error"
           }
         },
-        "summary": "DELETE /api/firewall/states",
+        "summary": "Kill states (firewall/states)",
         "tags": [
           "firewall"
         ],
@@ -7478,7 +7468,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/states",
+        "summary": "List states (firewall/states)",
         "tags": [
           "firewall"
         ],
@@ -7514,7 +7504,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/threatintel",
+        "summary": "Get threat (firewall/threatintel)",
         "tags": [
           "firewall"
         ],
@@ -7523,7 +7513,6 @@
     },
     "/api/firewall/threatintel-budget": {
       "put": {
-        "description": "PUT /api/firewall/threatintel-budget  {\"max_total\": 400000}",
         "operationId": "put_api_firewall_threatintel_budget",
         "requestBody": {
           "content": {
@@ -7556,7 +7545,7 @@
             "description": "Error"
           }
         },
-        "summary": "400000}",
+        "summary": "Put threat budget (firewall/threatintel-budget)",
         "tags": [
           "firewall"
         ],
@@ -7597,14 +7586,13 @@
             "description": "Error"
           }
         },
-        "summary": "DELETE /api/firewall/threatintel/:id",
+        "summary": "Delete threat (firewall/threatintel)",
         "tags": [
           "firewall"
         ],
         "x-patronus-handler": "routes/api/firewall::delete_threat"
       },
       "put": {
-        "description": "PUT /api/firewall/threatintel/:id -- enable/configure a feed",
         "operationId": "put_api_firewall_threatintel_id",
         "parameters": [
           {
@@ -7647,7 +7635,7 @@
             "description": "Error"
           }
         },
-        "summary": "Enable/configure a feed",
+        "summary": "Put threat (firewall/threatintel)",
         "tags": [
           "firewall"
         ],
@@ -7683,14 +7671,13 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/firewall/wan-guard",
+        "summary": "Get wan guard (firewall/wan-guard)",
         "tags": [
           "firewall"
         ],
         "x-patronus-handler": "routes/api/firewall::get_wan_guard"
       },
       "put": {
-        "description": "PUT /api/firewall/wan-guard  {\"block_private\": bool, \"block_bogons\": bool}",
         "operationId": "put_api_firewall_wan_guard",
         "requestBody": {
           "content": {
@@ -7723,7 +7710,7 @@
             "description": "Error"
           }
         },
-        "summary": "Bool, \"block_bogons\": bool}",
+        "summary": "Put wan guard (firewall/wan-guard)",
         "tags": [
           "firewall"
         ],
@@ -7770,7 +7757,7 @@
           }
         },
         "security": [],
-        "summary": "POST /api/first-run {username, password, confirm, setup_code}",
+        "summary": "Set password (first-run)",
         "tags": [
           "first-run"
         ],
@@ -7816,7 +7803,6 @@
     },
     "/api/ha/maintenance": {
       "post": {
-        "description": "POST /api/ha/maintenance {\"enabled\": bool} -- advertise the lowest\npriority so the peer takes the virtual IPs (and give them back).",
         "operationId": "post_api_ha_maintenance",
         "requestBody": {
           "content": {
@@ -7854,7 +7840,7 @@
             "description": "Error"
           }
         },
-        "summary": "Advertise the lowest priority so the peer takes the virtual IPs (and give them back).",
+        "summary": "Maintenance (ha/maintenance)",
         "tags": [
           "ha"
         ],
@@ -7900,7 +7886,7 @@
             "description": "Error"
           }
         },
-        "summary": "PUT /api/ha/settings",
+        "summary": "Put settings (ha/settings)",
         "tags": [
           "ha"
         ],
@@ -7946,7 +7932,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/ha/vips",
+        "summary": "Add vip (ha/vips)",
         "tags": [
           "ha"
         ],
@@ -7993,7 +7979,7 @@
             "description": "Error"
           }
         },
-        "summary": "DELETE /api/ha/vips/:id",
+        "summary": "Del vip (ha/vips)",
         "tags": [
           "ha"
         ],
@@ -8048,7 +8034,7 @@
             "description": "Error"
           }
         },
-        "summary": "PUT /api/ha/vips/:id",
+        "summary": "Put vip (ha/vips)",
         "tags": [
           "ha"
         ],
@@ -8134,7 +8120,7 @@
             "description": "Error"
           }
         },
-        "summary": "The signed-in account's own language (any role; API keys have none).",
+        "summary": "The signed-in account's own language (any role",
         "tags": [
           "i18n"
         ],
@@ -8774,7 +8760,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/interfaces",
+        "summary": "Overview (interfaces)",
         "tags": [
           "interfaces"
         ],
@@ -8783,6 +8769,7 @@
     },
     "/api/interfaces/apply": {
       "post": {
+        "description": "POST /api/interfaces/apply  (re-apply the stored configuration)",
         "operationId": "post_api_interfaces_apply",
         "responses": {
           "200": {
@@ -8805,7 +8792,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/interfaces/apply  (re-apply the stored configuration)",
+        "summary": "Re-apply the stored configuration",
         "tags": [
           "interfaces"
         ],
@@ -8846,7 +8833,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/interfaces/bonds",
+        "summary": "Add bond (interfaces/bonds)",
         "tags": [
           "interfaces"
         ],
@@ -8928,7 +8915,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/interfaces/bridges",
+        "summary": "Add bridge (interfaces/bridges)",
         "tags": [
           "interfaces"
         ],
@@ -8978,7 +8965,6 @@
     },
     "/api/interfaces/dhcp-client": {
       "put": {
-        "description": "PUT /api/interfaces/dhcp-client  {\"client\": \"dhcpcd\"|\"udhcpc\"|\"\"}",
         "operationId": "put_api_interfaces_dhcp_client",
         "requestBody": {
           "content": {
@@ -9011,7 +8997,7 @@
             "description": "Error"
           }
         },
-        "summary": "\"dhcpcd\"|\"udhcpc\"|\"\"}",
+        "summary": "Set dhcp client (interfaces/dhcp-client)",
         "tags": [
           "interfaces"
         ],
@@ -9052,7 +9038,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/interfaces/overlays",
+        "summary": "Add overlay (interfaces/overlays)",
         "tags": [
           "interfaces"
         ],
@@ -9134,7 +9120,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/interfaces/pppoe",
+        "summary": "Add pppoe (interfaces/pppoe)",
         "tags": [
           "interfaces"
         ],
@@ -9184,7 +9170,6 @@
     },
     "/api/interfaces/system-dhcpcd": {
       "put": {
-        "description": "PUT /api/interfaces/system-dhcpcd  {\"mode\": \"release\"|\"leave\", \"conf\": \"\"}",
         "operationId": "put_api_interfaces_system_dhcpcd",
         "requestBody": {
           "content": {
@@ -9217,7 +9202,7 @@
             "description": "Error"
           }
         },
-        "summary": "\"release\"|\"leave\", \"conf\": \"\"}",
+        "summary": "Set system dhcpcd (interfaces/system-dhcpcd)",
         "tags": [
           "interfaces"
         ],
@@ -9258,7 +9243,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/interfaces/vlans",
+        "summary": "Add vlan (interfaces/vlans)",
         "tags": [
           "interfaces"
         ],
@@ -9350,7 +9335,7 @@
             "description": "Error"
           }
         },
-        "summary": "PUT /api/interfaces/:name",
+        "summary": "Update (interfaces)",
         "tags": [
           "interfaces"
         ],
@@ -9391,7 +9376,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/interfaces/:name/down",
+        "summary": "Down (interfaces/down)",
         "tags": [
           "interfaces"
         ],
@@ -9432,7 +9417,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/interfaces/:name/up  (also /api/network/interfaces/:name/up)",
+        "summary": "Up (interfaces/up)",
         "tags": [
           "interfaces"
         ],
@@ -9441,6 +9426,7 @@
     },
     "/api/network/interfaces": {
       "get": {
+        "description": "GET /api/network/interfaces (kernel list, legacy shape)",
         "operationId": "get_api_network_interfaces",
         "responses": {
           "200": {
@@ -9468,7 +9454,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/network/interfaces (kernel list, legacy shape)",
+        "summary": "Kernel list, legacy shape",
         "tags": [
           "network"
         ],
@@ -9519,7 +9505,7 @@
             "description": "Error"
           }
         },
-        "summary": "PUT /api/interfaces/:name",
+        "summary": "Update (network/interfaces)",
         "tags": [
           "network"
         ],
@@ -9560,7 +9546,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/interfaces/:name/down",
+        "summary": "Down (network/interfaces/down)",
         "tags": [
           "network"
         ],
@@ -9601,7 +9587,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/interfaces/:name/up  (also /api/network/interfaces/:name/up)",
+        "summary": "Up (network/interfaces/up)",
         "tags": [
           "network"
         ],
@@ -13406,7 +13392,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/setup/apply",
+        "summary": "Apply (setup/apply)",
         "tags": [
           "setup"
         ],
@@ -13452,7 +13438,6 @@
     },
     "/api/setup/status": {
       "get": {
-        "description": "GET /api/setup/status -> {completed, interfaces: [{name, role, up, addresses}]}",
         "operationId": "get_api_setup_status",
         "responses": {
           "200": {
@@ -13480,7 +13465,7 @@
             "description": "Error"
           }
         },
-        "summary": "[{name, role, up, addresses}]}",
+        "summary": "Status (setup/status)",
         "tags": [
           "setup"
         ],
@@ -13665,7 +13650,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/status",
+        "summary": "System status (status)",
         "tags": [
           "status"
         ],
@@ -13701,7 +13686,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/status/summary",
+        "summary": "Summary (status/summary)",
         "tags": [
           "status"
         ],
@@ -13746,7 +13731,6 @@
     },
     "/api/svc/openvpn/export/{name}": {
       "get": {
-        "description": "GET /api/svc/openvpn/export/:name -> the client's `.ovpn` profile (admin\nsessions only: it contains the client's private key).",
         "operationId": "get_api_svc_openvpn_export_name",
         "parameters": [
           {
@@ -13784,7 +13768,7 @@
             "description": "Error"
           }
         },
-        "summary": "It contains the client's private key).",
+        "summary": "Export openvpn (svc/openvpn/export)",
         "tags": [
           "svc"
         ],
@@ -14166,7 +14150,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/system/api-keys",
+        "summary": "List (system/api-keys)",
         "tags": [
           "system"
         ],
@@ -14211,7 +14195,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/system/api-keys -> 201 `{key, token}` (the token is shown once)",
+        "summary": "Create (system/api-keys)",
         "tags": [
           "system"
         ],
@@ -14259,7 +14243,7 @@
             "description": "Error"
           }
         },
-        "summary": "DELETE /api/system/api-keys/:id",
+        "summary": "Revoke (system/api-keys)",
         "tags": [
           "system"
         ],
@@ -14296,7 +14280,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/system/auth-servers",
+        "summary": "List (system/auth-servers)",
         "tags": [
           "system"
         ],
@@ -14341,7 +14325,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/system/auth-servers",
+        "summary": "Create (system/auth-servers)",
         "tags": [
           "system"
         ],
@@ -14389,7 +14373,7 @@
             "description": "Error"
           }
         },
-        "summary": "DELETE /api/system/auth-servers/:id",
+        "summary": "Remove (system/auth-servers)",
         "tags": [
           "system"
         ],
@@ -14567,7 +14551,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/system/backup-targets/:id/run -> {file}",
+        "summary": "Run (system/backup-targets/run)",
         "tags": [
           "system"
         ],
@@ -14686,7 +14670,7 @@
             "description": "Error"
           }
         },
-        "summary": "DELETE /api/system/backups/:name",
+        "summary": "Delete backup (system/backups)",
         "tags": [
           "system"
         ],
@@ -14782,7 +14766,6 @@
     },
     "/api/system/capture": {
       "post": {
-        "description": "This lane's API routes, mounted under `/api` by `routes::api_routes`\nwith one `.merge(system::router())` line.\nPOST /api/system/capture -- packet capture for diagnostics (admins).\nBody: `{\"interface\":\"rtr-lan\",\"host\":\"192.168.50.10\",\"proto\":\"tcp\",\n\"port\":443,\"count\":50,\"seconds\":10}` (only `interface` is required; at\nmost 500 packets / 30 s). Answers the decoded one-line packet summaries.",
         "operationId": "post_api_system_capture",
         "requestBody": {
           "content": {
@@ -14818,7 +14801,7 @@
             "description": "Error"
           }
         },
-        "summary": "This lane's API routes, mounted under `/api` by `routes::api_routes` with one `.merge(system::router())` line. POST /api",
+        "summary": "Capture",
         "tags": [
           "system"
         ],
@@ -14863,7 +14846,7 @@
             "description": "Error"
           }
         },
-        "summary": "Ping, traceroute, DNS lookup, neighbour table, routing tables, listening sockets (admins). Body: `{\"tool\":\"ping\",\"target",
+        "summary": "Ping, traceroute, DNS lookup, neighbour table, routing tables, listening sockets (admins).",
         "tags": [
           "system"
         ],
@@ -14872,7 +14855,6 @@
     },
     "/api/system/factory-reset": {
       "post": {
-        "description": "POST /api/system/factory-reset {password, confirm: \"RESET\"} (admin, not\nAPI keys): back the configuration up, then replace it with a first-boot\none (interface roles from patronus.toml, the safe default ruleset),\napplied to the whole system. Web accounts are kept (so the admin can\nstill log in); groups, VPNs, services, rules and the like are gone. The\nreset is a restore, so it is also kept as a revision.",
         "operationId": "post_api_system_factory_reset",
         "requestBody": {
           "content": {
@@ -14910,7 +14892,7 @@
             "description": "Error"
           }
         },
-        "summary": "\"RESET\"} (admin, not API keys): back the configuration up, then replace it with a first-boot one (interface roles from p",
+        "summary": "Factory reset (system/factory-reset)",
         "tags": [
           "system"
         ],
@@ -14983,7 +14965,7 @@
             "description": "Error"
           }
         },
-        "summary": "Running build, uploaded / staged image (router tier, `patronus-flash`) and the boot rollback state (`boot_guard`: trial ",
+        "summary": "Running build, uploaded / staged image (router tier, `patronus-flash`) and the boot rollback state (`boot_guard`: trial / confirmed /…",
         "tags": [
           "system"
         ],
@@ -15029,7 +15011,7 @@
             "description": "Error"
           }
         },
-        "summary": "The sysupgrade image as the request body; it is checked right away with the box's own guards (`patronus-flash check`: bo",
+        "summary": "The sysupgrade image as the request body",
         "tags": [
           "system"
         ],
@@ -15243,7 +15225,7 @@
             "description": "Error"
           }
         },
-        "summary": "Fetch the signed feed's image into the upload slot and run the same `patronus-flash check` as an upload. Installing stay",
+        "summary": "Fetch the signed feed's image into the upload slot and run the same `patronus-flash check` as an upload.",
         "tags": [
           "system"
         ],
@@ -15280,7 +15262,7 @@
             "description": "Error"
           }
         },
-        "summary": "Stage the checked upload (settings are kept) and restart the box to install it. The answer comes before the restart.",
+        "summary": "Stage the checked upload (settings are kept) and restart the box to install it.",
         "tags": [
           "system"
         ],
@@ -15317,7 +15299,7 @@
             "description": "Error"
           }
         },
-        "summary": "Restart now; the bootloader restores the previous image.",
+        "summary": "Restart now",
         "tags": [
           "system"
         ],
@@ -15399,7 +15381,7 @@
             "description": "Error"
           }
         },
-        "summary": "Set host name, DNS domain and/or time zone and apply them (an unknown time zone or bad name is refused and nothing chang",
+        "summary": "Set host name, DNS domain and/or time zone and apply them (an unknown time zone or bad name is refused and nothing changes).",
         "tags": [
           "system"
         ],
@@ -15435,7 +15417,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/system/groups -> {areas, groups}",
+        "summary": "List (system/groups)",
         "tags": [
           "system"
         ],
@@ -15670,7 +15652,7 @@
             "description": "Error"
           }
         },
-        "summary": "What restoring a revision would change relative to the running configuration (admins: the rows can hold addresses and ac",
+        "summary": "What restoring a revision would change relative to the running configuration (admins: the rows can hold addresses and account names).",
         "tags": [
           "system"
         ],
@@ -15718,7 +15700,7 @@
             "description": "Error"
           }
         },
-        "summary": "Put the configuration of one revision back and apply it to the whole system (admins). The state it replaces is kept as a",
+        "summary": "Put the configuration of one revision back and apply it to the whole system (admins).",
         "tags": [
           "system"
         ],
@@ -15754,7 +15736,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/system/hooks",
+        "summary": "List hooks (system/hooks)",
         "tags": [
           "system"
         ],
@@ -15799,7 +15781,7 @@
             "description": "Error"
           }
         },
-        "summary": "A notification channel: `{\"name\",\"channel\": \"webhook\"|\"ntfy\"|\"telegram\"|\"discord\"|\"slack\"|\"email\",\"url\",\"secret\", \"targe",
+        "summary": "A notification channel: `{\"name\",\"channel\": \"webhook\"|\"ntfy\"|\"telegram\"|\"discord\"|\"slack\"|\"email\",\"url\",\"secret\"…",
         "tags": [
           "system"
         ],
@@ -15846,7 +15828,7 @@
             "description": "Error"
           }
         },
-        "summary": "DELETE /api/system/hooks/:id",
+        "summary": "Delete hook (system/hooks)",
         "tags": [
           "system"
         ],
@@ -15930,14 +15912,13 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/system/packet-steering",
+        "summary": "Get packet steering (system/packet-steering)",
         "tags": [
           "system"
         ],
         "x-patronus-handler": "routes/api/system::get_packet_steering"
       },
       "put": {
-        "description": "PUT /api/system/packet-steering {\"enabled\": true}: spread NIC queues\nover all CPUs (RPS/XPS), applied now and at every boot.",
         "operationId": "put_api_system_packet_steering",
         "requestBody": {
           "content": {
@@ -15975,7 +15956,7 @@
             "description": "Error"
           }
         },
-        "summary": "True}: spread NIC queues over all CPUs (RPS/XPS), applied now and at every boot.",
+        "summary": "Put packet steering (system/packet-steering)",
         "tags": [
           "system"
         ],
@@ -16132,7 +16113,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/system/services/:name/restart",
+        "summary": "Restart service (system/services/restart)",
         "tags": [
           "system"
         ],
@@ -16173,7 +16154,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/system/services/:name/start",
+        "summary": "Start service (system/services/start)",
         "tags": [
           "system"
         ],
@@ -16214,7 +16195,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/system/services/:name/stop",
+        "summary": "Stop service (system/services/stop)",
         "tags": [
           "system"
         ],
@@ -16317,7 +16298,7 @@
             "description": "Error"
           }
         },
-        "summary": "Run a test now (admins; takes up to ~1 min).",
+        "summary": "Run a test now (admins",
         "tags": [
           "system"
         ],
@@ -16401,7 +16382,7 @@
             "description": "Error"
           }
         },
-        "summary": "The managed OpenSSH server settings (public keys and the host certificate only; there are no secrets in them).",
+        "summary": "The managed OpenSSH server settings (public keys and the host certificate only",
         "tags": [
           "system"
         ],
@@ -16446,7 +16427,7 @@
             "description": "Error"
           }
         },
-        "summary": "Port, listen interfaces/addresses, password and root policy, user CA keys, per-user principals, host certificate. Bad in",
+        "summary": "Port, listen interfaces/addresses, password and root policy, user CA keys, per-user principals, host certificate.",
         "tags": [
           "system"
         ],
@@ -16483,7 +16464,7 @@
             "description": "Error"
           }
         },
-        "summary": "Portage update state: whether this system has Portage, the last finished check (what is pending, in particular a newer P",
+        "summary": "Portage update state: whether this system has Portage, the last finished check (what is pending, in particular a newer Patronus) and the…",
         "tags": [
           "system"
         ],
@@ -16547,7 +16528,7 @@
             "description": "Error"
           }
         },
-        "summary": "Sync the tree and list pending updates (a background job; poll GET /api/system/updates).",
+        "summary": "Sync the tree and list pending updates (a background job",
         "tags": [
           "system"
         ],
@@ -16583,7 +16564,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/system/users",
+        "summary": "List users (system/users)",
         "tags": [
           "system"
         ],
@@ -16628,7 +16609,7 @@
             "description": "Error"
           }
         },
-        "summary": "POST /api/system/users (admin)",
+        "summary": "Create user (system/users)",
         "tags": [
           "system"
         ],
@@ -16638,6 +16619,7 @@
     },
     "/api/system/users/{id}": {
       "delete": {
+        "description": "DELETE /api/system/users/:id (admin; never the last enabled admin)",
         "operationId": "delete_api_system_users_id",
         "parameters": [
           {
@@ -16676,7 +16658,7 @@
             "description": "Error"
           }
         },
-        "summary": "DELETE /api/system/users/:id (admin; never the last enabled admin)",
+        "summary": "Admin",
         "tags": [
           "system"
         ],
@@ -16684,7 +16666,6 @@
         "x-patronus-handler": "routes/api/system::delete_user"
       },
       "put": {
-        "description": "PUT /api/system/users/:id (admin) {role?, enabled?, password?}. The\naccount's sessions end (it logs in again with the new role/password).\n\nAn admin cannot set their *own* password here: `POST /api/auth/password`\nasks for the current one (throttled like login), and this route would\nlet anyone holding an admin's session skip that check, change the\nowner's password and lock them out of their own router.",
         "operationId": "put_api_system_users_id",
         "parameters": [
           {
@@ -16733,7 +16714,7 @@
             "description": "Error"
           }
         },
-        "summary": "PUT /api/system/users/:id (admin) {role?, enabled?, password?}. The account's sessions end (it logs in again with the ne",
+        "summary": "Update user (system/users)",
         "tags": [
           "system"
         ],
@@ -16792,7 +16773,6 @@
     },
     "/api/system/users/{id}/group": {
       "put": {
-        "description": "PUT /api/system/users/:id/group {group_id|null}. Admins have every\nprivilege already, so they cannot be put in a group.",
         "operationId": "put_api_system_users_id_group",
         "parameters": [
           {
@@ -16841,7 +16821,7 @@
             "description": "Error"
           }
         },
-        "summary": "PUT /api/system/users/:id/group {group_id|null}. Admins have every privilege already, so they cannot be put in a group.",
+        "summary": "Set group (system/users/group)",
         "tags": [
           "system"
         ],
@@ -16879,7 +16859,7 @@
             "description": "Error"
           }
         },
-        "summary": "Where the web UI listens: the effective settings (store > patronus.toml > environment > built-in) and the raw stored val",
+        "summary": "Where the web UI listens: the effective settings (store > patronus.toml > environment > built-in) and the raw stored values.",
         "tags": [
           "system"
         ],
@@ -18107,7 +18087,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /api/vpn/wireguard/config/:id",
+        "summary": "Get wg config (vpn/wireguard/config)",
         "tags": [
           "vpn"
         ],
@@ -18647,7 +18627,7 @@
             "description": "Error"
           }
         },
-        "summary": "Add or remove a MAC address on a network's block list or on the unit-wide one. Applied live (hostapd deny list): the cli",
+        "summary": "Add or remove a MAC address on a network's block list or on the unit-wide one.",
         "tags": [
           "wifi"
         ],
@@ -18828,7 +18808,7 @@
             "description": "Error"
           }
         },
-        "summary": "Channel use per radio (busy %, neighbouring networks per channel, the least crowded channel). Read-only; `fresh` asks th",
+        "summary": "Channel use per radio (busy %, neighbouring networks per channel, the least crowded channel).",
         "tags": [
           "wifi"
         ],
@@ -18990,7 +18970,7 @@
             "description": "Error"
           }
         },
-        "summary": "GET /metrics",
+        "summary": "Metrics (metrics)",
         "tags": [
           "metrics"
         ],

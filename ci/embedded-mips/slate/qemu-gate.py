@@ -55,8 +55,9 @@ def Rok(cmd, timeout=120):
     rc, o = R(cmd, timeout); need(rc == 0, f"`{cmd[:90]}` rc={rc}: {o[-400:]}"); return o
 
 
-def web(method, path, body=None, auth=True, port=None, timeout=300):
+def web(method, path, body=None, auth=True, port=None, timeout=300, hdr=None):
     h = {"content-type": "application/json"}
+    if hdr: h.update(hdr)
     if auth and COOKIE: h["cookie"] = COOKIE
     last = None
     for attempt in range(6):    # a handshake the emulated 24Kc could not finish (or a connection the user-mode network dropped) is retried; a refused request is not
@@ -332,6 +333,21 @@ def web_ports():
     n = Rok("netstat -ltn | grep -E ':(443|80) ' | wc -l").strip(); need(n == "2", f"listeners on 443/80: {n}")
 
 
+def i18n_docs():
+    """Languages + API description (docs/I18N.md, docs/API.md) on the MIPS image: the OpenAPI document and the
+    reference page need a session, an account's German translates the page and an API error, the setting is restored."""
+    c, t, _ = web("GET", "/api/openapi.json", auth=False); need(c == 401, f"openapi.json without a session: {c}")
+    c, t, _ = web("GET", "/api/status", auth=False, hdr={"accept-language": "de-DE,de;q=0.9"}); need("Anmeldung erforderlich" in t, f"German API error: {c} {t[:120]}")
+    c, t, _ = web("GET", "/api/openapi.json"); need(c == 200 and json.loads(t)["openapi"] == "3.1.0" and "/api/i18n/me" in t, f"openapi.json: {c} {t[:120]}")
+    c, t, _ = web("GET", "/api/docs"); need(c == 200 and 'id="api-list"' in t, f"/api/docs: {c}")
+    try:
+        c, t, _ = web("PUT", "/api/i18n/me", {"language": "de"}); need(c == 200, f"PUT /api/i18n/me: {c} {t[:120]}")
+        c, t, _ = web("GET", "/api/docs"); need("API-Referenz" in t and ">API reference<" not in t, f"German /api/docs: {c}")
+        c, t, _ = web("PUT", "/api/i18n/me", {"language": "xx"}); need(c == 400 and "Ungültige Sprache 'xx'" in t, f"bad language: {c} {t[:120]}")
+    finally:
+        web("PUT", "/api/i18n/me", {"language": ""})
+
+
 RULE = {"name": "slate-gate allow 8080", "enabled": True, "chain": "input", "action": "accept", "protocol": "tcp", "port": "8080", "interface": "any",
         "source": "any", "destination": "any", "description": "gate rule"}
 
@@ -430,6 +446,7 @@ def main():
     check("boot 1: ETPhoneHome router client running (baked into every Slate image)", etph)
     check("boot 1: router role: first-run claim (setup code; weak, mismatch, second claim refused) and login", first_run)
     check("boot 1: web UI on 443 and the plain-http redirect on 80, both listening", web_ports)
+    check("boot 1: languages: OpenAPI document and reference page behind the sign-in, German page and API error on request", i18n_docs)
     check("boot 1: boot guard armed, `patronus-guard ok` confirms the boot", boot_guard)
     check("boot 1: firewall rule added through the web API is in the kernel's nft chain after apply", fw_rule)
     check("boot 1: an invalid firewall rule is refused and the kernel's rules stay exactly as they were", fw_fail_closed)
