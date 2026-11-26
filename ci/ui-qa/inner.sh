@@ -34,6 +34,12 @@ run_variant() { # NAME BIN PORT KBD(yes|no) [env...]
   tail -40 "/q/out/crawl-$name.txt"
   [ $rc -eq 0 ] || fails+=("$name:crawl")
   fi
+  if [ "${UI_QA_ONLY:-}" != kbd ]; then
+    echo "== $name dialogs $(date -u +%T)"
+    BASE_URL="https://127.0.0.1:$port" E2E_PASSWORD="$PW" BROWSER=firefox timeout 900 python3 ci/ui-qa/dialog_shots.py \
+        --shots "/q/out/shots-$name" > "/q/out/dialogs-$name.txt" 2>&1 || fails+=("$name:dialogs")
+    tail -5 "/q/out/dialogs-$name.txt"
+  fi
   if [ "$kbd" = yes ]; then
     echo "== $name keyboard firewall rule $(date -u +%T)"
     BASE_URL="https://127.0.0.1:$port" E2E_USER=admin E2E_PASSWORD="$PW" timeout 600 python3 ci/ui-qa/kbd_firewall_rule.py \

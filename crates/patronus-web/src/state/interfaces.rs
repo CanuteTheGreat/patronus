@@ -26,6 +26,12 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Fallback devices the kernel creates on its own when a tunnel/queueing module loads; nobody configures them.
+pub const KERNEL_STUB_DEVICES: &[&str] = &[
+    "gre0", "gretap0", "erspan0", "ip_vti0", "ip6_vti0", "sit0", "ip6tnl0", "ip6gre0", "tunl0",
+    "teql0",
+];
+
 /// Prefix of errors that mean "this change would cut off the admin" (409).
 /// State captured by [`InterfacesManager::checkpoint`].
 pub struct Checkpoint {
@@ -478,7 +484,9 @@ impl InterfacesManager {
         }
     }
 
-    /// Everything the Interfaces page shows.
+    /// Everything the Interfaces page shows. `kernel_stub`: a fallback device the kernel creates by itself when a
+    /// tunnel module loads (gre0, sit0, ...): the page hides these behind a switch unless they carry an address or
+    /// a configuration.
     pub async fn overview(&self, client: Option<IpAddr>) -> anyhow::Result<Value> {
         let cfg = NetConfig::load(&self.store).await.map_err(Self::e)?;
         let k = self.kernel().await;
@@ -500,6 +508,7 @@ impl InterfacesManager {
                 "rx_bytes": l.rx_bytes,
                 "tx_bytes": l.tx_bytes,
                 "patronus_created": l.managed(),
+                "kernel_stub": KERNEL_STUB_DEVICES.contains(&l.name.as_str()) && !l.managed(),
                 "addresses": l.addrs.iter().filter(|a| a.scope != "host").map(|a| json!({
                     "address": a.net.to_string(),
                     "dynamic": a.dynamic,

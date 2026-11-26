@@ -468,7 +468,7 @@ pub async fn page(State(state): State<AppState>) -> Response {
         error,
     };
     match t.render() {
-        Ok(h) => Html(h).into_response(),
+        Ok(h) => Html(h.replace("@PATRONUS_VERSION@", env!("CARGO_PKG_VERSION"))).into_response(),
         Err(e) => {
             tracing::error!("render routing: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()

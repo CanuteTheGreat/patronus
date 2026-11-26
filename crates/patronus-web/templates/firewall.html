@@ -259,7 +259,7 @@
         <p class="hint">A port forward rewrites traffic arriving on an interface (normally WAN) for the
             given protocol and port to an internal host, and lets exactly that traffic through.
             NAT reflection lets LAN clients use the WAN address too.</p>
-        <div class="ui-toolbar"><div><button type="button" class="ui-btn primary sm" onclick="openForm('pf-form', 'Add port forward')">Add port forward</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-pf" placeholder="Filter" aria-label="Filter port forwards"></div></div>
+        <div class="ui-toolbar"><div><button type="button" data-open="pf-form" class="ui-btn primary sm" onclick="openForm('pf-form', 'Add port forward')">Add port forward</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-pf" placeholder="Filter" aria-label="Filter port forwards"></div></div>
         <div class="ui-grid-wrap"><table id="pf-table" class="ui-grid" data-ui-grid="fw-pf">
             <thead><tr><th>Name</th><th>Interface</th><th>Proto</th><th>External port</th><th>Source</th>
                 <th>Target</th><th>Reflection</th><th>On</th><th><span class="sr-only">Actions</span></th></tr></thead>
@@ -322,7 +322,7 @@
             <p class="hint">Automatic rules cover: {% if auto_nat_interfaces.is_empty() %}<em>no interface has the WAN role</em>{% else %}{{ auto_nat_interfaces }}{% endif %}. IPv6 is routed, not translated.</p>
             <button class="ui-btn primary" onclick="saveMode()">Save mode</button>
         </fieldset>
-        <div class="ui-toolbar"><div><button type="button" class="ui-btn primary sm" onclick="openForm('outbound-form', 'Add outbound rule')">Add outbound rule</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-outbound" placeholder="Filter" aria-label="Filter manual outbound rules"></div></div>
+        <div class="ui-toolbar"><div><button type="button" data-open="outbound-form" class="ui-btn primary sm" onclick="openForm('outbound-form', 'Add outbound rule')">Add outbound rule</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-outbound" placeholder="Filter" aria-label="Filter manual outbound rules"></div></div>
         <div class="ui-grid-wrap"><table id="outbound-table" class="ui-grid" data-ui-grid="fw-outbound">
             <thead><tr><th>Name</th><th>Type</th><th>Interface</th><th>Source</th><th>Destination</th><th>Translation</th><th>On</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
@@ -367,7 +367,7 @@
     <div class="tab" id="tab-onetoone">
         <p class="hint">1:1 NAT maps an external address to one internal host in both directions.
             Add a filter rule (forward chain) to allow the inbound connections you want.</p>
-        <div class="ui-toolbar"><div><button type="button" class="ui-btn primary sm" onclick="openForm('onetoone-form', 'Add 1:1 mapping')">Add 1:1 mapping</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-onetoone" placeholder="Filter" aria-label="Filter 1:1 mappings"></div></div>
+        <div class="ui-toolbar"><div><button type="button" data-open="onetoone-form" class="ui-btn primary sm" onclick="openForm('onetoone-form', 'Add 1:1 mapping')">Add 1:1 mapping</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-onetoone" placeholder="Filter" aria-label="Filter 1:1 mappings"></div></div>
         <div class="ui-grid-wrap"><table id="onetoone-table" class="ui-grid" data-ui-grid="fw-onetoone">
             <thead><tr><th>Name</th><th>Interface</th><th>External</th><th>Internal</th><th>On</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
@@ -410,7 +410,7 @@
         <p class="hint">IPv6 network prefix translation: the internal prefix (e.g. a ULA <code>fd00:50::/64</code>) is
             rewritten to the external prefix on the way out of the interface and back for traffic to the external prefix.
             Both prefixes must have the same length; host bits are kept. Add a filter rule (forward chain) for what may come in.</p>
-        <div class="ui-toolbar"><div><button type="button" class="ui-btn primary sm" onclick="openForm('npt-form', 'Add NPTv6 mapping')">Add NPTv6 mapping</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-npt" placeholder="Filter" aria-label="Filter NPTv6 mappings"></div></div>
+        <div class="ui-toolbar"><div><button type="button" data-open="npt-form" class="ui-btn primary sm" onclick="openForm('npt-form', 'Add NPTv6 mapping')">Add NPTv6 mapping</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-npt" placeholder="Filter" aria-label="Filter NPTv6 mappings"></div></div>
         <div class="ui-grid-wrap"><table id="npt-table" class="ui-grid" data-ui-grid="fw-npt">
             <thead><tr><th>Name</th><th>Interface</th><th>External prefix</th><th>Internal prefix</th><th>On</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
@@ -453,7 +453,7 @@
         <p class="hint">Use an alias in a rule as <code>$name</code>. Host aliases hold IPv4/IPv6
             addresses, networks and ranges; port aliases hold ports and port ranges. Saving an alias
             updates its nftables set immediately, without reloading the ruleset.</p>
-        <div class="ui-toolbar"><div><button type="button" class="ui-btn primary sm" onclick="openForm('alias-form', 'Add alias')">Add alias</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-aliases" placeholder="Filter" aria-label="Filter aliases"></div></div>
+        <div class="ui-toolbar"><div><button type="button" data-open="alias-form" class="ui-btn primary sm" onclick="openForm('alias-form', 'Add alias')">Add alias</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-aliases" placeholder="Filter" aria-label="Filter aliases"></div></div>
         <div class="ui-grid-wrap"><table id="aliases-table" class="ui-grid" data-ui-grid="fw-aliases">
             <thead><tr><th>Name</th><th>Type</th><th>Entries</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
@@ -502,7 +502,7 @@
     <div class="tab" id="tab-schedules">
         <p class="hint">A rule with a schedule is enforced only during the schedule's window (local
             time on the firewall). A window whose end is before its start runs past midnight.</p>
-        <div class="ui-toolbar"><div><button type="button" class="ui-btn primary sm" onclick="openForm('schedule-form', 'Add schedule')">Add schedule</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-schedules" placeholder="Filter" aria-label="Filter schedules"></div></div>
+        <div class="ui-toolbar"><div><button type="button" data-open="schedule-form" class="ui-btn primary sm" onclick="openForm('schedule-form', 'Add schedule')">Add schedule</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-schedules" placeholder="Filter" aria-label="Filter schedules"></div></div>
         <div class="ui-grid-wrap"><table id="schedules-table" class="ui-grid" data-ui-grid="fw-schedules">
             <thead><tr><th>Name</th><th>Days</th><th>From</th><th>Until</th><th>Now</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>

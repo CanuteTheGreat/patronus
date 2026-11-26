@@ -59,7 +59,9 @@ mod built {
             is_admin: me.session.role.is_admin(),
         };
         match t.render() {
-            Ok(h) => Html(h).into_response(),
+            Ok(h) => {
+                Html(h.replace("@PATRONUS_VERSION@", env!("CARGO_PKG_VERSION"))).into_response()
+            }
             Err(e) => {
                 tracing::error!("render segmentation: {e}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
