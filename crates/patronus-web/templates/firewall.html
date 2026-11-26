@@ -15,6 +15,8 @@
     .fw-page .row { display: flex; flex-wrap: wrap; gap: var(--s-3); margin-bottom: var(--s-2); }
     .fw-page .row label { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-sm); min-width: min(150px, 100%); }
     .fw-page .row label.check, .fw-page label.check { flex-direction: row; align-items: center; gap: 6px; min-width: 0; display: flex; }
+    /* stacked check rows keep their boxes >= 24px apart (WCAG 2.2 target spacing; axe target-size) */
+    .fw-page label.check { min-height: 28px; }
     .fw-page input, .fw-page select, .fw-page textarea { max-width: 100%; }
     .fw-page .msg { padding: 8px var(--s-3); margin: var(--s-2) 0; border-radius: var(--r-md); display: none; border: 1px solid var(--c-border); }
     .fw-page .msg.error { display: block; background: var(--c-crit-bg); color: var(--c-crit); }

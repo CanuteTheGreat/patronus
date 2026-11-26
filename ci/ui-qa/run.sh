@@ -15,7 +15,19 @@ EMB=${2:?router multicall patronus-cli binary}
 OUT=${3:-ui-qa-out}
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
-PW_IMAGE=${PW_IMAGE:-mcr.microsoft.com/playwright/python:v1.65.2-noble}
+# The browser image must be the Ubuntu release the binaries were built on (or newer): the CI job builds in
+# catthehacker/ubuntu:act-latest, which moves to new releases (26.04 links OpenSSL 3.5, glibc 2.43), so a fixed
+# -noble image could not load them. Builds on Debian (rust:1-bookworm, older libs) run on the noble image.
+pw_flavour() {
+  local id="" code=""
+  [ -r /etc/os-release ] && { id=$(. /etc/os-release; echo "${ID:-}"); code=$(. /etc/os-release; echo "${VERSION_CODENAME:-}"); }
+  case "$id:$code" in
+    ubuntu:jammy|ubuntu:noble|ubuntu:resolute) echo "$code";;
+    *) echo "${UI_QA_PW_FLAVOUR_DEFAULT:-noble}";;
+  esac
+}
+PW_IMAGE=${PW_IMAGE:-mcr.microsoft.com/playwright/python:v1.65.2-$(pw_flavour)}
+echo "ui-qa: browser image $PW_IMAGE"
 C=ui-qa-${GITHUB_RUN_ID:-local}-$$
 trap 'docker rm -f -v "$C" >/dev/null 2>&1 || true' EXIT
 mkdir -p "$OUT"
