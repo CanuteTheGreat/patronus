@@ -69,6 +69,9 @@ REQUIRED_USE="
 	dnsmasq? ( !bind )
 "
 
+# DNS filtering catalog (USE=dns, docs/DNS-FILTERING.md): Unbound's rpz: module (rpz-log, rpz-action-override)
+# needs >= 1.13; the lists are downloaded with curl; the allow list's regular expressions are a crate
+# (regex-lite), nothing to install.
 # DHCP server (USE=dhcp): Kea (USE=kea; RA via radvd) or dnsmasq (DHCPv4/v6,
 # RA and relay in one daemon). Relays always use dnsmasq. Patronus writes the
 # config these packages' own init scripts read (/etc/kea, /etc/dnsmasq.conf,
@@ -90,9 +93,9 @@ RDEPEND="
 	)
 	ntp? ( net-misc/chrony )
 	dns? (
-		unbound? ( net-dns/unbound )
+		unbound? ( >=net-dns/unbound-1.13 net-misc/curl )
 		bind? ( net-dns/bind )
-		dnsmasq? ( net-dns/dnsmasq )
+		dnsmasq? ( net-dns/dnsmasq net-misc/curl )
 	)
 	vpn? (
 		wireguard? ( net-vpn/wireguard-tools )
