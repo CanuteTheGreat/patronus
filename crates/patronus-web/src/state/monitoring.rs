@@ -243,11 +243,12 @@ impl MonitoringManager {
                     })
                     .unwrap_or_default();
 
-                let level_color = match e.severity.as_str() {
-                    "emergency" | "alert" | "critical" | "error" => "#ff4444",
-                    "warning" => "#ffaa00",
-                    "notice" | "info" => "#00aaff",
-                    _ => "#888888",
+                // ui-kit badge tone (theme tokens), not a colour: the page follows light/dark
+                let level_class = match e.severity.as_str() {
+                    "emergency" | "alert" | "critical" | "error" => "crit",
+                    "warning" => "warn",
+                    "notice" | "info" => "info",
+                    _ => "",
                 }
                 .to_string();
 
@@ -256,7 +257,7 @@ impl MonitoringManager {
                     level: e.severity,
                     component: e.source.unwrap_or(e.facility),
                     message: e.message,
-                    level_color,
+                    level_class,
                 }
             })
             .collect())
@@ -397,19 +398,19 @@ fn read_syslog_file(limit: usize) -> Vec<crate::templates::LogEntry> {
         .rev()
         .map(|l| {
             let low = l.to_ascii_lowercase();
-            let (level, color) = if low.contains("error") || low.contains("fail") {
-                ("error", "#ff4444")
+            let (level, class) = if low.contains("error") || low.contains("fail") {
+                ("error", "crit")
             } else if low.contains("warn") {
-                ("warning", "#ffaa00")
+                ("warning", "warn")
             } else {
-                ("info", "#00aaff")
+                ("info", "info")
             };
             crate::templates::LogEntry {
                 timestamp: l.chars().take(15).collect(),
                 level: level.to_string(),
                 component: "syslog".to_string(),
                 message: l.chars().skip(16).collect(),
-                level_color: color.to_string(),
+                level_class: class.to_string(),
             }
         })
         .collect()

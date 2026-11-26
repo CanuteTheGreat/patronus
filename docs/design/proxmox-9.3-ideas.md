@@ -164,27 +164,23 @@ Fixed together with this document:
 | Monospace text (MAC addresses, keys) rendered at the browser's small monospace size because the font was the bare `monospace` generic | `--font-mono` token (font list) used everywhere |
 | Plain links in page text used the browser's default blue, which clashes with the theme and is hard to read on dark cards | `.content a:not([class])` uses the theme accent |
 
-Open (built by the UI design-system adoption, section H, with the screenshots as before/after):
+Design-system adoption, first step (branch ui-kit-1: shared ui-kit v0.1 vendored and pinned, Patronus theme layer):
 
-- No shared data grid: tables differ per page; no toolbar (add, bulk enable/disable/delete, filter), no per-row
-  action menu, no column chooser, no sort where order is not semantic. Firewall rules: the name column wraps to
-  three lines while address columns have slack, rows are 95-130 px tall (pfSense/OPNsense/Proxmox: 24-34 px), and
-  at 390 px only the first five columns are visible without a scroll hint.
-- Forms are always expanded under the tables (Add rule ~380 px permanently); fields not relevant to the chosen
-  chain stay visible; "any" is a pre-filled value instead of a placeholder; checkboxes run together inline.
-  Proxmox/OPNsense: an Add button opens a dialog/drawer with conditional fields and inline hints.
-- Summary cards carry one number each and waste most of their area; health values (disk at 86 %, load) are grey
-  body text without thresholds; kernel stub devices (gre0, gretap0, erspan0) fill the interface lists; byte
-  counters are raw integers; empty values are written four ways ("none", "N/A", zeros, blank).
-- The dashboard is a snapshot ("measured when this page loaded") with no refresh; Proxmox summary panels update
-  live.
-- Access-point role dashboard shows router cards (firewall rules, VPN, DHCP leases) first; radios, SSIDs and
-  clients are not on it.
-- Header: a colour emoji as the theme toggle in a line-icon UI; one-item "Overview" nav group; "Home" breadcrumb vs
-  "Dashboard" title.
-- Firewall states call answers 503 where conntrack is unavailable (container) and the page shows the raw error;
-  the Interfaces page asks `/api/wifi/uplinks` on builds without Wi-Fi client support and prints a USE-flag hint on
-  the router tier (should read `/api/features` first).
+| Finding | Status |
+|---|---|
+| No shared data grid / toolbar / bulk actions / filter / column chooser | Firewall: every tab's list is a kit grid with a toolbar (Add, filter); the Rules tab also has bulk enable/disable/delete, a column chooser and a sticky actions column; rows are one line. Other pages: kit look on the legacy markup, structure next |
+| Forms always expanded; irrelevant fields shown; "any" pre-filled | Firewall rule, port forward, outbound NAT, 1:1, NPTv6, alias and schedule forms open in dialogs from Add/Edit; the rule dialog shows the out interface, port and gateway only when they apply; "any" is a placeholder; errors stay in the dialog. Other pages next |
+| One-number cards, health without thresholds, stub devices, raw byte counters, four empty-value spellings | Dashboard: health usage bars with warning/critical thresholds (settings `ui.health_warn_pct` / `ui.health_crit_pct`, System > Display), stub devices hidden behind a switch, humanised bytes and rates, one empty glyph (&mdash;) on the migrated pages. Monitoring/System/Network summary cards next |
+| Dashboard is a snapshot | live refresh every `ui.refresh_secs` (default 10) |
+| AP-role dashboard shows router cards first | AP role leads with the radios (state, channel, networks and clients) and the uplink; router tiles hidden |
+| Header emoji theme toggle, one-item nav group, Home vs Dashboard | line-icon toggle (follow the device / light / dark), Overview group and breadcrumb fixed, "Go to page" search in the header |
+| Firewall states 503 without conntrack; Interfaces asks for Wi-Fi uplinks on builds without them | states answer 200 `{available:false, reason}` with a banner; Interfaces reads `/api/features` first |
+
+Proof in CI (rust-ci `ui-qa`, `ci/ui-qa/run.sh`): the live standard-tier patronus-web and the router-tier build (AP and
+gateway role) crawled in Firefox at 1280 and 390 px, light and dark, with a WCAG AA contrast scan of every text element,
+a keyboard-only add/edit/delete of a firewall rule, and every page's screenshot diffed against the pinned baseline
+(`ci/ui-qa/shots.pin`). The router QEMU gates check the kit on the emulated unit (`qemu-gate.sh` `ui_kit`, Slate
+`qemu-gate.py` `ui_kit`).
 
 ## Related plan: pfSense / OPNsense parity
 

@@ -482,6 +482,83 @@ jobs:
       - name: Lane J + K scenarios in a capped NET_ADMIN/SYS_ADMIN container
         run: ci/netlab/run.sh ci/netlab/lane-j-*.sh ci/netlab/lane-k-*.sh ci/netlab/lane-n-*.sh ci/netlab/lane-s-*.sh ci/netlab/lane-t-*.sh
 
+  ui-qa:
+    # Live UI QA (ci/ui-qa/run.sh): the shipped patronus-web (standard tier) and the router-tier multicall build
+    # (ax1800 image feature set, AP role and gateway role) run for real and Firefox (Playwright) walks every page
+    # reachable from the nav at 1280 and 390 px, light and dark: the ux_crawl rules (JS errors, 5xx, overflow,
+    # phone nav, dead summaries...) plus WCAG AA text contrast, a full-page screenshot of every page, a keyboard-only
+    # add/edit/delete of a firewall rule, and the screenshots diffed against the pinned baseline (ci/ui-qa/shots.pin).
+    # When the screens differ from the baseline, the reduced set is published as generic package patronus-ui-shots/<sha>
+    # (a candidate baseline: pin it in ci/ui-qa/shots.pin once its diff report was looked at).
+    name: UI QA (live pages, both tiers, 1280+390, light+dark, contrast, keyboard, visual diff)
+    runs-on: linux-cross-x86_64
+    needs: plan
+    if: needs.plan.outputs.dup != 'true'
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: 4
+      CARGO_PROFILE_DEV_DEBUG: 0
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 6g --memory-swap 6g --cpus 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          bash ci/apt-install.sh build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler libdbus-1-dev libpam0g-dev libclang-dev
+      - name: Build env (mold linker, no incremental)
+        run: CI_NO_SCCACHE=1 CI_RUST_ENV_EXPORT=1 . ci/ci-rust-env.sh
+      - name: Cache cargo
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-uiqa-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-uiqa-
+      - name: Build patronus-web (standard) and the router-tier multicall patronus-cli
+        run: |
+          cargo build -p patronus-web --bin patronus-web
+          cp target/debug/patronus-web /tmp/patronus-web-std
+          # the ax1800 image's feature list (ci/embedded-aarch64/ax1800/stage-patronus.sh FEATURES)
+          F=$(sed -n 's/^FEATURES=\${CLI_FEATURES:-\(.*\)}$/\1/p' ci/embedded-aarch64/ax1800/stage-patronus.sh | head -1)
+          [ -n "$F" ] || F=nftables,cli,dhcp-server,dns-server,uci-import,wifi-ap,web-multicall,vpn-wireguard,ntp-server,syslog
+          echo "router features: $F"
+          cargo build -p patronus-cli --no-default-features --features "$F"
+          cp target/debug/patronus /tmp/patronus-cli-emb 2>/dev/null || cp target/debug/patronus-cli /tmp/patronus-cli-emb
+      - name: Pinned screenshot baseline
+        run: bash ci/ui-qa/baseline.sh fetch /tmp/ui-baseline
+      - name: Live crawl + contrast + keyboard e2e + visual diff (Firefox)
+        run: UI_QA_BASELINE=/tmp/ui-baseline bash ci/ui-qa/run.sh /tmp/patronus-web-std /tmp/patronus-cli-emb ui-qa-out
+      - name: Publish the screenshot set when the UI changed (a candidate baseline, versioned by commit)
+        if: always()
+        continue-on-error: true
+        env:
+          FORGEJO_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+        run: |
+          [ -s ui-qa-out/ui-shots.tar.gz ] || { echo "no screenshot set"; exit 0; }
+          changed=$(python3 -c "import json; d=json.load(open('ui-qa-out/diff.json')); print(int((not d['baseline']) or d['fail'] or d['warn'] or d['new'] or d['gone']))" 2>/dev/null || echo 1)
+          [ "$changed" = 1 ] || { echo "screens match the pinned baseline: nothing to publish"; exit 0; }
+          bash ci/ui-qa/baseline.sh publish ui-qa-out/ui-shots.tar.gz "${GITHUB_SHA:0:12}"
+      - name: Results
+        if: always()
+        run: |
+          cat ui-qa-out/ui-qa.txt 2>/dev/null | tail -120 || true
+          python3 - <<'PY' || true
+          import json, glob
+          for f in sorted(glob.glob('ui-qa-out/report-*.json')):
+              r = json.load(open(f)); print(f, 'pages', r['pages_checked'], 'new_fail', r['new_fail'])
+          try:
+              d = json.load(open('ui-qa-out/diff.json')); print('visual diff: pages', d['pages'], 'fail', d['fail'], 'warn', d['warn'], 'new', d['new'], 'gone', d['gone'])
+          except Exception as e: print('no diff report', e)
+          PY
+
   feature-matrix:
     # `cargo test --workspace` only ever compiles default features, so every
     # cfg(feature)-gated module (patronus-network's dhcp/dns/wireguard/

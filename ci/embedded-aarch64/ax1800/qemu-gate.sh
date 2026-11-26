@@ -122,6 +122,19 @@ ap_pages() { c=$(wapi https://127.0.0.1:$WEBP/dhcp); grep -q 'This unit is an ac
   c=$(wapi https://127.0.0.1:$WEBP/svc/guest); grep -q 'This unit is an access point' "$W/api.json" && [ "$c" = 200 ] || { echo "/svc/guest: $c"; return 1; }
   c=$(wapi -X PUT -d '{"enabled":true}' https://127.0.0.1:$WEBP/api/svc/guest); [ "$c" = 409 ] || { echo "guest network change on an AP: HTTP $c"; return 1; }
   c=$(wapi https://127.0.0.1:$WEBP/wifi); [ "$c" = 200 ] && grep -q 'id="wifi-networks"' "$W/api.json" || { echo "/wifi page: $c"; return 1; }; }
+# shared ui-kit on the router tier: the kit + theme are served from the binary (sha256 = the pinned, vendored files when the
+# source tree is beside this script), every page links them, and the AP dashboard puts the radios panel first
+KITPIN="$HERE/../../../crates/patronus-web/ui-kit/ui-kit.pin"
+ui_kit() { login || return 1
+  for f in tokens.css components.css patronus.css ui.js; do
+    c=$(curl -sk -o "$W/kit-$f" -w '%{http_code}' -m 60 https://127.0.0.1:$WEBP/ui-kit/$f); [ "$c" = 200 ] && [ -s "$W/kit-$f" ] || { echo "/ui-kit/$f: HTTP $c"; return 1; }
+    if [ -f "$KITPIN" ] && [ "$f" != patronus.css ]; then want=$(sed -n "s/^sha256 $f = //p" "$KITPIN"); got=$(sha256sum "$W/kit-$f" | cut -d' ' -f1)
+      [ "$got" = "$want" ] || { echo "/ui-kit/$f sha256 $got != pinned $want"; return 1; }; fi
+  done
+  for pg in / /wifi /system /diagnostics; do c=$(wapi https://127.0.0.1:$WEBP$pg)
+    [ "$c" = 200 ] && grep -q '/ui-kit/components.css' "$W/api.json" && grep -q '/ui-kit/patronus.css' "$W/api.json" || { echo "$pg: HTTP $c or no kit stylesheet"; return 1; }; done
+  c=$(wapi https://127.0.0.1:$WEBP/); grep -q 'id="ap-radios"' "$W/api.json" || { echo "AP dashboard has no radios panel"; return 1; }
+  s=$(wapi https://127.0.0.1:$WEBP/api/system/ui); [ "$s" = 200 ] && has_all "$(cat "$W/api.json")" '"health_warn_pct"' '"refresh_secs"' || { echo "/api/system/ui: $s $(cat "$W/api.json")"; return 1; }; }
 WIFI_SET='{"country":"US","chan24":"6","chan5":"36","width5":80,"wifi6":true,"networks":[{"ssid":"CI Gate Net","key":"ci-gate-wifi-pass","security":"wpa2+3","enabled":true},{"ssid":"CI Gate IoT","key":"ci-gate-iot-pass","bands":"24","isolate":true,"enabled":true}]}'
 wifi_set() { c=$(wapi -X PUT -d "$WIFI_SET" https://127.0.0.1:$WEBP/api/wifi); r=$(cat "$W/api.json")
   [ "$c" = 200 ] || { echo "PUT /api/wifi: $c $r"; return 1; }
@@ -545,6 +558,7 @@ if has_feature syslog; then
 else echo "SKIP: Syslog (not in FEATURES=$FEATURES)" | tee -a "$RES/results.txt"; fi
 check "features: role ap, Wi-Fi backend, \"not available\" list with reasons" features_ap
 check "AP role: router-only pages explain the main router, their APIs refuse changes (409); Wi-Fi page served" ap_pages
+check "shared ui-kit: kit + theme served (pinned bytes), pages link them, AP dashboard leads with the radios, display settings API" ui_kit
 check "Wi-Fi channel plan: automatic channel (ACS) by default on both radios, width/DFS/channel lists/survey rounds settable, bad values 400" wifi_chanplan
 check "Wi-Fi page API: networks + radios written to the access-point file (0600), no key in GET, bad channel 400, admin reveal" wifi_set
 check "Wi-Fi restart path: hostapd started into its own transient scope (systemd)" wifi_scope

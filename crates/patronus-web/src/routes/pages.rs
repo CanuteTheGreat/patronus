@@ -350,8 +350,12 @@ pub async fn monitoring(State(state): State<AppState>) -> Response {
         Err(e) => (vec![], e.to_string()),
     };
 
+    let ui = patronus_config::uiprefs::resolve(&state.config_store).await;
     let template = MonitoringTemplate {
         page: "monitoring",
+        cpu_level: ui.level(metrics.cpu_percent).class(),
+        mem_level: ui.level(metrics.memory_percent).class(),
+        disk_level: ui.level(metrics.disk_percent).class(),
         rx_rate: crate::state::monitoring::format_rate(metrics.network_rx_rate),
         tx_rate: crate::state::monitoring::format_rate(metrics.network_tx_rate),
         metrics,

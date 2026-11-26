@@ -17,10 +17,12 @@ One deterministic, no-LLM check for the classes of defect the owner kept finding
   nav-offscreen     phone: a nav item sits off-screen / clipped, or the nav strip scrolls sideways (the menu must open to a list
                     with every item reachable; a button with data-nav-toggle or aria-expanded+aria-controls is opened first)
   same-title        document.title does not identify the page on >= 5 routes                     (warn)
+  contrast          (--contrast) visible text below WCAG AA against its composited background (4.5:1, 3:1 large text);
+                    colours are normalised through a canvas, so oklch()/color-mix() tokens are measured, not skipped
 
 Usage:
   BASE_URL=https://host:8006 ADMIN_PASSWORD=... ux_crawl.py [--config ux-crawl.json] [--static DIR] [--report out.json]
-        [--shots DIR] [--widths desktop,phone] [--schemes light,dark] [--routes /a,/b] [--max-routes N]
+        [--shots DIR] [--widths desktop,phone] [--schemes light,dark] [--routes /a,/b] [--max-routes N] [--contrast]
 
 Exit 1 when there is a `fail` finding that is not in the baseline file (the config's "baseline" path: id -> reason/owner).
 `warn` findings are printed and written to the report, never fail the run.  Baseline ids are `kind:route`.
@@ -113,6 +115,40 @@ NAV_CLOSE_JS = r"""() => { const b = document.querySelector('[data-nav-toggle][a
 # links a user can see (a nav item the page hides for a feature this build leaves out is not a route anyone reaches)
 LINKS_JS = r"""() => [...document.querySelectorAll('a[href]')].filter(a => a.getClientRects().length > 0).map(a => [a.getAttribute('href'), (a.innerText || '').trim().slice(0, 40), !!a.closest('nav, aside, .sidebar')])"""
 
+# WCAG AA text contrast (skill mobile-darkmode-follow-system scripts/contrast.js, plus canvas colour normalisation: computed
+# styles of kit tokens can serialise as oklch()/color(), which a plain rgb() parser silently skipped).
+CONTRAST_JS = r"""() => {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 1; const cx = cv.getContext('2d', { willReadFrequently: true });
+  const memo = new Map();
+  const parse = c => { if (!c || c === 'transparent') return { r: 0, g: 0, b: 0, a: 0 }; if (memo.has(c)) return memo.get(c);
+    cx.clearRect(0, 0, 1, 1); cx.fillStyle = '#000'; cx.fillStyle = c; cx.fillRect(0, 0, 1, 1);
+    const d = cx.getImageData(0, 0, 1, 1).data; const v = { r: d[0], g: d[1], b: d[2], a: d[3] / 255 }; memo.set(c, v); return v; };
+  const over = (f, b) => ({ r: f.r * f.a + b.r * (1 - f.a), g: f.g * f.a + b.g * (1 - f.a), b: f.b * f.a + b.b * (1 - f.a), a: 1 });
+  const lin = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  const L = c => 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+  const ratio = (a, b) => { const x = L(a), y = L(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const canvasBg = parse(getComputedStyle(document.documentElement).backgroundColor);
+  const page = canvasBg.a > 0 ? over(canvasBg, { r: 255, g: 255, b: 255, a: 1 }) : (matchMedia('(prefers-color-scheme: dark)').matches ? { r: 18, g: 18, b: 18, a: 1 } : { r: 255, g: 255, b: 255, a: 1 });
+  const bgOf = el => { const chain = [];
+    for (let e = el; e; e = e.parentElement) { const cs = getComputedStyle(e);
+      if (cs.backgroundImage && cs.backgroundImage !== 'none' && /gradient|url/.test(cs.backgroundImage)) return null;
+      const c = parse(cs.backgroundColor); if (c.a > 0) { chain.push(c); if (c.a >= 1) break; } }
+    let b = page; for (let i = chain.length - 1; i >= 0; i--) b = over(chain[i], b); return b; };
+  const bad = [], seen = new Set(); let n = 0;
+  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (w.nextNode()) { const t = w.currentNode; if (!t.nodeValue.trim()) continue; const el = t.parentElement;
+    if (!el || seen.has(el) || ['SCRIPT', 'STYLE', 'NOSCRIPT', 'OPTION', 'TITLE'].includes(el.tagName)) continue; seen.add(el);
+    if (el.closest('[aria-hidden=true], [disabled], .sr-only, dialog:not([open])')) continue;
+    const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+    if (r.width < 1 || r.height < 1 || cs.visibility === 'hidden' || +cs.opacity === 0) continue;
+    const bg = bgOf(el); if (!bg) continue; const fg = over(parse(cs.color), bg); n++;
+    const size = parseFloat(cs.fontSize), bold = parseInt(cs.fontWeight) >= 700;
+    const need = (size >= 24 || (size >= 18.66 && bold)) ? 3 : 4.5, cr = ratio(fg, bg);
+    if (cr < need - 0.005) bad.push(t.nodeValue.trim().slice(0, 32) + ' ' + cr.toFixed(2) + ':1 < ' + need + ' (' + el.tagName.toLowerCase() + (el.className && typeof el.className === 'string' ? '.' + el.className.split(' ')[0] : '') + ')'); }
+  return { checked: n, bad: bad.slice(0, 6), total: bad.length };
+}"""
+NO_TRANSITIONS_CSS = "*, *::before, *::after { transition: none !important; animation: none !important; }"
+
 
 def load_config(path):
     cfg = json.load(open(path))
@@ -169,6 +205,7 @@ def main():
     ap.add_argument("--routes", help="comma separated routes instead of discovering them from the nav")
     ap.add_argument("--max-routes", type=int)
     ap.add_argument("--static")
+    ap.add_argument("--contrast", action="store_true", help="also fail on WCAG AA text contrast (live pages)")
     ap.add_argument("--base", default=os.environ.get("BASE_URL", "https://localhost:8006"))
     a = ap.parse_args()
     cfg = load_config(a.config)
@@ -305,6 +342,16 @@ def main():
                         add("unlinked-summary", "fail" if route.split("?")[0] in cfg["summary_fail_routes"] else "warn", route, vp, scheme, u)
                     for e in f["empty"]:
                         add("empty-no-action", "warn", route, vp, scheme, e)
+                    if a.contrast:
+                        try:
+                            page.add_style_tag(content=NO_TRANSITIONS_CSS)
+                            page.wait_for_timeout(50)
+                            c = page.evaluate(CONTRAST_JS)
+                            pages[-1]["contrast_checked"] = c["checked"]
+                            for b in c["bad"]:
+                                add("contrast", "fail", route, vp, scheme, b + (f" (+{c['total'] - len(c['bad'])} more)" if c["total"] > len(c["bad"]) else ""))
+                        except Exception as e:  # noqa: BLE001
+                            add("contrast", "warn", route, vp, scheme, "scan failed: " + str(e)[:100])
                     # follow the page's own links (one level, same origin): cards/rows that point somewhere are pages too
                     for href, _t, in_nav in page.evaluate(LINKS_JS):
                         r = norm_route(href, base)
@@ -342,6 +389,12 @@ def main():
         print(f"{tag:5} {fid}  [{x['viewport']}/{x['scheme']}{' +%d more' % (len(xs) - 1) if len(xs) > 1 else ''}] {x['detail']}")
     if stale:
         print(f"note: baseline entries no longer reproduce (remove them): {', '.join(stale)}")
+    if a.contrast:
+        cc = [pg.get("contrast_checked", 0) for pg in pages]
+        print(f"contrast: {sum(cc)} text elements measured over {sum(1 for x in cc if x)} page loads (min {min(cc) if cc else 0} per page)")
+        if cc and max(cc) == 0:
+            add("contrast", "fail", "*", "all", "all", "the contrast scan measured no text at all")
+            new_fail.append(findings[-1])
     print(f"ux_crawl: {len(pages)} page loads over {len(routes or [])} routes in {report['seconds']}s; "
           f"{report['new_fail']} new fail, {len(known)} known, {sum(1 for x in findings if x['sev'] == 'warn')} warn")
     sys.exit(1 if new_fail else 0)

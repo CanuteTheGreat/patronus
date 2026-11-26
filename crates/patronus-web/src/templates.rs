@@ -249,6 +249,10 @@ pub struct MonitoringTemplate {
     pub ai_threats: Vec<AiThreat>,
     pub live_logs: Vec<LogEntry>,
     pub logs_error: String,
+    /// ui-kit usage tone of CPU / memory / disk ("", "warn", "crit": the ui.health_* thresholds)
+    pub cpu_level: &'static str,
+    pub mem_level: &'static str,
+    pub disk_level: &'static str,
 }
 
 /// System template
@@ -610,7 +614,8 @@ pub struct LogEntry {
     pub level: String,
     pub component: String,
     pub message: String,
-    pub level_color: String,
+    /// ui-kit badge tone: crit / warn / info / "" (neutral)
+    pub level_class: String,
 }
 
 // Display implementations for template types
