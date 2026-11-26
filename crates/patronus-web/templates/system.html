@@ -37,6 +37,15 @@
     .content .card[id], .content section.ui-panel[id] { scroll-margin-top: 72px; }
     @media (max-width: 900px) { .sys-index { display: grid; grid-template-columns: 1fr 1fr; } .sys-index a { padding: 8px 0; } }
     .sys-summary .ui-kv { grid-template-columns: max-content minmax(0, 28rem); }
+    /* settings rows (General, Web UI, SSH): each label stacks over its own field, so a wrapped row never strands a label
+       at the end of one line and its input at the start of the next */
+    .inline-form { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-3); align-items: flex-end; margin: var(--s-2) 0; }
+    .inline-form > label { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-sm); color: var(--c-muted); min-width: 0; max-width: 100%; }
+    .inline-form > label > br { display: none; }
+    .inline-form > label:has(> input[type=checkbox]) { flex-direction: row; align-items: center; gap: 6px; min-height: 32px; }
+    .inline-form > label:has(> textarea) { flex-basis: 100%; }
+    .inline-form textarea { width: 100%; max-width: 48rem; box-sizing: border-box; font-family: var(--font-mono); }
+    .inline-form input:not([type=checkbox]), .inline-form select { min-width: 8rem; max-width: 100%; box-sizing: border-box; }
 </style>
 
 <div class="card" id="about-card">
@@ -286,7 +295,7 @@ async function fwFeedDownload() {
     <form id="web-form" class="inline-form" onsubmit="return submitWeb(event)">
         <label>HTTPS port <input name="https_port" type="number" min="1" max="65535" value="{{ web_https_port }}"></label>
         <label>HTTP redirect port (0 = off) <input name="http_redirect_port" type="number" min="0" max="65535" value="{{ web_redirect_port }}"></label>
-        <label>Extra HTTPS ports <input name="extra_https_ports" value="{{ web_extra_ports }}" data-keep-empty="1" placeholder="empty = none; e.g. 8443 for old bookmarks"></label>
+        <label>Extra HTTPS ports (empty = none) <input name="extra_https_ports" value="{{ web_extra_ports }}" data-keep-empty="1" placeholder="e.g. 8443"></label>
         <label>Listen addresses <input name="listen" value="{{ web_listen }}" data-keep-empty="1" placeholder="0.0.0.0"></label>
         <label>TLS certificate file <input name="tls_cert" value="{{ web_cert }}" data-keep-empty="1" placeholder="/etc/patronus/tls/cert.pem"></label>
         <label>TLS key file <input name="tls_key" value="{{ web_key }}" data-keep-empty="1" placeholder="/etc/patronus/tls/key.pem"></label>
