@@ -125,12 +125,18 @@ pub async fn list_states(State(_s): State<AppState>, Query(q): Query<ListQuery>)
     let table = tokio::task::spawn_blocking(read_table).await;
     let text = match table {
         Ok(Ok(t)) => t,
+        // No conntrack on this system (a container, a kernel without nf_conntrack): a state of the system, not a
+        // server error. The page says so instead of showing an HTTP 503.
         Ok(Err(e)) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({"error": e})),
-            )
-                .into_response()
+            return Json(serde_json::json!({
+                "available": false,
+                "reason": e,
+                "total": 0,
+                "matched": 0,
+                "shown": 0,
+                "states": [],
+            }))
+            .into_response()
         }
         Err(e) => {
             return (
@@ -152,6 +158,7 @@ pub async fn list_states(State(_s): State<AppState>, Query(q): Query<ListQuery>)
     let matched = hits.len();
     let states: Vec<StateEntry> = hits.into_iter().take(limit).collect();
     Json(serde_json::json!({
+        "available": true,
         "total": total,
         "matched": matched,
         "shown": states.len(),

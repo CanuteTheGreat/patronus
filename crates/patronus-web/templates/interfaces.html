@@ -168,7 +168,7 @@
         </form>
     </div>
 
-    <h2>Wi-Fi uplinks <span class="muted">(station mode: a Wi-Fi network as WAN or backup WAN)</span></h2>
+    <h2 id="wu-title">Wi-Fi uplinks <span class="muted">(station mode: a Wi-Fi network as WAN or backup WAN)</span></h2>
     <div id="wu-off" class="empty hidden"></div>
     <div id="wu-on">
         <p class="muted">The wireless device joins the upstream network here; give it a role (e.g. OPT1) and IPv4 mode
@@ -418,6 +418,12 @@ function setSystemDhcpcd() { call('PUT', '/api/interfaces/system-dhcpcd', {mode:
 function setDhcpClient() { call('PUT', '/api/interfaces/dhcp-client', {client: document.getElementById('dhcp-client').value}); }
 
 async function loadUplinks() {
+    // Builds without Wi-Fi client support leave the section out (System > "Not available on this device" lists it).
+    const feat = await fetch('/api/features', {credentials: 'same-origin'}).then(x => x.ok ? x.json() : null).catch(() => null);
+    if (feat && !(feat.features || []).includes('wifi-client')) {
+        ['wu-title', 'wu-on', 'wu-off'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = 'none'; });
+        return;
+    }
     const r = await fetch('/api/wifi/uplinks', {credentials: 'same-origin'});
     let j = {};
     try { j = await r.json(); } catch (e) {}

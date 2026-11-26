@@ -144,43 +144,26 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
         .ok()
         .and_then(|v| v.get("leases").and_then(|l| l.as_array()).map(|a| a.len()));
     let roles = state.interfaces.roles().await;
-    let mut iface_rows: Vec<crate::templates::DashIface> = interfaces
-        .iter()
-        .map(|i| crate::templates::DashIface {
-            name: i.name.clone(),
-            role: roles
-                .get(&i.name)
-                .map(|r| r.to_uppercase())
-                .unwrap_or_default(),
-            up: i.state == "UP",
-            addrs: i.ip_display.clone(),
-        })
-        .collect();
-    // WAN first, then LAN, then other roles, then unassigned devices.
-    iface_rows.sort_by_key(|r| {
-        (
-            match r.role.as_str() {
-                "WAN" => 0,
-                "LAN" => 1,
-                "" => 3,
-                _ => 2,
-            },
-            r.name.clone(),
-        )
-    });
     // Live rates over a short window (same sampler the Monitoring page uses).
     let sample = host::sample(std::time::Duration::from_millis(300)).await;
-    let traffic: Vec<crate::templates::DashTraffic> = state
+    let rates: std::collections::HashMap<String, String> = state
         .monitoring
         .interface_stats_from(&sample)
         .into_iter()
-        .filter(|s| s.name != "lo")
-        .map(|s| crate::templates::DashTraffic {
-            name: s.name,
-            rx: s.rx_rate,
-            tx: s.tx_rate,
-        })
+        .map(|s| (s.name, format!("{} / {}", s.rx_rate, s.tx_rate)))
         .collect();
+    let (iface_rows, hidden_stubs) = dash_iface_rows(&interfaces, &roles, &rates);
+    let ui = patronus_config::uiprefs::resolve(&state.config_store).await;
+    let (cpu_level, mem_level, disk_level) = (
+        ui.level(system_info.cpu_usage as f64),
+        ui.level(system_info.memory_usage as f64),
+        ui.level(system_info.disk_usage as f64),
+    );
+    let (health_note, health_tone) = health_note(&[
+        ("CPU", system_info.cpu_usage as f64, cpu_level),
+        ("Memory", system_info.memory_usage as f64, mem_level),
+        ("Disk /", system_info.disk_usage as f64, disk_level),
+    ]);
     let template = DashboardTemplate {
         page: "dashboard",
         uptime: host::format_duration(system_info.uptime),
@@ -194,9 +177,114 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
         internet_gw: gw.1,
         dhcp_leases,
         iface_rows,
-        traffic,
+        hidden_stubs,
+        ui,
+        ap: crate::routes::api::wifi::role() == crate::routes::api::setup::DeviceRole::Ap,
+        cpu_level: cpu_level.class(),
+        mem_level: mem_level.class(),
+        disk_level: disk_level.class(),
+        health_note,
+        health_tone,
     };
     render(&template, "dashboard")
+}
+
+/// Kernel fallback devices that tunnel/bridge modules create in every network namespace (`gre0`, `sit0`, ...).
+/// They carry no traffic until configured, so the dashboard leaves them out while they have no address; the
+/// Interfaces page still lists every device. These names are fixed by the kernel, not configuration.
+const KERNEL_STUB_DEVICES: &[&str] = &[
+    "gre0", "gretap0", "erspan0", "ip_vti0", "ip6_vti0", "sit0", "ip6tnl0", "ip6gre0", "tunl0",
+    "teql0",
+];
+
+/// The dashboard's interface rows: WAN first, then LAN, other roles, unassigned; kernel stub devices without an
+/// address are dropped (returned count says how many).
+pub(crate) fn dash_iface_rows(
+    interfaces: &[crate::templates::InterfaceInfo],
+    roles: &std::collections::BTreeMap<String, String>,
+    rates: &std::collections::HashMap<String, String>,
+) -> (Vec<crate::templates::DashIface>, usize) {
+    let mut hidden = 0;
+    let mut rows: Vec<crate::templates::DashIface> = interfaces
+        .iter()
+        .filter(|i| i.name != "lo")
+        .filter(|i| {
+            let stub = KERNEL_STUB_DEVICES.contains(&i.name.as_str())
+                && i.ip_addresses.is_empty()
+                && i.ip_address.is_none()
+                && !roles.contains_key(&i.name);
+            hidden += stub as usize;
+            !stub
+        })
+        .map(|i| {
+            let addrs = if i.ip_addresses.is_empty() {
+                i.ip_address.clone().unwrap_or_default()
+            } else {
+                i.ip_addresses.join(", ")
+            };
+            let mac = i.mac_address.trim();
+            crate::templates::DashIface {
+                name: i.name.clone(),
+                role: roles
+                    .get(&i.name)
+                    .map(|r| r.to_uppercase())
+                    .unwrap_or_default(),
+                up: i.state == "UP",
+                addrs,
+                mac: if mac.is_empty() || mac == "00:00:00:00:00:00" {
+                    String::new()
+                } else {
+                    mac.to_string()
+                },
+                rate: rates.get(&i.name).cloned().unwrap_or_default(),
+                rx: crate::state::vpn::format_bytes(i.rx_bytes),
+                tx: crate::state::vpn::format_bytes(i.tx_bytes),
+                rx_bytes: i.rx_bytes,
+                tx_bytes: i.tx_bytes,
+            }
+        })
+        .collect();
+    rows.sort_by_key(|r| {
+        (
+            match r.role.as_str() {
+                "WAN" => 0,
+                "LAN" => 1,
+                "" => 3,
+                _ => 2,
+            },
+            r.name.clone(),
+        )
+    });
+    (rows, hidden)
+}
+
+/// "Disk / at 91 % (critical from 90 %)" for every value over a threshold, and the banner tone of the worst.
+pub(crate) fn health_note(
+    vals: &[(&str, f64, patronus_config::uiprefs::Level)],
+) -> (String, &'static str) {
+    use patronus_config::uiprefs::Level;
+    let over: Vec<String> = vals
+        .iter()
+        .filter(|(_, _, l)| *l != Level::Ok)
+        .map(|(n, v, l)| {
+            format!(
+                "{n} at {v:.0}% ({})",
+                if *l == Level::Crit {
+                    "critical"
+                } else {
+                    "high"
+                }
+            )
+        })
+        .collect();
+    let tone = if vals.iter().any(|v| v.2 == Level::Crit) {
+        "crit"
+    } else if over.is_empty() {
+        ""
+    } else {
+        "warn"
+    };
+    (over.join(", "), tone)
 }
 
 /// Firewall rules page (rules, NAT, aliases, schedules).
@@ -318,6 +406,8 @@ pub async fn system(State(state): State<AppState>, me: crate::auth::AuthUser) ->
         .unwrap_or_default();
     let web = patronus_config::webui::resolve(Some(state.lan.store())).await;
     let template = SystemTemplate {
+        ui: patronus_config::uiprefs::resolve(&state.config_store).await,
+        ui_default: patronus_config::uiprefs::UiPrefs::default(),
         web_listen: web.listen.join(", "),
         web_https_port: web.https_port,
         web_redirect_port: web.http_redirect_port,

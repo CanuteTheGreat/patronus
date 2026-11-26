@@ -473,10 +473,26 @@ async fn every_template_link_resolves_to_a_page() {
 async fn ui_kit_assets_are_served_with_revalidation() {
     let a = app().await;
     for (path, ctype, marker) in [
-        ("/ui-kit/tokens.css", "text/css; charset=utf-8", "--c-canvas"),
-        ("/ui-kit/components.css", "text/css; charset=utf-8", ".ui-btn"),
-        ("/ui-kit/patronus.css", "text/css; charset=utf-8", "--c-brand"),
-        ("/ui-kit/ui.js", "text/javascript; charset=utf-8", "data-ui-grid"),
+        (
+            "/ui-kit/tokens.css",
+            "text/css; charset=utf-8",
+            "--c-canvas",
+        ),
+        (
+            "/ui-kit/components.css",
+            "text/css; charset=utf-8",
+            ".ui-btn",
+        ),
+        (
+            "/ui-kit/patronus.css",
+            "text/css; charset=utf-8",
+            "--c-brand",
+        ),
+        (
+            "/ui-kit/ui.js",
+            "text/javascript; charset=utf-8",
+            "data-ui-grid",
+        ),
     ] {
         let r = a
             .app
@@ -489,7 +505,10 @@ async fn ui_kit_assets_are_served_with_revalidation() {
         assert_eq!(r.headers()[header::CACHE_CONTROL], "no-cache");
         let etag = r.headers()[header::ETAG].to_str().unwrap().to_string();
         let body = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
-        assert!(String::from_utf8_lossy(&body).contains(marker), "{path} content");
+        assert!(
+            String::from_utf8_lossy(&body).contains(marker),
+            "{path} content"
+        );
         let mut again = req(Method::GET, path, None, None);
         again
             .headers_mut()

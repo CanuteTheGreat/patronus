@@ -4,158 +4,237 @@
 
 {% block extra_head %}
 {% include "lan_head.html" %}
+<style>
+    /* same 4-column rhythm as the tile row above: interfaces take three columns, health one */
+    .dash-grid { display: grid; gap: var(--s-3); grid-template-columns: minmax(0, 3fr) minmax(260px, 1fr); align-items: start; }
+    .dash-grid .ui-grid td.num, .dash-grid .ui-grid td.mono { white-space: nowrap; }
+    .dash-grid > * { min-width: 0; }
+    @media (max-width: 1100px) { .dash-grid { grid-template-columns: minmax(0, 1fr); } }
+    .dash-live { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .stat-card .label + .label { margin-top: 2px; }
+    .stat-card h2 a { margin-left: auto; font-weight: 500; color: var(--c-accent); text-decoration: none; }
+    .stat-card h2 a:hover { text-decoration: underline; }
+    .iface-role { margin-right: 4px; }
+    .svc-list { display: flex; flex-wrap: wrap; gap: 6px; }
+</style>
 {% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1 class="page-title">Dashboard</h1>
-    <p class="page-subtitle">{{ system_info.hostname }} &middot; up {{ uptime }} &middot; measured when this page loaded</p>
+<div class="ui-page-header">
+    <div>
+        <h1 class="page-title">Dashboard</h1>
+        <p class="ui-sub">{{ system_info.hostname }} &middot; up <span data-live="uptime">{{ uptime }}</span> &middot;
+            <span class="dash-live" id="dash-live" data-refresh="{{ ui.refresh_secs }}">{% if ui.refresh_secs == 0 %}snapshot (live refresh is off in System &gt; Display){% else %}<span class="ui-dot ok" id="dash-live-dot"></span><span id="dash-live-text">live, every {{ ui.refresh_secs }} s</span><button type="button" class="ui-btn sm" id="dash-live-toggle" aria-pressed="false">Pause</button>{% endif %}</span></p>
+    </div>
 </div>
 
-<div class="card" id="ap-uplink" style="display:none">
-    <div class="card-header"><h2 class="card-title">Access point</h2></div>
-    <p class="text-sm" id="ap-uplink-summary"></p>
-    <table class="lan" id="ap-uplink-ports"><thead><tr><th>Port</th><th>Link</th><th>Speed</th></tr></thead><tbody></tbody></table>
-    <p class="text-sm" id="ap-wifi-summary"></p>
-</div>
-<script>
-// An access point: show how it is connected (uplink) and what it broadcasts, instead of router figures.
-fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(async f => {
-    if (!f) return;
-    if (!(f.features || []).some(x => ['wireguard', 'ipsec', 'openvpn', 'l2tp'].includes(x))) {
-        document.querySelectorAll('.stat-card').forEach(c => { if (c.querySelector('#vpn-connections')) c.style.display = 'none'; });
-    }
-    if (f.role !== 'ap') return;
-    const u = await fetch('/api/ap/uplink', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null);
-    if (!u || !u.uplink) return;
-    const up = u.uplink, card = document.getElementById('ap-uplink');
-    card.style.display = '';
-    const gw = up.gateway ? up.gateway + (up.gateway_reachable ? ' (reachable)' : ' (not answering yet)') : 'none';
-    document.getElementById('ap-uplink-summary').textContent =
-        'Address ' + ((up.addresses || []).join(', ') || 'none yet') + ' (' + up.addressing + ') on ' + up.bridge +
-        ' \u00b7 gateway (main router) ' + gw + ' \u00b7 DNS ' + ((up.dns || []).join(', ') || 'none');
-    const tb = document.querySelector('#ap-uplink-ports tbody');
-    for (const p of up.ports || []) {
-        const tr = document.createElement('tr');
-        for (const v of [p.name, p.link ? 'up' : 'down', p.speed_mbps ? p.speed_mbps + ' Mbit/s ' + (p.duplex || '') : '']) {
-            const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
-        }
-        tb.appendChild(tr);
-    }
-    if (f.wifi_backend) {
-        const w = await fetch('/api/wifi', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null);
-        if (w && w.radios) {
-            const parts = w.radios.map(r => (r.band === '5' ? '5 GHz' : '2.4 GHz') + ': ' + (r.state === 'ENABLED'
-                ? 'ch ' + r.channel + ', ' + (r.bss || []).map(b => b.ssid + ' (' + b.clients + ')').join(', ') : (r.state || 'off')));
-            const s = document.getElementById('ap-wifi-summary');
-            s.textContent = 'Wi-Fi \u00b7 ' + parts.join(' \u00b7 ') + ' ';
-            const a = document.createElement('a'); a.href = '/wifi'; a.textContent = 'Wi-Fi settings and clients'; s.appendChild(a);
-        }
-    }
-}).catch(() => {});
-</script>
+<div data-live="health-note" role="status">{% if !health_note.is_empty() %}<div class="ui-banner {{ health_tone }}" id="health-note">{{ health_note }}. <a href="/monitoring">Monitoring</a></div>{% endif %}</div>
 
-<div class="stat-grid">
-    <div class="stat-card{% if internet_gw.is_empty() %} warning{% endif %}" id="internet-card">
-        <h2>Internet</h2>
+<section class="ui-panel" id="ap-uplink" style="display:none">
+    <div class="ui-panel-head"><h2>Access point</h2><a href="/wifi">Wi-Fi settings and clients</a></div>
+    <div class="ui-panel-body">
+        <dl class="ui-kv" id="ap-uplink-kv"></dl>
+        <h3 class="text-sm mt-4 mb-2">Radios</h3>
+        <div class="ui-grid-wrap"><table class="ui-grid" id="ap-radios"><thead><tr><th>Radio</th><th>State</th><th>Channel</th><th>Networks (clients)</th></tr></thead><tbody></tbody></table>
+            <div class="ui-grid-state" id="ap-radios-state">Loading…</div></div>
+        <h3 class="text-sm mt-4 mb-2">Uplink ports</h3>
+        <div class="ui-grid-wrap"><table class="ui-grid" id="ap-uplink-ports"><thead><tr><th>Port</th><th>Link</th><th>Speed</th></tr></thead><tbody></tbody></table></div>
+    </div>
+</section>
+
+<div class="stat-grid" data-live="tiles">
+    <div class="stat-card{% if internet_gw.is_empty() %} warning{% else %} success{% endif %}" id="internet-card">
+        <h2>Default route <a href="/network">Routes</a></h2>
         {% if internet_gw.is_empty() %}
         <div class="value" id="internet-status">No default route</div>
         <div class="label">This box has no IPv4 route to the internet; set the WAN in <a href="/interfaces">Interfaces</a>.</div>
         {% else %}
-        <div class="value" id="internet-status">Route up</div>
-        <div class="label">Default route via <span class="mono">{{ internet_gw }}</span> on <strong>{{ internet_dev }}</strong> (<a href="/network">routes</a>)</div>
+        <div class="value" id="internet-status">Present</div>
+        <div class="label" title="Whether the internet answers is shown on the Monitoring page (uplink health)">via <span class="mono">{{ internet_gw }}</span> on <strong>{{ internet_dev }}</strong></div>
         {% endif %}
     </div>
+    {% if !ap %}
     <div class="stat-card">
-        <h2>Interfaces</h2>
-        <div class="value">{{ interfaces.len() }}</div>
-        {% for r in iface_rows %}
-        <div class="label iface-row" data-iface="{{ r.name }}">
-            {% if !r.role.is_empty() %}<span class="iface-role">{{ r.role }}</span> {% endif %}<strong>{{ r.name }}</strong>
-            &middot; {% if r.up %}up{% else %}down{% endif %} &middot; <span class="mono">{{ r.addrs }}</span>
-        </div>
-        {% endfor %}
-        <div class="label"><a href="/interfaces">Interfaces</a></div>
-    </div>
-    <div class="stat-card">
-        <h2>Active firewall rules</h2>
+        <h2>Firewall <a href="/firewall">Rules</a></h2>
         <div class="value">{{ active_rules }}</div>
-        <div class="label"><a href="/firewall">Firewall</a></div>
+        <div class="label">active rules</div>
     </div>
     {% if vpn_errors.is_empty() %}
     <div class="stat-card">
-        <h2>VPN connections</h2>
+        <h2>VPN <a href="/vpn">Tunnels</a></h2>
         <div class="value" id="vpn-connections">{{ vpn_connections }}</div>
-        <div class="label">WireGuard peers with a handshake in the last 3 min + established IPsec SAs (<a href="/vpn">VPN</a>)</div>
+        <div class="label" title="WireGuard peers with a handshake in the last 3 minutes plus established IPsec SAs">tunnels connected</div>
     </div>
     {% else %}
     <div class="stat-card warning" id="vpn-connections-card">
-        <h2>VPN connections</h2>
+        <h2>VPN <a href="/vpn">Tunnels</a></h2>
         <div class="value" id="vpn-connections">{% if vpn_connections > 0 %}at least {{ vpn_connections }}{% else %}unknown{% endif %}</div>
         <div class="alert-error" id="vpn-errors">VPN state could not be read:
             {% for e in vpn_errors %}{{ e }}{% if !loop.last %}; {% endif %}{% endfor %}</div>
-        <div class="label">Live tunnels may be missing from this count (<a href="/vpn">VPN</a>)</div>
+        <div class="label">Live tunnels may be missing from this count</div>
     </div>
     {% endif %}
     {% if let Some(n) = dhcp_leases %}
     <div class="stat-card">
-        <h2>DHCP leases</h2>
+        <h2>DHCP <a href="/dhcp">Leases</a></h2>
         <div class="value" id="dhcp-leases">{{ n }}</div>
-        <div class="label">Clients holding a lease (<a href="/dhcp">DHCP</a>)</div>
+        <div class="label">clients holding a lease</div>
     </div>
     {% endif %}
-    {% if !traffic.is_empty() %}
-    <div class="stat-card">
-        <h2>Traffic</h2>
-        {% for t in traffic %}
-        <div class="label" data-traffic="{{ t.name }}"><strong>{{ t.name }}</strong> &middot; &darr; {{ t.rx }} &middot; &uarr; {{ t.tx }}</div>
-        {% endfor %}
-        <div class="label"><a href="/monitoring">Monitoring</a></div>
-    </div>
-    {% endif %}
-    <div class="stat-card">
-        <h2>System</h2>
-        <div class="label">CPU {{ "{:.1}"|format(system_info.cpu_usage) }}% &middot;
-            memory {{ "{:.1}"|format(system_info.memory_usage) }}% &middot;
-            disk / {{ "{:.1}"|format(system_info.disk_usage) }}%</div>
-        <div class="label">load {{ system_info.load_avg.0 }} / {{ system_info.load_avg.1 }} / {{ system_info.load_avg.2 }} &middot; <a href="/system">System</a></div>
-    </div>
-</div>
-
-<div class="card">
-    <div class="card-header"><h2 class="card-title">Network interfaces</h2></div>
-    {% if interfaces.is_empty() %}
-    <p class="empty">No network interfaces found.</p>
-    {% else %}
-    <table class="lan">
-        <thead><tr><th>Interface</th><th>Status</th><th>IP addresses</th><th>MAC</th><th>RX bytes</th><th>TX bytes</th></tr></thead>
-        <tbody>
-        {% for iface in interfaces %}
-        <tr>
-            <td><strong>{{ iface.name }}</strong></td>
-            <td>{% if iface.enabled %}<span class="ok">{{ iface.state }}</span>{% else %}<span class="text-muted">{{ iface.state }}</span>{% endif %}</td>
-            <td>{{ iface.ip_display }}</td>
-            <td class="mono">{{ iface.mac_display }}</td>
-            <td>{{ iface.rx_bytes }}</td>
-            <td>{{ iface.tx_bytes }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
     {% endif %}
 </div>
 
-<div class="card">
-    <div class="card-header"><h2 class="card-title">Services</h2></div>
-    {% if services.is_empty() %}
-    <p class="empty">None of the services Patronus manages are installed on this system (or the init system is not systemd/OpenRC).</p>
-    {% else %}
-    <p class="text-sm">
-        {% for s in services %}
-        {{ s.name }}: {% if s.is_running %}<span class="ok">running</span>{% else %}<span class="text-muted">{{ s.status|lower }}</span>{% endif %}{% if !loop.last %} &middot; {% endif %}
-        {% endfor %}
-        &middot; <a href="/system">details</a>
-    </p>
-    {% endif %}
+<div class="dash-grid">
+    <section class="ui-panel">
+        <div class="ui-panel-head"><h2>Interfaces</h2><a href="/interfaces">Configure</a></div>
+        {% if iface_rows.is_empty() %}
+        <div class="ui-grid-state">No network interfaces found.</div>
+        {% else %}
+        <div class="ui-grid-wrap" style="border:0;border-radius:0" data-live="ifaces">
+            <table class="ui-grid" data-ui-grid="dash-ifaces">
+                <thead><tr><th data-sort>Interface</th><th data-sort>State</th><th>Addresses</th><th class="num" data-col="rate">Rate &darr; / &uarr;</th><th class="num" data-sort data-type="num">Received</th><th class="num" data-sort data-type="num">Sent</th></tr></thead>
+                <tbody>
+                {% for r in iface_rows %}
+                <tr class="iface-row" data-iface="{{ r.name }}">
+                    <td>{% if !r.role.is_empty() %}<span class="ui-badge info iface-role">{{ r.role }}</span>{% endif %}<strong{% if !r.mac.is_empty() %} title="MAC {{ r.mac }}"{% endif %}>{{ r.name }}</strong></td>
+                    <td>{% if r.up %}<span class="ui-badge ok"><span class="ui-dot ok"></span>up</span>{% else %}<span class="ui-badge"><span class="ui-dot off"></span>down</span>{% endif %}</td>
+                    <td class="mono">{% if r.addrs.is_empty() %}<span class="nil" title="no address">&mdash;</span>{% else %}{{ r.addrs }}{% endif %}</td>
+                    <td class="num" data-col="rate" data-traffic="{{ r.name }}">{% if r.rate.is_empty() %}<span class="nil">&mdash;</span>{% else %}{{ r.rate }}{% endif %}</td>
+                    <td class="num" data-v="{{ r.rx_bytes }}">{{ r.rx }}</td>
+                    <td class="num" data-v="{{ r.tx_bytes }}">{{ r.tx }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if hidden_stubs > 0 %}<div class="ui-grid-foot"><span>{{ hidden_stubs }} kernel placeholder device(s) without an address hidden (gre0, sit0, ...); <a href="/interfaces">all devices</a></span></div>{% endif %}
+        {% endif %}
+    </section>
+
+    <div>
+        <section class="ui-panel" data-live="health">
+            <div class="ui-panel-head"><h2>System</h2><a href="/system">Details</a></div>
+            <div class="ui-panel-body">
+                <dl class="ui-kv">
+                    <dt>CPU</dt><dd><div class="ui-usage {{ cpu_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(system_info.cpu_usage) }}%"></i></span><span class="val">{{ "{:.0}"|format(system_info.cpu_usage) }}%</span></div></dd>
+                    <dt>Memory</dt><dd><div class="ui-usage {{ mem_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(system_info.memory_usage) }}%"></i></span><span class="val">{{ "{:.0}"|format(system_info.memory_usage) }}%</span></div></dd>
+                    <dt>Disk /</dt><dd><div class="ui-usage {{ disk_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(system_info.disk_usage) }}%"></i></span><span class="val">{{ "{:.0}"|format(system_info.disk_usage) }}%</span></div></dd>
+                    <dt>Load</dt><dd class="mono">{{ system_info.load_avg.0 }} &middot; {{ system_info.load_avg.1 }} &middot; {{ system_info.load_avg.2 }}</dd>
+                </dl>
+            </div>
+        </section>
+
+        <section class="ui-panel" data-live="services">
+            <div class="ui-panel-head"><h2>Services</h2><a href="/system">Manage</a></div>
+            <div class="ui-panel-body">
+                {% if services.is_empty() %}
+                <p class="empty" title="Patronus controls services through OpenRC or systemd">No services that Patronus manages were found on this system.</p>
+                {% else %}
+                <div class="svc-list">
+                    {% for s in services %}
+                    {% if s.is_running %}<span class="ui-badge ok"><span class="ui-dot ok"></span>{{ s.name }}</span>{% else %}<span class="ui-badge" title="{{ s.status|lower }}"><span class="ui-dot off"></span>{{ s.name }}: {{ s.status|lower }}</span>{% endif %}
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+        </section>
+    </div>
 </div>
+
+<script>
+// Builds without VPN hide the VPN tile (also after each live refresh).
+let dashNoVpn = false;
+function dashHideVpn() {
+    if (dashNoVpn) document.querySelectorAll('.stat-card').forEach(c => { if (c.querySelector('#vpn-connections')) c.style.display = 'none'; });
+}
+// An access point: how it is connected (uplink) and what it broadcasts come first.
+fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(async f => {
+    if (!f) return;
+    dashNoVpn = !(f.features || []).some(x => ['wireguard', 'ipsec', 'openvpn', 'l2tp'].includes(x));
+    dashHideVpn();
+    if (f.role !== 'ap') return;
+    const card = document.getElementById('ap-uplink');
+    card.style.display = '';
+    const kv = document.getElementById('ap-uplink-kv');
+    const row = (k, v) => { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; kv.append(dt, dd); };
+    const u = await fetch('/api/ap/uplink', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).catch(() => null);
+    if (u && u.uplink) {
+        const up = u.uplink;
+        row('Address', ((up.addresses || []).join(', ') || 'none yet') + ' (' + up.addressing + ') on ' + up.bridge);
+        row('Main router', up.gateway ? up.gateway + (up.gateway_reachable ? ' (reachable)' : ' (not answering yet)') : '\u2014');
+        row('DNS', (up.dns || []).join(', ') || '\u2014');
+        const tb = document.querySelector('#ap-uplink-ports tbody');
+        for (const p of up.ports || []) {
+            const tr = document.createElement('tr');
+            for (const v of [p.name, p.link ? 'up' : 'down', p.speed_mbps ? p.speed_mbps + ' Mbit/s ' + (p.duplex || '') : '\u2014']) {
+                const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+            }
+            tb.appendChild(tr);
+        }
+    } else row('Uplink', 'could not be read');
+    const st = document.getElementById('ap-radios-state');
+    if (!f.wifi_backend) { st.textContent = 'This unit has no radio that Patronus drives.'; return; }
+    const w = await fetch('/api/wifi', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).catch(() => null);
+    if (!w || !w.radios) { st.textContent = 'Wi-Fi state could not be read.'; st.classList.add('error'); return; }
+    st.style.display = w.radios.length ? 'none' : '';
+    if (!w.radios.length) st.textContent = 'No radios found.';
+    const tb = document.querySelector('#ap-radios tbody');
+    for (const r of w.radios) {
+        const tr = document.createElement('tr');
+        const on = r.state === 'ENABLED';
+        const cells = [r.band === '5' ? '5 GHz' : '2.4 GHz', null, on ? String(r.channel) : '\u2014',
+            on ? (r.bss || []).map(b => b.ssid + ' (' + b.clients + ')').join(', ') : '\u2014'];
+        cells.forEach((v, i) => {
+            const td = document.createElement('td');
+            if (i === 1) {
+                const b = document.createElement('span'); b.className = 'ui-badge' + (on ? ' ok' : '');
+                const d = document.createElement('span'); d.className = 'ui-dot ' + (on ? 'ok' : 'off');
+                b.append(d, document.createTextNode(on ? 'on' : (r.state || 'off').toLowerCase())); td.appendChild(b);
+            } else td.textContent = v;
+            tr.appendChild(td);
+        });
+        tb.appendChild(tr);
+    }
+}).catch(() => {});
+
+// Live refresh: re-read this page every ui.refresh_secs seconds (System > Display) and swap the live regions;
+// paused while the tab is hidden or by the Pause button. A failed read says so instead of showing stale figures.
+(function () {
+    const box = document.getElementById('dash-live');
+    const secs = parseInt(box.dataset.refresh, 10) || 0;
+    if (!secs) return;
+    const dot = document.getElementById('dash-live-dot'), text = document.getElementById('dash-live-text');
+    const btn = document.getElementById('dash-live-toggle');
+    let paused = false, busy = false;
+    btn.addEventListener('click', () => {
+        paused = !paused;
+        btn.textContent = paused ? 'Resume' : 'Pause';
+        btn.setAttribute('aria-pressed', paused ? 'true' : 'false');
+        dot.className = 'ui-dot ' + (paused ? 'off' : 'ok');
+        text.textContent = paused ? 'paused' : 'live, every ' + secs + ' s';
+        if (!paused) tick();
+    });
+    async function tick() {
+        if (paused || busy || document.hidden) return;
+        busy = true;
+        try {
+            const r = await fetch(location.pathname, {credentials: 'same-origin', cache: 'no-store'});
+            if (r.redirected || !r.ok) throw new Error('HTTP ' + r.status);
+            const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+            document.querySelectorAll('[data-live]').forEach(el => {
+                const n = doc.querySelector('[data-live="' + el.dataset.live + '"]');
+                if (n) { const c = document.importNode(n, true); el.replaceWith(c); if (window.uiKit) uiKit.init(c); }
+            });
+            dashHideVpn();
+            dot.className = 'ui-dot ok';
+            text.textContent = 'live, every ' + secs + ' s, updated ' + new Date().toLocaleTimeString();
+        } catch (e) {
+            dot.className = 'ui-dot warn';
+            text.textContent = 'live refresh failed (' + e.message + '), retrying';
+        } finally { busy = false; }
+    }
+    setInterval(tick, secs * 1000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+})();
+</script>
 {% endblock %}
