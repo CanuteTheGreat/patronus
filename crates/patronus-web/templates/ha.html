@@ -71,7 +71,7 @@
         const r = await fetch(url, {method, credentials: 'same-origin',
             headers: body ? {'content-type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
         let j = {}; try { j = await r.json(); } catch (_) {}
-        if (!r.ok) { alert('Not applied: ' + (j.error || r.status)); return null; }
+        if (!r.ok) { patNotice('Not applied: ' + (j.error || r.status), 'crit'); return null; }
         return j;
     }
     async function loadHa() {

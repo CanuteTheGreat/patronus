@@ -250,7 +250,7 @@
         if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
         return j;
     }
-    function fail(e) { alert('Not applied: ' + e.message); }
+    function fail(e) { patNotice('Not applied: ' + e.message, 'crit'); }
     let regionNames = null;
     try { regionNames = new Intl.DisplayNames(['en'], {type: 'region'}); } catch (_) {}
     function country(cc) {
@@ -505,7 +505,7 @@
     wire('probe-form', async f => { await api('/uplinks/probes', 'POST', formObj(f)); f.reset(); loadUplinks(); });
     wire('uplink-settings-form', async f => { await api('/uplinks/settings', 'PUT', formObj(f)); loadUplinks(); });
     wire('insight-settings-form', async f => { await api('/insights/settings', 'PUT', formObj(f)); loadSettings(); });
-    wire('excl-form', async f => { const r = await api('/insights/exclusions', 'POST', formObj(f)); alert('Done. ' + r.forgotten_rows + ' recorded row(s) deleted.'); f.reset(); loadSettings(); });
+    wire('excl-form', async f => { const r = await api('/insights/exclusions', 'POST', formObj(f)); patNotice('Done. ' + r.forgotten_rows + ' recorded row(s) deleted.', 'ok'); f.reset(); loadSettings(); });
     wire('db-form', async f => { await api('/insights/database', 'PUT', formObj(f)); loadSettings(); });
     $('db-refresh').addEventListener('click', async () => {
         $('db-refresh').disabled = true; $('db-refresh').textContent = 'Downloading...';
@@ -514,7 +514,7 @@
     });
     $('clear-history').addEventListener('click', async () => {
         if (!confirm('Delete all recorded country, ASN and device history?')) return;
-        try { const r = await api('/insights/history', 'DELETE'); alert(r.deleted_rows + ' row(s) deleted.'); } catch (e) { fail(e); }
+        try { const r = await api('/insights/history', 'DELETE'); patNotice(r.deleted_rows + ' row(s) deleted.', 'ok'); } catch (e) { fail(e); }
     });
     $('probe-kind').addEventListener('change', () => {
         const k = $('probe-kind').value, t = $('probe-target');

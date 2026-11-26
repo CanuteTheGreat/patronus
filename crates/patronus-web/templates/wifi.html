@@ -7,7 +7,15 @@
 <style>
     .wifi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
     .wifi-note { color: var(--muted); font-size: .85em; margin: 4px 0 10px; }
-    .wifi-warn { background: var(--warn-bg); color: var(--warn-fg); padding: 8px 10px; border-radius: 6px; margin: 8px 0; font-size: .9em; }
+    .wifi-warn { margin: 8px 0; }
+    .wifi-radio { margin: 0; }
+    .wifi-radio .ui-panel-head h3 { margin: 0; font-size: var(--fs-md); }
+    .wifi-radio .wifi-bss { font-size: var(--fs-sm); color: var(--c-ink-2); padding: 2px 0; overflow-wrap: anywhere; }
+    .wifi-radio .wifi-bss .mono { color: var(--c-muted); }
+    #wifi-msg > .ui-banner { margin: 0 0 var(--s-3); }
+    .wifi-toolbar { margin: var(--s-2) 0; }
+    .wifi-toolbar input.ui-input[type=search] { min-width: min(22em, 70vw); }
+    #wifi-block-form { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: flex-end; margin: 0; }
     .wifi-net input[type=text], .wifi-net input[type=password], .wifi-net select { width: 100%; box-sizing: border-box; }
     .wifi-net select[name=bands] { min-width: 9.5em; }
     form.lan-form label.wifi-check { flex-direction: row; align-items: center; gap: 6px; }
@@ -17,9 +25,7 @@
         align-items: flex-end; border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; margin: 6px 0; min-width: 0; }
     form.lan-form fieldset.wifi-group legend { font-weight: 600; padding: 0 4px; }
     form.lan-form fieldset.wifi-group .wifi-note { flex-basis: 100%; margin: 0; }
-    .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: .8em; background: var(--line); }
-    .pill.on { background: var(--ok-bg, #d7f5dd); color: var(--ok-fg); }
-    .pill.off { background: var(--bad-bg); color: var(--bad-fg); }
+    td.bad { color: var(--c-crit); font-weight: 600; }
 </style>
 {% endblock %}
 
@@ -227,44 +233,46 @@
 
 <div class="card">
     <div class="card-header"><h2 class="card-title">Networks</h2></div>
-    <table class="lan" id="wifi-networks">
+    {% if can_modify %}
+    <div class="ui-toolbar wifi-toolbar"><div><button class="ui-btn sm" type="button" onclick="addNet()">Add network</button></div>
+        <div><button class="ui-btn primary sm" type="button" id="wifi-save" onclick="saveWifi()">Save and restart Wi-Fi</button></div></div>
+    {% endif %}
+    <div class="ui-grid-wrap"><table class="lan ui-grid" id="wifi-networks">
         <thead><tr><th>On</th><th>Name (SSID)</th><th>Bands</th><th>Security</th><th>Password</th><th>Hidden</th><th>Isolate clients</th><th>Guest</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody></tbody>
-    </table>
+    </table></div>
     <p class="wifi-note">Leave a password empty to keep the current one. "Isolate clients" stops clients of that network from
         reaching each other through this access point (they still reach the rest of the LAN). "Guest" also keeps the
         network's clients off the LAN and off this access point: they reach the internet through the router and nothing else
         (<span id="wifi-guest-how">checking...</span>).</p>
-    {% if can_modify %}
-    <button class="btn btn-secondary" type="button" onclick="addNet()">Add network</button>
-    <button class="btn btn-primary" type="button" id="wifi-save" onclick="saveWifi()">Save and restart Wi-Fi</button>
-    {% endif %}
 </div>
 
 <div class="card">
     <div class="card-header"><h2 class="card-title">Blocked devices</h2></div>
-    <table class="lan" id="wifi-blocked">
+    {% if can_modify %}
+    <div class="ui-toolbar wifi-toolbar"><form id="wifi-block-form" onsubmit="blockForm(); return false">
+        <div class="ui-field"><label for="wifi-block-mac">MAC address</label><input class="ui-input" id="wifi-block-mac" name="mac" placeholder="aa:bb:cc:dd:ee:ff" size="18"
+            pattern="([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}" title="Six pairs of hex digits, e.g. aa:bb:cc:dd:ee:ff" required></div>
+        <div class="ui-field"><label for="wifi-block-net">On</label><select class="ui-input" id="wifi-block-net" name="network"></select></div>
+        <button class="ui-btn danger sm" type="submit">Block</button>
+    </form></div>
+    {% endif %}
+    <div class="ui-grid-wrap"><table class="lan ui-grid" id="wifi-blocked">
         <thead><tr><th>Device (MAC)</th><th>Blocked on</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody></tbody>
-    </table>
-    {% if can_modify %}
-    <form class="lan-form" id="wifi-block-form" onsubmit="return false">
-        <label>MAC address <input name="mac" placeholder="aa:bb:cc:dd:ee:ff" size="18"></label>
-        <label>On <select name="network"></select></label>
-        <button class="btn btn-secondary" type="button" onclick="blockForm()">Block</button>
-    </form>
-    {% endif %}
+    </table></div>
     <p class="wifi-note">A blocked device cannot join (it is disconnected if it is on now); nothing else is interrupted.
         Phones use a different private MAC per network, so block the MAC shown on the network you mean.</p>
 </div>
 
 <div class="card">
-    <div class="card-header"><h2 class="card-title">Connected clients</h2>
-        <button class="btn btn-secondary" type="button" onclick="loadClients()">Refresh</button></div>
-    <table class="lan" id="wifi-clients">
-        <thead><tr><th>Name</th><th>Device (MAC)</th><th>Address</th><th>Network</th><th>Band</th><th>Signal</th><th>Rate down / up</th><th>Connected</th><th title="Untick to keep a device where it is: steering never asks or disconnects it">Steer</th><th><span class="sr-only">Actions</span></th></tr></thead>
+    <div class="card-header"><h2 class="card-title">Connected clients <span class="ui-badge" id="wifi-client-count" hidden></span></h2></div>
+    <div class="ui-toolbar wifi-toolbar"><div><input class="ui-input" type="search" data-ui-filter="wifi-clients" placeholder="Filter by name, MAC, address or network" aria-label="Filter clients"></div>
+        <div><button class="ui-btn sm" type="button" onclick="loadClients()">Refresh</button></div></div>
+    <div class="ui-grid-wrap"><table class="lan ui-grid" id="wifi-clients" data-ui-grid="wifi-clients">
+        <thead><tr><th data-sort>Name</th><th data-sort>Device (MAC)</th><th data-sort>Address</th><th data-sort>Network</th><th data-sort>Band</th><th data-sort data-type="num" class="num">Signal</th><th>Rate down / up</th><th>Connected</th><th title="Untick to keep a device where it is: steering never asks or disconnects it">Steer</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody><tr><td colspan="10" class="empty">Loading...</td></tr></tbody>
-    </table>
+    </table></div>
     <p class="wifi-note">"Disconnect" drops a client once; it can join again with the password. Phones use a private
         (random) MAC per network, so the same phone shows a different MAC on each network. A name is shown only when
         the client sent one in its DHCP request or the router's DNS knows it; otherwise it stays empty.</p>
@@ -274,27 +282,27 @@
     <div class="card-header"><h2 class="card-title">Steering</h2></div>
     <div id="wifi-steer-why"><p class="wifi-note">Loading...</p></div>
     <h3 class="text-sm">History</h3>
-    <table class="lan" id="wifi-steer-history">
+    <div class="ui-grid-wrap"><table class="lan ui-grid" id="wifi-steer-history">
         <thead><tr><th>When</th><th>Device (MAC)</th><th>What</th><th>Network</th><th>Signal</th><th>Why</th></tr></thead>
         <tbody></tbody>
-    </table>
+    </table></div>
 </div>
 
 <div class="card" id="wifi-chan-card">
     <div class="card-header"><h2 class="card-title">Why this channel</h2></div>
     <div id="wifi-chan-why"><p class="wifi-note">Loading...</p></div>
     <h3 class="text-sm">History</h3>
-    <table class="lan" id="wifi-chan-history">
+    <div class="ui-grid-wrap"><table class="lan ui-grid" id="wifi-chan-history">
         <thead><tr><th>When</th><th>Band</th><th>What</th><th>Channel</th><th>Busy %</th><th>Access points</th><th>Why</th></tr></thead>
         <tbody></tbody>
-    </table>
+    </table></div>
     <p class="wifi-note">Busy % is measured the same way on every channel (short samples, this unit's own traffic left out);
         the score adds a few points for every other access point heard on the channel. Lower is better.</p>
 </div>
 
 <div class="card">
     <div class="card-header"><h2 class="card-title">Channel survey</h2>
-        <button class="btn btn-secondary" type="button" id="survey-btn" onclick="loadSurvey(true)">Scan now</button></div>
+        <button class="ui-btn sm" type="button" id="survey-btn" onclick="loadSurvey(true)">Scan now</button></div>
     <div id="wifi-survey"><p class="wifi-note">Loading...</p></div>
     <p class="wifi-note">How busy each channel is and how many other networks this access point hears on it. A scan does not
         disconnect anyone; it only reads. Changing the channel is a normal Save above.</p>
@@ -329,8 +337,8 @@ function showChannels(d) {
             el('span', {text: (s.mode === 'start' ? 'chosen at start' : 'last re-check') + ' ' + new Date(s.time * 1000).toLocaleString() + ': ' + s.reason})));
         if (s.primary_differs) box.appendChild(el('p', {class: 'wifi-note', 'data-role': 'primary-note',
             text: 'Measured best primary ' + s.chosen + '; the radio\'s automatic channel selection runs primary ' + s.current + ' inside the same block, so the airtime and neighbours are the same.'}));
-        if (!s.csa) box.appendChild(el('p', {class: 'wifi-warn', text: 'This radio\'s driver cannot announce a channel switch: a nightly move restarts the radio instead (devices reconnect).'}));
-        const t = el('table', {class: 'lan'}, el('thead', {}, el('tr', {}, el('th', {text: 'Candidate'}), el('th', {text: 'Busy %'}),
+        if (!s.csa) box.appendChild(el('p', {class: 'ui-banner warn wifi-warn', text: 'This radio\'s driver cannot announce a channel switch: a nightly move restarts the radio instead (devices reconnect).'}));
+        const t = el('table', {class: 'lan ui-grid'}, el('thead', {}, el('tr', {}, el('th', {text: 'Candidate'}), el('th', {text: 'Busy %'}),
             el('th', {text: 'Access points'}), el('th', {text: 'Score'}))));
         const tb = el('tbody'); t.appendChild(tb);
         for (const c of s.candidates || []) tb.appendChild(el('tr', {}, el('td', {text: String(c.channel) + (c.channel === prim ? ' (in use)' : (blk.indexOf(c.channel) >= 0 ? ' (same block)' : ''))}),
@@ -359,7 +367,7 @@ function el(tag, props, ...kids) {
 }
 function msg(text, bad) {
     const m = document.getElementById('wifi-msg'); m.innerHTML = '';
-    if (text) m.appendChild(el('div', {class: bad ? 'alert-error' : 'wifi-warn', text}));
+    if (text) m.appendChild(el('div', {class: 'ui-banner ' + (bad ? 'crit' : 'info'), role: bad ? 'alert' : 'status', text}));
 }
 async function api(method, url, body) {
     const r = await fetch(url, {method, credentials: 'same-origin',
@@ -377,13 +385,18 @@ function fillSelect(s, vals, cur) {
 function radioCard(r) {
     const band = r.band === '5' ? '5 GHz' : '2.4 GHz';
     const up = r.state === 'ENABLED';
-    const c = el('div', {class: 'card', style: 'margin:0'},
-        el('strong', {text: band + ' '}), el('span', {class: 'pill ' + (up ? 'on' : 'off'), text: r.state || 'off'}),
+    const tone = up ? 'ok' : (r.state === 'ACS' || r.state === 'DFS') ? 'busy' : 'off';
+    const body = el('div', {class: 'ui-panel-body'});
+    const c = el('section', {class: 'ui-panel wifi-radio', 'data-band': r.band},
+        el('div', {class: 'ui-panel-head'}, el('h3', {text: band}),
+            el('span', {class: 'ui-badge ' + tone}, el('span', {class: 'ui-dot ' + tone}), (r.state || 'off').toLowerCase())), body);
+    body.append(
         el('div', {class: 'wifi-note radio-chan', 'data-band': r.band, text: r.channel && r.channel !== '0'
             ? ('channel ' + r.channel + ' (' + r.freq + ' MHz)' + (r.width_mhz ? ', ' + r.width_mhz + ' MHz wide' : '') + (r.wifi6 ? ', Wi-Fi 6' : '')
                + (CFG && CFG[r.band === '5' ? 'chan5' : 'chan24'] === 'auto' ? ', picked automatically' : ', fixed'))
             : (r.state === 'ACS' ? 'choosing the least busy channel...' : r.state === 'DFS' ? 'radar check before broadcasting (DFS)...' : 'not broadcasting')}));
-    for (const b of (r.bss || [])) c.appendChild(el('div', {class: 'text-sm', text: b.ssid + ' - ' + b.clients + ' client(s) - ' + b.bssid}));
+    for (const b of (r.bss || [])) body.appendChild(el('div', {class: 'wifi-bss'}, el('strong', {text: b.ssid}),
+        ' · ' + b.clients + ' client' + (b.clients === 1 ? '' : 's') + ' · ', el('span', {class: 'mono', text: b.bssid})));
     return c;
 }
 function netRow(n) {
@@ -398,7 +411,7 @@ function netRow(n) {
     sec.value = n.security || 'wpa2';
     const key = el('input', {type: 'password', name: 'key', autocomplete: 'new-password', placeholder: n.has_key ? '(unchanged)' : 'required, 8-63 characters', disabled: dis});
     const keyCell = el('td', {}, key);
-    if (CAN_MODIFY && n.id && n.has_key) keyCell.appendChild(el('button', {class: 'btn btn-secondary btn-sm', type: 'button', text: 'Show',
+    if (CAN_MODIFY && n.id && n.has_key) keyCell.appendChild(el('button', {class: 'ui-btn sm', type: 'button', text: 'Show',
         onclick: async () => { try { const d = await api('POST', '/api/wifi/networks/' + encodeURIComponent(n.id) + '/reveal'); key.type = 'text'; key.value = d.key; } catch (e) { msg(e.message, true); } }}));
     tr.dataset.blocked = String((n.blocked || []).length);
     tr.append(
@@ -408,7 +421,7 @@ function netRow(n) {
         el('td', {}, el('input', {type: 'checkbox', name: 'hidden', checked: n.hidden, disabled: dis})),
         el('td', {}, el('input', {type: 'checkbox', name: 'isolate', checked: n.isolate, disabled: dis})),
         el('td', {}, el('input', {type: 'checkbox', name: 'guest', checked: n.guest, disabled: dis})),
-        el('td', {}, CAN_MODIFY ? el('button', {class: 'btn btn-danger btn-sm', type: 'button', text: 'Remove', onclick: () => tr.remove()}) : null));
+        el('td', {}, CAN_MODIFY ? el('button', {class: 'ui-btn danger sm', type: 'button', text: 'Remove', onclick: () => tr.remove()}) : null));
     return tr;
 }
 function addNet() {
@@ -451,7 +464,7 @@ async function loadWifi() {
     for (const i of f.elements) i.disabled = !CAN_MODIFY;
     const rr = document.getElementById('wifi-radios'); rr.innerHTML = '';
     for (const r of d.radios || []) rr.appendChild(radioCard(r));
-    if (!d.radio_count) rr.appendChild(el('div', {class: 'wifi-warn', text: 'No Wi-Fi radio is up on this unit right now: settings are saved and apply when the radios start.'}));
+    if (!d.radio_count) rr.appendChild(el('div', {class: 'ui-banner warn wifi-warn', text: 'No Wi-Fi radio is up on this unit right now: settings are saved and apply when the radios start.'}));
     const tb = document.querySelector('#wifi-networks tbody'); tb.innerHTML = '';
     for (const n of CFG.networks) tb.appendChild(netRow(n));
     if (!CFG.networks.length) tb.appendChild(el('tr', {}, el('td', {colspan: '9', class: 'empty', text: 'No networks: Wi-Fi is off.'})));
@@ -507,25 +520,29 @@ async function loadClients() {
     tb.innerHTML = '';
     const list = (d.clients || []).sort((a, b) => (b.signal_dbm || -999) - (a.signal_dbm || -999));
     if (!list.length) tb.appendChild(el('tr', {}, el('td', {colspan: '10', class: 'empty', text: 'No clients connected.'})));
+    const cnt = document.getElementById('wifi-client-count'); cnt.hidden = !list.length; cnt.textContent = String(list.length);
+    const fq = document.querySelector('[data-ui-filter="wifi-clients"]');
     for (const c of list) {
         const sig = c.signal_dbm != null ? c.signal_dbm + ' dBm' : '';
         tb.appendChild(el('tr', {class: 'wifi-client'},
             el('td', {class: 'client-name', text: c.hostname || '', title: c.hostname ? ('from ' + (c.hostname_source === 'dns' ? "the router's DNS" : "the client's DHCP request")) : ''}),
             el('td', {class: 'mono', text: c.mac}), el('td', {text: c.ipv4 || ''}), el('td', {text: c.ssid || c.interface}),
-            el('td', {text: c.band}), el('td', {class: c.signal_dbm < -75 ? 'bad' : '', text: sig}),
+            el('td', {text: c.band}), el('td', {class: 'num' + (c.signal_dbm < -75 ? ' bad' : ''), text: sig, title: c.signal_dbm < -75 ? 'Weak signal' : ''}),
             el('td', {text: (c.tx_rate || c.rx_rate) ? rate(c.tx_rate) + ' / ' + rate(c.rx_rate) : ''}), el('td', {text: dur(c.connected_s)}),
             el('td', {}, el('input', {type: 'checkbox', class: 'steer-toggle', 'data-mac': c.mac, checked: !(CFG && (CFG.steer_exempt || []).includes(c.mac)),
                 disabled: !CAN_MODIFY, title: 'Steering may ask this device to move to a closer access point', onchange: ev => setSteer(c.mac, ev.target.checked)})),
-            el('td', {}, CAN_MODIFY ? el('button', {class: 'btn btn-secondary btn-sm', type: 'button', text: 'Disconnect', onclick: async () => {
+            el('td', {}, CAN_MODIFY ? el('button', {class: 'ui-btn sm', type: 'button', text: 'Disconnect', onclick: async () => {
                 if (!confirm('Disconnect ' + c.mac + ' from ' + (c.ssid || c.interface) + '?')) return;
                 try { await api('POST', '/api/wifi/clients/kick', {interface: c.interface, mac: c.mac}); setTimeout(loadClients, 1500); } catch (e) { msg(e.message, true); }
             }}) : null,
-            CAN_MODIFY ? el('button', {class: 'btn btn-danger btn-sm', type: 'button', text: 'Block', onclick: async () => {
+            CAN_MODIFY ? el('button', {class: 'ui-btn danger sm', type: 'button', text: 'Block', onclick: async () => {
                 const net = netOfInterface(c.interface);
                 if (!confirm('Block ' + c.mac + ' on ' + (net ? (c.ssid || net) : 'every network') + '? It is disconnected and cannot join again until unblocked.')) return;
                 await setBlock(c.mac, net, true);
             }}) : null)));
     }
+    // a refresh keeps what was typed in the filter
+    if (fq && fq.value) fq.dispatchEvent(new Event('input'));
 }
 async function setSteer(mac, on) {
     // the per-device toggle edits the exempt list (a live setting: no radio restart)
@@ -566,7 +583,7 @@ function showState(d) {
     const gs = d.guard;
     if (!gs) g.appendChild(el('p', {class: 'wifi-note', text: 'Crash protection: not part of this firmware.'}));
     else if (gs.mode === 'safe-mode') {
-        g.appendChild(el('div', {class: 'alert-error', id: 'wifi-guard-mode', 'data-mode': 'safe-mode',
+        g.appendChild(el('div', {class: 'ui-banner crit', role: 'alert', id: 'wifi-guard-mode', 'data-mode': 'safe-mode',
             text: 'Safe mode: only the first network of each radio is on' + (gs.reason ? ' (' + gs.reason + ')' : '') +
                 (gs.hold_s ? '; the other networks come back by themselves after ' + Math.round(gs.hold_s / 60) + ' min without another crash.' : '.')}));
     } else {
@@ -587,7 +604,7 @@ function showBlocked() {
     for (const n of CFG.networks) for (const m of (n.blocked || [])) rows.push([m, n.id, n.ssid]);
     if (!rows.length) tb.appendChild(el('tr', {}, el('td', {colspan: '3', class: 'empty', text: 'No device is blocked.'})));
     for (const [m, id, where] of rows) tb.appendChild(el('tr', {class: 'wifi-blocked'}, el('td', {class: 'mono', text: m}), el('td', {text: where}),
-        el('td', {}, CAN_MODIFY ? el('button', {class: 'btn btn-secondary btn-sm', type: 'button', text: 'Unblock', onclick: () => setBlock(m, id, false)}) : null)));
+        el('td', {}, CAN_MODIFY ? el('button', {class: 'ui-btn sm', type: 'button', text: 'Unblock', onclick: () => setBlock(m, id, false)}) : null)));
     const f = document.getElementById('wifi-block-form');
     if (f) { f.network.innerHTML = ''; f.network.appendChild(el('option', {value: '', text: 'every network'}));
         for (const n of CFG.networks) if (n.id) f.network.appendChild(el('option', {value: n.id, text: n.ssid})); }
@@ -599,11 +616,11 @@ async function setBlock(mac, network, block) {
     } catch (e) { msg((block ? 'Not blocked: ' : 'Not unblocked: ') + e.message, true); }
     await loadWifi(); setTimeout(loadClients, 1000);
 }
-function blockForm() { const f = document.getElementById('wifi-block-form'); setBlock(f.mac.value.trim(), f.network.value, true); }
+function blockForm() { const f = document.getElementById('wifi-block-form'); if (!f.reportValidity()) return; setBlock(f.mac.value.trim(), f.network.value, true); }
 async function loadSurvey(fresh) {
     const box = document.getElementById('wifi-survey'), b = document.getElementById('survey-btn');
     b.disabled = true; if (fresh) b.textContent = 'Scanning...';
-    let d; try { d = await api('GET', '/api/wifi/survey' + (fresh ? '?fresh=true' : '')); } catch (e) { box.innerHTML = ''; box.appendChild(el('p', {class: 'alert-error', text: e.message})); b.disabled = false; b.textContent = 'Scan now'; return; }
+    let d; try { d = await api('GET', '/api/wifi/survey' + (fresh ? '?fresh=true' : '')); } catch (e) { box.innerHTML = ''; box.appendChild(el('p', {class: 'ui-banner crit', role: 'alert', text: e.message})); b.disabled = false; b.textContent = 'Scan now'; return; }
     box.innerHTML = '';
     if (d.note) box.appendChild(el('p', {class: 'wifi-note', text: d.note}));
     for (const r of d.radios || []) {
@@ -611,7 +628,7 @@ async function loadSurvey(fresh) {
         const s = r.suggestion;
         box.appendChild(el('h3', {class: 'survey-band', text: band + (r.current_channel ? ' (now channel ' + r.current_channel + ')' : '')}));
         if (s) box.appendChild(el('p', {class: 'survey-suggest', 'data-band': r.band, text: 'Least crowded: channel ' + s.channel + ' - ' + s.reason + '.'}));
-        const t = el('table', {class: 'lan survey'}, el('thead', {}, el('tr', {}, el('th', {text: 'Channel'}), el('th', {text: 'Busy'}), el('th', {text: 'Networks heard'}), el('th', {text: 'Strongest'}))));
+        const t = el('table', {class: 'lan ui-grid survey'}, el('thead', {}, el('tr', {}, el('th', {text: 'Channel'}), el('th', {text: 'Busy'}), el('th', {text: 'Networks heard'}), el('th', {text: 'Strongest'}))));
         const tb = el('tbody'); t.appendChild(tb);
         const chans = new Map();
         for (const c of r.channels || []) if (c.channel) chans.set(c.channel, {busy: c.busy_pct, inuse: c.in_use, n: 0, best: null});

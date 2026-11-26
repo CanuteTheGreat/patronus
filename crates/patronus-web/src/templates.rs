@@ -1129,4 +1129,32 @@ mod tests {
             ".content must be allowed to shrink"
         );
     }
+
+    /// Source guard: pages report outcomes through `patNotice` (kit toast, or the open dialog for a refused
+    /// change), never a blocking browser `alert()` box that hides the page and is announced inconsistently.
+    #[test]
+    fn templates_use_pat_notice_not_alert() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let mut bad = Vec::new();
+        for e in std::fs::read_dir(&dir).unwrap().flatten() {
+            let p = e.path();
+            let text = std::fs::read_to_string(&p).unwrap();
+            for (i, line) in text.lines().enumerate() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                let mut rest = line;
+                while let Some(k) = rest.find("alert(") {
+                    let before = rest[..k].chars().last();
+                    if !before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+                        bad.push(format!("{}:{}", p.display(), i + 1));
+                    }
+                    rest = &rest[k + 6..];
+                }
+            }
+        }
+        assert!(bad.is_empty(), "alert() in templates: {bad:?}");
+        let base = std::fs::read_to_string(dir.join("base.html")).unwrap();
+        assert!(base.contains("function patNotice("), "patNotice missing");
+    }
 }

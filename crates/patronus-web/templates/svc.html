@@ -6,9 +6,11 @@
 {% include "lan_head.html" %}
 <style>
     pre.svc-pre { background: var(--surface-2); padding: 8px 10px; border-radius: 6px; max-height: 260px; overflow: auto; font-size: 0.8em; white-space: pre-wrap; }
-    .svc-help { color: var(--muted); font-size: 0.8em; }
-    .svc-scroll { overflow-x: auto; max-width: 100%; }
-    #rp-stats { margin-top: 12px; } #rp-stats .svc-scroll { overflow-x: auto; }
+    .svc-help { color: var(--c-muted); font-size: var(--fs-sm); }
+    #rp-stats { margin-top: var(--s-3); }
+    .svc-coll .ui-toolbar { margin: var(--s-2) 0; }
+    #svc-action-buttons { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+    table.svc-kv th { text-align: left; width: 30%; font-weight: 600; text-transform: capitalize; }
 </style>
 {% endblock %}
 
@@ -18,7 +20,7 @@
     <p class="page-subtitle">{{ blurb }}</p>
 </div>
 
-<div id="svc-error" class="alert-error" style="display:none"></div>
+<div id="svc-error" class="ui-banner crit" role="alert" style="display:none"></div>
 
 <div class="card" id="svc-settings-card" style="display:none">
     <div class="card-header"><h2 class="card-title">Settings</h2></div>
@@ -40,6 +42,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{% include "form_dialogs.html" %}
 <script>
     const SLUG = '{{ slug }}';
     const CAN_MODIFY = {% if can_modify %}true{% else %}false{% endif %};
@@ -47,6 +50,8 @@
     const editing = {};
 
     function showError(msg) {
+        // a refused entry is shown in its open dialog, next to what was typed
+        if (msg && document.querySelector('dialog.lan-dialog[open]')) { lanError(msg); return; }
         const el = document.getElementById('svc-error');
         el.textContent = msg; el.style.display = msg ? '' : 'none';
     }
@@ -106,7 +111,7 @@
     function renderStatus(st) {
         const box = document.getElementById('svc-status'); box.textContent = '';
         if (!st || typeof st !== 'object') { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'No live status reported.'; box.appendChild(p); return; }
-        const t = document.createElement('table'); t.className = 'lan';
+        const t = document.createElement('table'); t.className = 'lan ui-grid svc-kv';
         for (const [k, v] of Object.entries(st)) {
             const tr = document.createElement('tr');
             const th = document.createElement('th'); th.textContent = k.replace(/_/g, ' '); tr.appendChild(th);
@@ -119,7 +124,7 @@
             } else td.textContent = renderValue(v);
             tr.appendChild(td); t.appendChild(tr);
         }
-        box.appendChild(t);
+        const w = document.createElement('div'); w.className = 'ui-grid-wrap'; w.appendChild(t); box.appendChild(w);
     }
     async function svcSaveSettings(ev) {
         ev.preventDefault();
@@ -127,57 +132,96 @@
         if (r) load();
         return false;
     }
+    // one dialog per collection, built once per load: Add opens it empty, Edit opens it filled in
+    function collectionDialog(c) {
+        const dlg = document.createElement('dialog'); dlg.className = 'ui-dialog lan-dialog'; dlg.id = 'svc-dlg-' + c.key;
+        dlg.setAttribute('aria-labelledby', dlg.id + '-t');
+        const form = document.createElement('form'); form.className = 'lan-form'; form.id = 'svc-form-' + c.key;
+        const head = document.createElement('header'); head.id = dlg.id + '-t'; form.appendChild(head);
+        const body = document.createElement('div'); body.className = 'ui-dialog-body';
+        for (const f of c.fields) body.appendChild(labelFor(f, inputFor(f, undefined)));
+        const msg = document.createElement('div'); msg.className = 'ui-banner crit lan-dialog-msg'; msg.setAttribute('role', 'alert'); msg.hidden = true;
+        body.appendChild(msg); form.appendChild(body);
+        const foot = document.createElement('footer');
+        const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'ui-btn'; cancel.textContent = 'Cancel';
+        cancel.onclick = () => dlg.close();
+        const save = document.createElement('button'); save.type = 'submit'; save.className = 'ui-btn primary'; save.textContent = 'Save entry';
+        foot.appendChild(cancel); foot.appendChild(save); form.appendChild(foot);
+        form.onsubmit = async (ev) => {
+            ev.preventDefault();
+            const body = readForm(form, c.fields);
+            const id = editing[c.key];
+            const r = id ? await api('PUT', '/api/svc/' + SLUG + '/' + c.key + '/' + id, body) : await api('POST', '/api/svc/' + SLUG + '/' + c.key, body);
+            if (r) { delete editing[c.key]; dlg.close(); load(); }
+            return false;
+        };
+        dlg.appendChild(form);
+        dlg.addEventListener('close', () => { if (lanOpener && lanOpener.focus) lanOpener.focus(); lanOpener = null; });
+        return dlg;
+    }
     function renderCollection(c, rows) {
-        const wrap = document.createElement('div'); wrap.className = 'card'; wrap.dataset.coll = c.key;
+        const wrap = document.createElement('div'); wrap.className = 'card svc-coll'; wrap.dataset.coll = c.key;
         const h = document.createElement('div'); h.className = 'card-header';
-        const h2 = document.createElement('h2'); h2.className = 'card-title'; h2.textContent = c.title; h.appendChild(h2); wrap.appendChild(h);
-        const t = document.createElement('table'); t.className = 'lan';
-        const head = document.createElement('tr');
-        for (const f of c.fields) { const th = document.createElement('th'); th.textContent = f.label; head.appendChild(th); }
-        head.appendChild(document.createElement('th')); t.appendChild(head);
+        const h2 = document.createElement('h2'); h2.className = 'card-title'; h2.textContent = c.title + ' ';
+        const n = document.createElement('span'); n.className = 'ui-badge'; n.textContent = String(rows.length); h2.appendChild(n);
+        h.appendChild(h2); wrap.appendChild(h);
+        const gid = 'svc-grid-' + c.key;
+        const tb = document.createElement('div'); tb.className = 'ui-toolbar';
+        const left = document.createElement('div'), right = document.createElement('div');
+        let dlg = null;
+        if (CAN_MODIFY) {
+            dlg = collectionDialog(c);
+            const add = document.createElement('button'); add.type = 'button'; add.className = 'ui-btn primary sm'; add.textContent = 'Add entry';
+            add.dataset.open = 'svc-form-' + c.key;
+            add.onclick = () => { delete editing[c.key]; const f = dlg.querySelector('form'); f.reset(); fillForm(c, {}); lanShowForm(f, 'Add to ' + c.title); };
+            left.appendChild(add);
+        }
+        if (rows.length > 5) {
+            const q = document.createElement('input'); q.type = 'search'; q.className = 'ui-input'; q.placeholder = 'Filter'; q.setAttribute('aria-label', 'Filter ' + c.title);
+            q.dataset.uiFilter = gid; right.appendChild(q);
+        }
+        tb.appendChild(left); tb.appendChild(right);
+        if (left.childNodes.length || right.childNodes.length) wrap.appendChild(tb);
+        const t = document.createElement('table'); t.className = 'lan ui-grid'; t.dataset.uiGrid = gid;
+        const thead = document.createElement('thead'), head = document.createElement('tr');
+        for (const f of c.fields) { const th = document.createElement('th'); th.textContent = f.label; th.dataset.sort = ''; if (f.type === 'number') { th.dataset.type = 'num'; th.className = 'num'; } head.appendChild(th); }
+        const ath = document.createElement('th'); ath.innerHTML = '<span class="sr-only">Actions</span>'; head.appendChild(ath);
+        thead.appendChild(head); t.appendChild(thead);
+        const tbody = document.createElement('tbody'); t.appendChild(tbody);
         for (const row of rows) {
             const tr = document.createElement('tr'); tr.dataset.id = row.id;
             for (const f of c.fields) {
                 const td = document.createElement('td');
-                td.textContent = f.type === 'secret' ? (row[f.key] ? 'set' : '-') : renderValue(row[f.key]);
+                if (f.type === 'number') td.className = 'num';
+                if (f.type === 'bool') { const v = row[f.key] === true; const b = document.createElement('span'); b.className = 'ui-badge' + (v ? ' ok' : ''); b.textContent = v ? 'yes' : 'no'; td.appendChild(b); }
+                else td.textContent = f.type === 'secret' ? (row[f.key] ? 'set' : '-') : renderValue(row[f.key]);
                 tr.appendChild(td);
             }
-            const td = document.createElement('td');
+            const td = document.createElement('td'); td.className = 'svc-actions';
             if (CAN_MODIFY) {
-                const eb = document.createElement('button'); eb.className = 'btn btn-sm'; eb.textContent = 'Edit';
-                eb.onclick = () => { editing[c.key] = row.id; fillForm(c, row); };
-                const db = document.createElement('button'); db.className = 'btn btn-sm btn-danger'; db.textContent = 'Delete'; db.style.marginLeft = '6px';
+                const eb = document.createElement('button'); eb.type = 'button'; eb.className = 'ui-btn sm'; eb.textContent = 'Edit';
+                eb.onclick = () => { editing[c.key] = row.id; const f = dlg.querySelector('form'); f.reset(); fillForm(c, row); lanShowForm(f, 'Edit ' + c.title + ' entry'); };
+                const db = document.createElement('button'); db.type = 'button'; db.className = 'ui-btn danger sm'; db.textContent = 'Delete'; db.style.marginLeft = '6px';
                 db.onclick = async () => { if (confirm('Delete this entry?') && await api('DELETE', '/api/svc/' + SLUG + '/' + c.key + '/' + row.id)) load(); };
                 td.appendChild(eb); td.appendChild(db);
             }
-            tr.appendChild(td); t.appendChild(tr);
+            tr.appendChild(td); tbody.appendChild(tr);
         }
-        const scroll = document.createElement('div'); scroll.className = 'svc-scroll'; scroll.tabIndex = 0; scroll.setAttribute('role', 'region'); scroll.setAttribute('aria-label', c.title);
-        scroll.appendChild(t); wrap.appendChild(scroll);
-        if (!rows.length) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'Nothing configured.'; wrap.appendChild(p); }
-        if (CAN_MODIFY) {
-            const form = document.createElement('form'); form.className = 'lan-form'; form.id = 'svc-form-' + c.key;
-            for (const f of c.fields) form.appendChild(labelFor(f, inputFor(f, undefined)));
-            const b = document.createElement('button'); b.className = 'btn btn-primary btn-sm'; b.type = 'submit'; b.textContent = 'Save entry'; form.appendChild(b);
-            form.onsubmit = async (ev) => {
-                ev.preventDefault();
-                const body = readForm(form, c.fields);
-                const id = editing[c.key];
-                const r = id ? await api('PUT', '/api/svc/' + SLUG + '/' + c.key + '/' + id, body) : await api('POST', '/api/svc/' + SLUG + '/' + c.key, body);
-                if (r) { delete editing[c.key]; load(); }
-                return false;
-            };
-            wrap.appendChild(form);
-        }
+        const gw = document.createElement('div'); gw.className = 'ui-grid-wrap svc-scroll'; gw.tabIndex = 0; gw.setAttribute('role', 'region'); gw.setAttribute('aria-label', c.title); gw.appendChild(t);
+        if (rows.length) wrap.appendChild(gw);
+        else { const p = document.createElement('div'); p.className = 'ui-empty'; p.innerHTML = '<strong>Nothing configured</strong>'; if (CAN_MODIFY) p.appendChild(document.createTextNode('Use Add entry to create the first one.')); wrap.appendChild(p); }
+        if (dlg) wrap.appendChild(dlg);
         return wrap;
     }
     function fillForm(c, row) {
-        const form = document.getElementById('svc-form-' + c.key);
+        const form = document.getElementById('svc-form-' + c.key) || document.querySelector('#svc-dlg-' + c.key + ' form');
         for (const f of c.fields) {
             const el = form.elements[f.key]; if (!el) continue;
-            if (f.type === 'bool') el.checked = row[f.key] === true;
-            else if (f.type === 'secret') el.value = '';
-            else el.value = row[f.key] === null || row[f.key] === undefined ? '' : row[f.key];
+            const v = row[f.key];
+            if (v === undefined) continue;
+            if (f.type === 'bool') el.checked = v === true;
+            else if (f.type === 'secret') { el.value = ''; el.placeholder = v ? 'unchanged' : ''; }
+            else el.value = v === null ? '' : v;
         }
     }
     async function load() {
@@ -189,12 +233,12 @@
         const sf = document.getElementById('svc-settings-form'); sf.textContent = '';
         sc.style.display = SCHEMA.fields.length ? '' : 'none';
         for (const f of SCHEMA.fields) sf.appendChild(labelFor(f, inputFor(f, d.settings[f.key])));
-        if (SCHEMA.fields.length && CAN_MODIFY) { const b = document.createElement('button'); b.className = 'btn btn-primary btn-sm'; b.type = 'submit'; b.textContent = 'Save and apply'; sf.appendChild(b); }
+        if (SCHEMA.fields.length && CAN_MODIFY) { const b = document.createElement('button'); b.className = 'ui-btn primary sm'; b.type = 'submit'; b.textContent = 'Save and apply'; sf.appendChild(b); }
         if (!CAN_MODIFY) for (const el of sf.elements) el.disabled = true;
         const ab = document.getElementById('svc-action-buttons'); ab.textContent = '';
         document.getElementById('svc-actions').style.display = SCHEMA.actions.length && CAN_MODIFY ? '' : 'none';
         for (const a of SCHEMA.actions) {
-            const b = document.createElement('button'); b.className = 'btn btn-sm btn-primary'; b.textContent = a.label; b.style.marginRight = '8px';
+            const b = document.createElement('button'); b.type = 'button'; b.className = 'ui-btn sm'; b.textContent = a.label;
             b.onclick = async () => {
                 const body = {};
                 if (SLUG === 'wol') { const mac = prompt('MAC address to wake (aa:bb:cc:dd:ee:ff)'); if (!mac) return; body.mac = mac; body.interface = '@lan'; }
@@ -229,21 +273,22 @@
             const el = renderCollection(c, d.collections[c.key] || []);
             if (SLUG === 'wol' && CAN_MODIFY) {
                 for (const tr of el.querySelectorAll('tr[data-id]')) {
-                    const wake = document.createElement('button'); wake.className = 'btn btn-sm btn-primary'; wake.textContent = 'Wake'; wake.style.marginLeft = '6px';
-                    wake.onclick = async () => { const res = await api('POST', '/api/svc/wol/action/wake', {id: Number(tr.dataset.id)}); if (res) alert('Magic packet sent: ' + res.sent_to.join(', ')); };
+                    const wake = document.createElement('button'); wake.type = 'button'; wake.className = 'ui-btn primary sm'; wake.textContent = 'Wake'; wake.style.marginLeft = '6px';
+                    wake.onclick = async () => { const res = await api('POST', '/api/svc/wol/action/wake', {id: Number(tr.dataset.id)}); if (res) patNotice('Magic packet sent: ' + res.sent_to.join(', '), 'ok'); };
                     tr.lastChild.appendChild(wake);
                 }
             }
             if (SLUG === 'openvpn' && c.key === 'clients') {
                 for (const tr of el.querySelectorAll('tr[data-id]')) {
                     const name = (tr.querySelector('td') || {}).textContent || '';
-                    const dl = document.createElement('a'); dl.className = 'btn btn-sm btn-primary'; dl.textContent = 'Download profile';
+                    const dl = document.createElement('a'); dl.className = 'ui-btn sm'; dl.textContent = 'Download profile';
                     dl.style.marginLeft = '6px'; dl.href = '/api/svc/openvpn/export/' + encodeURIComponent(name.trim());
                     tr.lastChild.appendChild(dl);
                 }
             }
             cols.appendChild(el);
         }
+        if (window.uiKit) uiKit.init(cols);
         renderStatus(d.status);
         if (SLUG === 'revproxy') revproxyExtras(d);
     }
@@ -261,15 +306,17 @@
         let r; try { r = await fetch('/api/svc/revproxy/action/stats', {method: 'POST', credentials: 'same-origin'}); } catch (_) { return; }
         if (!r.ok) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'No live statistics (the proxy is not running).'; st.appendChild(p); return; }
         const j = await r.json();
-        const t = document.createElement('table'); t.className = 'data-table'; t.id = 'rp-stats-table';
+        const t = document.createElement('table'); t.className = 'lan ui-grid'; t.id = 'rp-stats-table';
         const hd = ['Proxy', 'Server', 'Status', 'Sessions', 'Total', 'Bytes in', 'Bytes out'];
-        const tr0 = document.createElement('tr'); for (const h of hd) { const th = document.createElement('th'); th.textContent = h; tr0.appendChild(th); } t.appendChild(tr0);
+        const th0 = document.createElement('thead'), tr0 = document.createElement('tr'); for (const h of hd) { const th = document.createElement('th'); th.textContent = h; tr0.appendChild(th); } th0.appendChild(tr0); t.appendChild(th0);
+        const tb = document.createElement('tbody'); t.appendChild(tb);
         for (const row of j.stats) {
             const tr = document.createElement('tr');
             for (const k of ['pxname', 'svname', 'status', 'scur', 'stot', 'bin', 'bout']) { const td = document.createElement('td'); td.textContent = row[k] || ''; tr.appendChild(td); }
-            t.appendChild(tr);
+            tb.appendChild(tr);
         }
-        st.appendChild(t);
+        const w = document.createElement('div'); w.className = 'ui-grid-wrap'; w.tabIndex = 0; w.setAttribute('role', 'region'); w.setAttribute('aria-label', 'Live proxy statistics');
+        w.appendChild(t); st.appendChild(w);
     }
     document.addEventListener('DOMContentLoaded', load);
 </script>

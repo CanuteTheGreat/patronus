@@ -219,7 +219,7 @@
             r = await fetch(`/api/interfaces/${encodeURIComponent(name)}/${action}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{"force":true}'});
             j = await r.json().catch(() => ({}));
         }
-        if (!r.ok) { alert(j.error || `HTTP ${r.status}`); return; }
+        if (!r.ok) { patNotice(j.error || `HTTP ${r.status}`, 'crit'); return; }
         location.reload();
     }
 

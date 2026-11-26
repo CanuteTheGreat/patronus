@@ -28,6 +28,10 @@ DIALOGS = [
     ("/routing", "gateway", None, "[data-open=gateway-form]", "#gateway-form-dlg"),
     ("/vpn", "wireguard-tunnel", None, "[data-open=wg-tunnel-form]", "#wg-tunnel-form-dlg"),
     ("/system", "account", None, "[data-open=user-form]", "#user-form-dlg"),
+    ("/segmentation", "device", None, "[data-open=seg-device-form]", "#seg-device-form-dlg"),
+    ("/segmentation", "group", "[data-tab=groups]", "[data-open=seg-group-form]", "#seg-group-form-dlg"),
+    ("/segmentation", "service-rule", "[data-tab=groups]", "[data-open=seg-service-form]", "#seg-service-form-dlg"),
+    ("/svc/wol", "wol-host", None, "[data-open=svc-form-hosts]", "#svc-dlg-hosts"),
 ]
 
 
