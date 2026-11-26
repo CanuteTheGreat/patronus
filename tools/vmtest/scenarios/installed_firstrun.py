@@ -237,6 +237,7 @@ def define(args):
         fw.screenshot("fw-after-reboot")
 
         # ---- pfSense/OPNsense wizard parity against a real (virtual) ISP: DHCPv6 prefix delegation, PPPoE, then an OPT port ----
+        fw.put_file(_write_tmp(API_PY), "/tmp/fwapi.py")        # /tmp is a tmpfs: the reboot above emptied it
         isp_if = fw.succeed(f"ip -o link | awk -F': ' '/{FW_ISP_MAC}/ {{print $2}}' | cut -d@ -f1").strip()
         m.check("isp-facing-port-found", bool(isp_if) and isp_if not in (WAN, LAN), isp_if)
         m.phase("5. ISP node: router advertisements + DHCPv6 with prefix delegation (kea), PPPoE access concentrator")
