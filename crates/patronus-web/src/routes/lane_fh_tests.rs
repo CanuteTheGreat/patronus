@@ -1679,6 +1679,79 @@ async fn updates_report_honestly_and_power_needs_an_admin() {
     assert_ne!(s, StatusCode::ACCEPTED);
 }
 
+#[tokio::test]
+async fn update_channel_is_typed_validated_and_admin_only() {
+    let t = setup().await;
+    let c = t.admin().await;
+    let (s, b) = t
+        .call(&c, Method::GET, "/api/system/updates/channel", None)
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["effective"]["channel"], "stable");
+    assert_eq!(
+        b["effective"]["overlay_uri"],
+        patronus_config::updates::DEFAULT_OVERLAY_URI
+    );
+    assert_eq!(b["channels"].as_array().unwrap().len(), 3);
+    for bad in [
+        json!({"channel": "nightly"}),
+        json!({"overlay_uri": "ftp://example.org/x"}),
+        json!({"binhost_uri": "rsync://example.org/x"}),
+        json!({"repo_location": "relative/dir"}),
+    ] {
+        let (s, b) = t
+            .call(
+                &c,
+                Method::PUT,
+                "/api/system/updates/channel",
+                Some(bad.clone()),
+            )
+            .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{bad} -> {b}");
+    }
+    let (s, _) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/users",
+            Some(json!({"username":"viewer3","password":"Viewer-Passw0rd-3","role":"operator"})),
+        )
+        .await;
+    assert!(s.is_success());
+    let (_, vc, _) = t.login("viewer3", "Viewer-Passw0rd-3", None).await;
+    let (s, _) = t
+        .call(
+            &vc.unwrap(),
+            Method::PUT,
+            "/api/system/updates/channel",
+            Some(json!({"channel": "development"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    // on a Portage host the PUT also writes /etc/portage (needs root): only the
+    // store path is exercised here
+    if !patronus_network::sysops::has_portage() {
+        let (s, b) = t
+            .call(
+                &c,
+                Method::PUT,
+                "/api/system/updates/channel",
+                Some(json!({"channel": "testing", "overlay_uri": "file:///srv/patronus-overlay", "binhost_uri": "none"})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        let (_, b) = t
+            .call(&c, Method::GET, "/api/system/updates/channel", None)
+            .await;
+        assert_eq!(b["effective"]["channel"], "testing");
+        assert_eq!(
+            b["effective"]["overlay_uri"],
+            "file:///srv/patronus-overlay"
+        );
+        assert_eq!(b["stored"]["update.binhost_uri"], "none");
+    }
+}
+
 #[cfg(feature = "ha")]
 #[tokio::test]
 async fn ha_is_managed_through_the_api_and_undone_when_the_applier_refuses() {

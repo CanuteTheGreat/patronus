@@ -593,6 +593,19 @@ async function fwFeedDownload() {
         <b>Update everything</b> runs <span class="mono">emerge --update --changed-use --newuse --deep --with-bdeps=y @world</span>. Jobs run in the background and survive a
         restart of this interface; restart the services (or reboot) afterwards to run the new version.</p>
     <p id="updates-state" class="text-sm"></p>
+    <p id="updates-channel-state" class="text-sm"></p>
+    {% if is_admin %}
+    <form id="update-channel-form" class="inline-form" onsubmit="return saveUpdateChannel(event)">
+        <label>Update channel <select name="channel" id="update-channel">
+            <option value="stable">stable: tagged releases only</option>
+            <option value="testing">testing: releases and release candidates</option>
+            <option value="development">development: the main branch, built from source</option>
+        </select></label>
+        <label>Overlay mirror <input name="overlay_uri" id="update-overlay" size="48" data-keep-empty="1" placeholder="https://, ssh://, git://, file:/// or rsync:// URL"></label>
+        <label>Binary package host <input name="binhost_uri" id="update-binhost" size="40" data-keep-empty="1" placeholder="none: build from source"></label>
+        <button class="btn btn-sm btn-primary" id="save-update-channel" type="submit">Save channel</button>
+    </form>
+    {% endif %}
     {% if is_admin %}
     <p>
         <button class="btn btn-sm btn-secondary" id="update-check" onclick="updateJob('check', {sync: true})">Check for updates</button>
@@ -732,6 +745,29 @@ async function fwFeedDownload() {
         const j = await post('/api/system/updates/' + kind, body);
         if (j) loadUpdates();
     }
+    async function loadUpdateChannel() {
+        const c = await getJson('/api/system/updates/channel');
+        if (!c) return;
+        const e = c.effective;
+        const d = (c.channels.find(x => x.id === e.channel) || {}).description || '';
+        document.getElementById('updates-channel-state').textContent = 'Channel: ' + e.channel + ' (' + d + '). Overlay mirror: '
+            + e.overlay_uri + '. Binary packages: ' + (e.binhost_uri || 'none, Patronus is built from source') + '.';
+        const sel = document.getElementById('update-channel');
+        if (sel) {
+            sel.value = e.channel;
+            document.getElementById('update-overlay').value = e.overlay_uri === c.default_overlay_uri ? '' : e.overlay_uri;
+            document.getElementById('update-overlay').placeholder = c.default_overlay_uri;
+            document.getElementById('update-binhost').value = e.binhost_uri;
+        }
+    }
+    async function saveUpdateChannel(ev) {
+        ev.preventDefault();
+        const b = formJson(ev.target);
+        if (b.binhost_uri === '') b.binhost_uri = 'none';
+        const j = await post('/api/system/updates/channel', b, false, 'PUT');
+        if (j) loadUpdateChannel();
+        return false;
+    }
     async function factoryReset() {
         if (!{{ is_admin }}) return alert('Only admins can reset the configuration.');
         if (!confirm('Factory reset: all rules, VPNs, services and settings are replaced by a first-boot configuration. Web accounts stay. A backup is made first. Continue?')) return;
@@ -821,7 +857,7 @@ async function fwFeedDownload() {
         if (await post('/api/system/auth-servers', body)) { ev.target.reset(); loadAuthServers(); }
         return false;
     }
-    document.addEventListener('DOMContentLoaded', () => { loadUpdates(); loadEvents(); loadAuthServers(); });
+    document.addEventListener('DOMContentLoaded', () => { loadUpdates(); loadUpdateChannel(); loadEvents(); loadAuthServers(); });
 </script>
 <script>
     const fmtTs = t => t ? new Date(t * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : '';

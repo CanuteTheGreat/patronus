@@ -30,6 +30,7 @@ pub mod sysauth;
 pub mod sysctl;
 pub mod sysops;
 pub mod system_dhcpcd;
+pub mod update_channel;
 pub mod uplink_probe;
 pub mod vpn;
 
