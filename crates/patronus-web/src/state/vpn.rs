@@ -358,6 +358,8 @@ pub fn parse_swanctl_list_sas(out: &str) -> Vec<crate::templates::IpsecTunnel> {
                 local_subnet: String::new(),
                 remote_subnet: String::new(),
                 remote_gateway: String::new(),
+                bytes_in: None,
+                bytes_out: None,
             });
             continue;
         }
@@ -377,6 +379,22 @@ pub fn parse_swanctl_list_sas(out: &str) -> Vec<crate::templates::IpsecTunnel> {
             }
             (i, "local") if i >= 4 => append(&mut cur.local_subnet, &rest.join(" ")),
             (i, "remote") if i >= 4 => append(&mut cur.remote_subnet, &rest.join(" ")),
+            (i, "in" | "out") if i >= 4 => {
+                // A counter line is `in SPI, N bytes, ...`. Missing or
+                // malformed counters remain unknown rather than becoming zero.
+                if let Some(n) = rest.windows(2).find_map(|w| {
+                    (w[1].trim_end_matches(',') == "bytes")
+                        .then(|| w[0].trim_end_matches(',').parse::<u64>().ok())
+                        .flatten()
+                }) {
+                    let counter = if key == "in" {
+                        &mut cur.bytes_in
+                    } else {
+                        &mut cur.bytes_out
+                    };
+                    *counter = Some(counter.unwrap_or(0).saturating_add(n));
+                }
+            }
             _ => {}
         }
     }
@@ -548,10 +566,13 @@ gw-gw: #1, ESTABLISHED, IKEv2, 5f1b9a46b2e9c0f8_i* 4a3e2a1b5b0b2a4d_r
   established 2s ago, rekeying in 14130s
   net-net: #1, reqid 1, INSTALLED, TUNNEL, ESP:AES_GCM_16-128
     installed 2s ago, rekeying in 3368s, expires in 3958s
-    in  c4a3e1b5,      0 bytes,     0 packets
-    out c8f0e1f3,      0 bytes,     0 packets
+    in  c4a3e1b5,      100 bytes,     1 packets
+    out c8f0e1f3,      200 bytes,     2 packets
     local  10.1.0.0/16
     remote 10.2.0.0/16
+  second: #2, reqid 2, INSTALLED, TUNNEL
+    in  aabbccdd, 50 bytes, 1 packets
+    out 11223344, 25 bytes, 1 packets
 road: #2, CONNECTING, IKEv2, 1111_i 0000_r
   local  '%any' @ 192.168.0.1[500]
   remote '%any' @ 203.0.113.9[500]
@@ -563,6 +584,10 @@ road: #2, CONNECTING, IKEv2, 1111_i 0000_r
         assert_eq!(t[0].remote_gateway, "192.168.0.2");
         assert_eq!(t[0].local_subnet, "10.1.0.0/16");
         assert_eq!(t[0].remote_subnet, "10.2.0.0/16");
+        assert_eq!(t[0].bytes_in, Some(150));
+        assert_eq!(t[0].bytes_out, Some(225));
+        assert_eq!(t[1].bytes_in, None);
+        assert_eq!(t[1].bytes_out, None);
         assert_eq!(t[1].status, "CONNECTING");
         assert_eq!(t[1].remote_gateway, "203.0.113.9");
         let snap = VpnSnapshot {
