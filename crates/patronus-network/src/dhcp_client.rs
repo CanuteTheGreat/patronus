@@ -203,6 +203,7 @@ pub fn dhcpcd_conf(
     v6: bool,
     metric: u32,
     pd: &[String],
+    pd_len: Option<u8>,
     iaid: Option<u32>,
 ) -> String {
     let mut c = format!(
@@ -228,7 +229,11 @@ pub fn dhcpcd_conf(
             // delegated prefix: one /64 slice per downstream interface
             // (dhcpcd assigns it there; radvd advertises it)
             let n = iaid.unwrap_or(crate::netconf::DEFAULT_PD_IAID);
-            c.push_str(&format!("ia_pd {n}"));
+            // `/::/LEN` asks the ISP for a prefix of that size (a hint; the server may give another)
+            match pd_len {
+                Some(l) => c.push_str(&format!("ia_pd {n}/::/{l}")),
+                None => c.push_str(&format!("ia_pd {n}")),
+            }
             for (n, d) in pd.iter().enumerate() {
                 c.push_str(&format!(" {d}/{n}/64"));
             }
@@ -423,6 +428,7 @@ pub fn spec(
     argv_prefix: &[String],
     paths: &NetPaths,
     pd: &[String],
+    pd_len: Option<u8>,
     duid: Option<&str>,
     iaid: Option<u32>,
 ) -> Result<DaemonSpec> {
@@ -463,7 +469,7 @@ pub fn spec(
         }
         Client::Dhcpcd => {
             let conf: PathBuf = dir.join(format!("dhcpcd-{dev}.conf"));
-            let mut text = dhcpcd_conf(dev, v4, v6, metric, pd, iaid);
+            let mut text = dhcpcd_conf(dev, v4, v6, metric, pd, pd_len, iaid);
             // dhcpcd's own log in a file that is the same under every init system: the Interfaces page reads the server's
             // refusals (no prefix, no address) from it (`dhcp6_problem`)
             text.push_str(&format!(
@@ -572,6 +578,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         )
         .unwrap();
         assert_eq!(s.argv[..5], ["udhcpc", "-f", "-i", "eth0", "-s"]);
@@ -600,6 +607,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         )
         .unwrap();
         assert!(!lan.files[0].1.contains("resolv.conf"));
@@ -615,6 +623,7 @@ mod tests {
             &p,
             &[],
             None,
+            None,
             None
         )
         .is_err());
@@ -628,6 +637,7 @@ mod tests {
             &["dhcpcd".into()],
             &p,
             &["lan0".into(), "opt1".into()],
+            None,
             Some("00:04:aa:bb"),
             None,
         )
@@ -640,12 +650,23 @@ mod tests {
         assert!(d.files[0].1.contains("ipv6only\nipv6rs\nia_na"));
         assert!(d.files[0].1.contains("metric 202"));
         // a pinned IAID (the replaced router's) is used for IA_NA and IA_PD
-        let c = dhcpcd_conf("eth0", true, true, 100, &["lan0".into()], Some(305419896));
+        let c = dhcpcd_conf(
+            "eth0",
+            true,
+            true,
+            100,
+            &["lan0".into()],
+            None,
+            Some(305419896),
+        );
         assert!(
             c.contains("ia_na 305419896\nia_pd 305419896 lan0/0/64\n"),
             "{c}"
         );
-        let c = dhcpcd_conf("eth0", true, true, 100, &[], Some(7));
+        // a prefix-size hint asks the ISP for a /56 (the slices stay /64)
+        let c = dhcpcd_conf("eth0", true, true, 100, &["lan0".into()], Some(56), None);
+        assert!(c.contains("ia_pd 1/::/56 lan0/0/64\n"), "{c}");
+        let c = dhcpcd_conf("eth0", true, true, 100, &[], None, Some(7));
         assert!(c.contains("ia_na 7\n") && !c.contains("ia_pd"), "{c}");
         // dhcpcd writes its own log to a known file (read back for the server's refusals)
         assert!(
@@ -667,6 +688,7 @@ mod tests {
             &["udhcpc".into()],
             &p,
             &[],
+            None,
             None,
             None,
         )
