@@ -632,7 +632,7 @@ async function fwFeedDownload() {
     {% if services.is_empty() %}
     <p class="empty">None of the services Patronus manages are installed on this system (or the init system is not systemd/OpenRC).</p>
     {% else %}
-    <table class="lan ui-grid" id="services">
+    <table class="lan ui-grid" id="services" data-filterable aria-label="services">
         <thead><tr><th>Service</th><th>Purpose</th><th>Status</th><th>Running for</th><th>Memory</th><th>Starts at boot</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for service in services %}
@@ -797,8 +797,13 @@ async function fwFeedDownload() {
             nav.appendChild(a);
         }
         // sections shown later (groups, remote backups) appear in the list when they appear on the page
-        const sync = () => nav.querySelectorAll('a').forEach(a => { const b = document.getElementById(a.dataset.for); a.hidden = !b || b.offsetParent === null; });
-        sync(); new MutationObserver(sync).observe(document.querySelector('.content'), {attributes: true, subtree: true, attributeFilter: ['style', 'hidden']});
+        // (only writes a changed value, and ignores its own links' changes: an observer that re-sets attributes it watches loops forever)
+        const sync = () => nav.querySelectorAll('a').forEach(a => { const b = document.getElementById(a.dataset.for), off = !b || b.offsetParent === null; if (a.hidden !== off) a.hidden = off; });
+        let queued = false;
+        sync(); new MutationObserver(recs => {
+            if (queued || recs.every(r => nav.contains(r.target))) return;
+            queued = true; requestAnimationFrame(() => { queued = false; sync(); });
+        }).observe(document.querySelector('.content'), {attributes: true, subtree: true, attributeFilter: ['style', 'hidden']});
     })();
 </script>
 <script>
