@@ -13,27 +13,21 @@
         system when this page loaded.</p>
 </div>
 
-<div class="stat-grid">
-    <div class="stat-card">
-        <h2>Uptime</h2>
-        <div class="value">{{ uptime }}</div>
-    </div>
-    <div class="stat-card">
-        <h2>Disk (/)</h2>
-        <div class="value">{{ disk_usage_percent }}%</div>
-        <div class="label">{{ disk_used }} used of {{ disk_total }}</div>
-    </div>
-    <div class="stat-card">
-        <h2>Memory</h2>
-        <div class="value">{{ memory_total }}</div>
-        <div class="label">installed</div>
-    </div>
-    <div class="stat-card">
-        <h2>Patronus</h2>
-        <div class="value">{{ version }}</div>
-        <div class="label">init system: {{ init_system }}</div>
-    </div>
-</div>
+<section class="ui-panel sys-summary">
+    <div class="ui-panel-head"><h2>This router</h2><a href="/monitoring">Monitoring</a></div>
+    <div class="ui-panel-body"><dl class="ui-kv">
+        <dt>Uptime</dt><dd>{{ uptime }}</dd>
+        <dt>Disk /</dt><dd><div class="ui-usage {{ disk_level }}"><span class="track"><i style="width:{{ disk_bar }}%"></i></span><span class="val">{{ disk_usage_percent }}%</span></div>
+            <small class="text-muted">{{ disk_used }} used of {{ disk_total }}</small></dd>
+        <dt>Memory</dt><dd>{{ memory_total }} installed</dd>
+        <dt>Patronus</dt><dd>{{ version }}, init system {{ init_system }} (<a href="#about-card">about</a>)</dd>
+    </dl>
+    <p class="text-sm" style="margin:var(--s-2) 0 0"><a href="#display-card">Warning levels</a></p></div>
+</section>
+<style>
+    .sys-summary { margin-bottom: var(--s-4); }
+    .sys-summary .ui-kv { grid-template-columns: max-content minmax(0, 28rem); }
+</style>
 
 <div class="card" id="about-card">
     <div class="card-header"><h2 class="card-title">About Patronus {{ version }}</h2></div>

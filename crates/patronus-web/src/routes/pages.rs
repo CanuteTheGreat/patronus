@@ -192,10 +192,7 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
 /// Kernel fallback devices that tunnel/bridge modules create in every network namespace (`gre0`, `sit0`, ...).
 /// They carry no traffic until configured, so the dashboard leaves them out while they have no address; the
 /// Interfaces page still lists every device. These names are fixed by the kernel, not configuration.
-const KERNEL_STUB_DEVICES: &[&str] = &[
-    "gre0", "gretap0", "erspan0", "ip_vti0", "ip6_vti0", "sit0", "ip6tnl0", "ip6gre0", "tunl0",
-    "teql0",
-];
+use crate::state::interfaces::KERNEL_STUB_DEVICES;
 
 /// The dashboard's interface rows: WAN first, then LAN, other roles, unassigned; kernel stub devices without an
 /// address are dropped (returned count says how many).
@@ -326,7 +323,16 @@ pub async fn network(State(state): State<AppState>) -> Response {
 pub async fn monitoring(State(state): State<AppState>) -> Response {
     let sample = host::sample(std::time::Duration::from_millis(500)).await;
     let metrics = state.monitoring.metrics_from(&sample);
-    let interface_stats = state.monitoring.interface_stats_from(&sample);
+    // idle kernel stub devices (gre0, sit0, ...) are counted, not listed
+    let (interface_stats, stubs): (Vec<_>, Vec<_>) = state
+        .monitoring
+        .interface_stats_from(&sample)
+        .into_iter()
+        .partition(|s| {
+            !(KERNEL_STUB_DEVICES.contains(&s.name.as_str())
+                && s.rx_packets == "0"
+                && s.tx_packets == "0")
+        });
     let (top_connections, connections_error) = match state.monitoring.get_top_connections(20).await
     {
         Ok(c) => (c, String::new()),
@@ -353,6 +359,7 @@ pub async fn monitoring(State(state): State<AppState>) -> Response {
     let ui = patronus_config::uiprefs::resolve(&state.config_store).await;
     let template = MonitoringTemplate {
         page: "monitoring",
+        hidden_stubs: stubs.len(),
         cpu_level: ui.level(metrics.cpu_percent).class(),
         mem_level: ui.level(metrics.memory_percent).class(),
         disk_level: ui.level(metrics.disk_percent).class(),
@@ -409,8 +416,14 @@ pub async fn system(State(state): State<AppState>, me: crate::auth::AuthUser) ->
         .await
         .unwrap_or_default();
     let web = patronus_config::webui::resolve(Some(state.lan.store())).await;
+    let ui = patronus_config::uiprefs::resolve(&state.config_store).await;
+    let disk_pct = disk.map(|(u, t)| u as f64 * 100.0 / (t.max(1)) as f64);
     let template = SystemTemplate {
-        ui: patronus_config::uiprefs::resolve(&state.config_store).await,
+        disk_level: disk_pct.map(|p| ui.level(p).class()).unwrap_or(""),
+        disk_bar: disk_pct
+            .map(|p| p.round().clamp(0.0, 100.0) as u8)
+            .unwrap_or(0),
+        ui,
         ui_default: patronus_config::uiprefs::UiPrefs::default(),
         web_listen: web.listen.join(", "),
         web_https_port: web.https_port,

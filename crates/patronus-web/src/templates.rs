@@ -249,6 +249,8 @@ pub struct MonitoringTemplate {
     pub ai_threats: Vec<AiThreat>,
     pub live_logs: Vec<LogEntry>,
     pub logs_error: String,
+    /// idle kernel stub devices left out of the interface list
+    pub hidden_stubs: usize,
     /// ui-kit usage tone of CPU / memory / disk ("", "warn", "crit": the ui.health_* thresholds)
     pub cpu_level: &'static str,
     pub mem_level: &'static str,
@@ -283,6 +285,9 @@ pub struct SystemTemplate {
     pub config: SystemConfig,
     pub uptime: String,
     pub disk_usage_percent: String,
+    /// ui-kit usage tone of the root disk ("", "warn", "crit") and the bar width in percent
+    pub disk_level: &'static str,
+    pub disk_bar: u8,
     pub disk_used: String,
     pub disk_total: String,
     pub memory_total: String,

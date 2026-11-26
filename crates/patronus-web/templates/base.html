@@ -872,6 +872,13 @@
         document.addEventListener('click', later);
         new MutationObserver(later).observe(document.querySelector('.content') || document.body, {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden']});
     })();
+    // the current page's menu item is in view when the menu scrolls (pages under Advanced sat below the fold)
+    (function () {
+        const nav = document.querySelector('.sidebar-nav'), a = nav && nav.querySelector('.nav-item.active');
+        if (!a) return;
+        const top = a.offsetTop - nav.offsetTop, bottom = top + a.offsetHeight;
+        if (bottom > nav.scrollTop + nav.clientHeight) nav.scrollTop = bottom - nav.clientHeight + 24;
+    })();
     </script>
 </body>
 </html>

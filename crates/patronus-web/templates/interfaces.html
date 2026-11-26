@@ -4,31 +4,30 @@
 
 {% block extra_head %}
 <style>
-    .if-page h2 { margin: 28px 0 8px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+    .if-page h2 { margin: 28px 0 8px; border-bottom: 1px solid var(--c-border); padding-bottom: 4px; font-size: var(--fs-lg); }
     .if-page h3 { margin: 14px 0 6px; }
     .if-page p { margin: 8px 0; }
-    .if-page .muted { color: var(--muted); font-size: 0.9em; }
-    .if-page table { margin: 12px 0; }
-    .if-page .badge { padding: 2px 7px; border-radius: 3px; font-size: 0.8em; margin-right: 3px; display: inline-block; text-transform: none; }
-    .if-page .up { background: var(--b-success); color: #fff; }
-    .if-page .down { background: var(--b-danger); color: #fff; }
-    .if-page .role { background: var(--b-primary); color: #fff; }
-    .if-page .dyn { background: var(--b-info); color: #fff; }
-    .if-page .grey { background: var(--surface-3); color: var(--ink); }
-    .if-page .btn { margin: 2px; }
-    .if-page .btn-warning { background: #ffc107; color: #000; }
-    .if-page .card { background: var(--surface-2); }
+    .if-page .muted { color: var(--c-muted); font-size: var(--fs-sm); }
+    .if-page .ui-grid td { white-space: nowrap; vertical-align: top; }
+    .if-page .ui-grid td .muted { white-space: normal; }
+    .if-page .ui-badge + .ui-badge { margin-left: 3px; }
     .if-page .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 10px 18px; }
-    .if-page label { display: block; font-size: 0.85em; color: var(--ink); }
-    .if-page input, .if-page select, .if-page textarea { width: 100%; max-width: 100%; box-sizing: border-box; padding: 5px; margin-top: 2px; }
+    .if-page label { display: block; font-size: var(--fs-sm); color: var(--c-ink); }
+    .if-page input, .if-page select, .if-page textarea { width: 100%; max-width: 100%; box-sizing: border-box; margin-top: 2px; }
     .if-page input[type=checkbox] { width: auto; }
     .if-page textarea { font-family: var(--font-mono); min-height: 48px; }
-    .if-page #msg { margin: 12px 0; padding: 10px; border-radius: 4px; display: none; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .if-page #msg.ok { display: block; background: var(--ok-bg); border: 1px solid var(--ok-fg); }
-    .if-page #msg.err { display: block; background: var(--bad-bg); border: 1px solid var(--bad-fg); }
-    .if-page #msg.warn { display: block; background: var(--warn-bg); border: 1px solid var(--warn-fg); }
-    .if-page .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
+    .if-page .ports label { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; }
+    .if-page #msg { margin: 12px 0; display: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .if-page #msg.ok, .if-page #msg.err, .if-page #msg.warn { display: block; }
     .if-page .mono { font-family: var(--font-mono); }
+    .if-page .ui-toolbar { margin-top: 4px; }
+    .if-page .ui-toolbar .ui-input[type=search] { width: 14rem; max-width: 100%; }
+    .if-dialog { width: min(760px, calc(100vw - 24px)); }
+    .if-dialog .ui-dialog-body { max-height: calc(100vh - 180px); overflow: auto; }
+    .if-dialog .msg { display: none; }
+    .if-dialog .msg.err { display: block; }
+    .if-page > p > select, .if-page > p > input { width: auto; min-width: 12rem; margin-right: 6px; }
+    .if-stub-toggle { font-size: var(--fs-sm); color: var(--c-muted); display: inline-flex; align-items: center; gap: 6px; }
 </style>
 {% endblock %}
 
@@ -48,16 +47,20 @@
         (or WAN when there is no LAN).</p>
     <p id="mgmt-only-row" class="hidden"><label><input type="checkbox" id="mgmt-only"> SSH and the web UI answer only on the
         management network (MGMT role); off = also on the other networks your firewall rules allow</label></p>
-    <table id="devices">
+    <div class="ui-toolbar"><div><label class="if-stub-toggle"><input type="checkbox" id="show-stubs" onchange="render()"> Show kernel stub devices
+        <span id="stub-count"></span></label></div>
+        <div><input class="ui-input" type="search" data-ui-filter="if-devices" placeholder="Filter interfaces" aria-label="Filter interfaces"></div></div>
+    <div class="ui-grid-wrap"><table id="devices" class="ui-grid" data-ui-grid="if-devices">
         <thead><tr><th>Interface</th><th>Role</th><th>State</th><th>Addresses</th><th>Configuration</th><th>MAC / MTU</th><th>Traffic</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody></tbody>
     </table>
-    <div id="devices-empty" class="empty hidden">No network interfaces were reported by the kernel.</div>
+    <div id="devices-empty" class="ui-grid-state hidden">No network interfaces were reported by the kernel.</div></div>
     <div id="missing" class="muted"></div>
 
-    <div class="card hidden" id="edit-card">
-        <h3 id="edit-title">Edit</h3>
+    <dialog class="ui-dialog if-dialog" id="edit-card" aria-labelledby="edit-title">
         <form id="edit-form" onsubmit="return saveIface(event)">
+            <header id="edit-title">Edit</header>
+            <div class="ui-dialog-body">
             <input type="hidden" name="name">
             <div class="grid">
                 <div><label>Role<select name="role" id="role-select"></select></label></div>
@@ -81,15 +84,21 @@
                 <div><label>MAC address (spoof)<input name="mac" placeholder="hardware default"></label></div>
                 <div><label>Description<input name="description"></label></div>
             </div>
-            <p><button class="btn btn-primary" type="submit">Save &amp; apply</button>
-               <button class="btn" type="button" onclick="hide('edit-card')">Cancel</button></p>
+            <div class="msg ui-banner crit" role="alert"></div>
+            </div>
+            <footer><button class="ui-btn" type="button" onclick="closeDlg('edit-card')">Cancel</button>
+               <button class="ui-btn primary" type="submit">Save &amp; apply</button></footer>
         </form>
-    </div>
+    </dialog>
 
     <h2>Overlays <span class="muted">(GRE, GRE-TAP, VXLAN)</span></h2>
-    <table id="overlays"><thead><tr><th>Name</th><th>Type</th><th>Local</th><th>Remote</th><th>Key / VNI</th><th>State</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
-    <div id="overlays-empty" class="empty hidden">No overlay links configured.</div>
-    <form class="card" id="overlay-form" onsubmit="return addOverlay(event)">
+    <div class="ui-toolbar"><div><button type="button" data-open="overlay-form" class="ui-btn primary sm" onclick="openDlg('overlay-form', 'Add overlay')">Add overlay</button></div></div>
+    <div class="ui-grid-wrap"><table id="overlays" class="ui-grid"><thead><tr><th>Name</th><th>Type</th><th>Local</th><th>Remote</th><th>Key / VNI</th><th>State</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+    <div id="overlays-empty" class="ui-grid-state hidden">No overlay links configured.</div></div>
+    <dialog class="ui-dialog if-dialog" id="overlay-form-dlg" aria-labelledby="overlay-form-title">
+    <form id="overlay-form" onsubmit="return addOverlay(event)">
+        <header id="overlay-form-title">Add overlay</header>
+        <div class="ui-dialog-body">
         <div class="grid">
             <div><label>Name<input name="name" maxlength="15" required></label></div>
             <div><label>Type<select name="kind"><option value="gre">GRE (L3)</option><option value="gretap">GRE-TAP (L2)</option><option value="vxlan">VXLAN</option></select></label></div>
@@ -98,15 +107,22 @@
             <div><label>GRE key / VXLAN VNI<input name="key" type="number" min="1"></label></div>
             <div><label>Description<input name="description"></label></div>
         </div>
-        <p><button class="btn btn-primary" type="submit">Save &amp; apply</button></p>
+        <div class="msg ui-banner crit" role="alert"></div>
+        </div>
+        <footer><button class="ui-btn" type="button" onclick="closeDlg('overlay-form-dlg')">Cancel</button><button class="ui-btn primary" type="submit">Save &amp; apply</button></footer>
     </form>
+    </dialog>
 
     <h2>VLANs <span class="muted">(802.1Q, QinQ via an 802.1ad parent)</span></h2>
-    <div id="vlan-off" class="empty hidden">This build has no VLAN support (Gentoo USE=vlan).</div>
+    <div id="vlan-off" class="ui-grid-state hidden">This build has no VLAN support (Gentoo USE=vlan).</div>
     <div id="vlan-on">
-        <table id="vlans"><thead><tr><th>Name</th><th>Parent</th><th>Tag</th><th>Protocol</th><th>State</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
-        <div id="vlans-empty" class="empty hidden">No VLANs configured.</div>
-        <form class="card" id="vlan-form" onsubmit="return addVlan(event)">
+        <div class="ui-toolbar"><div><button type="button" data-open="vlan-form" class="ui-btn primary sm" onclick="openDlg('vlan-form', 'Add VLAN')">Add VLAN</button></div></div>
+        <div class="ui-grid-wrap"><table id="vlans" class="ui-grid"><thead><tr><th>Name</th><th>Parent</th><th>Tag</th><th>Protocol</th><th>State</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+        <div id="vlans-empty" class="ui-grid-state hidden">No VLANs configured.</div></div>
+        <dialog class="ui-dialog if-dialog" id="vlan-form-dlg" aria-labelledby="vlan-form-title">
+        <form id="vlan-form" onsubmit="return addVlan(event)">
+            <header id="vlan-form-title">Add VLAN</header>
+            <div class="ui-dialog-body">
             <div class="grid">
                 <div><label>Parent interface<select name="parent" class="parents"></select></label></div>
                 <div><label>VLAN tag (1-4094)<input name="vlan_id" type="number" min="1" max="4094" required></label></div>
@@ -114,14 +130,21 @@
                 <div><label>Name (default parent.tag)<input name="name" maxlength="15"></label></div>
                 <div><label>Description<input name="description"></label></div>
             </div>
-            <p><button class="btn btn-primary" type="submit">Add VLAN</button></p>
+            <div class="msg ui-banner crit" role="alert"></div>
+            </div>
+            <footer><button class="ui-btn" type="button" onclick="closeDlg('vlan-form-dlg')">Cancel</button><button class="ui-btn primary" type="submit">Add VLAN</button></footer>
         </form>
+        </dialog>
     </div>
 
     <h2>Link aggregation (bonds)</h2>
-    <table id="bonds"><thead><tr><th>Name</th><th>Mode</th><th>Members</th><th>Primary</th><th>Kernel state</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
-    <div id="bonds-empty" class="empty hidden">No bonds configured.</div>
-    <form class="card" id="bond-form" onsubmit="return addBond(event)">
+    <div class="ui-toolbar"><div><button type="button" data-open="bond-form" class="ui-btn primary sm" onclick="openDlg('bond-form', 'Add bond')">Add bond</button></div></div>
+    <div class="ui-grid-wrap"><table id="bonds" class="ui-grid"><thead><tr><th>Name</th><th>Mode</th><th>Members</th><th>Primary</th><th>Kernel state</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+    <div id="bonds-empty" class="ui-grid-state hidden">No bonds configured.</div></div>
+    <dialog class="ui-dialog if-dialog" id="bond-form-dlg" aria-labelledby="bond-form-title">
+    <form id="bond-form" onsubmit="return addBond(event)">
+        <header id="bond-form-title">Add bond</header>
+        <div class="ui-dialog-body">
         <div class="grid">
             <div><label>Name<input name="name" value="bond0" maxlength="15" required></label></div>
             <div><label>Mode<select name="mode">
@@ -134,28 +157,42 @@
             <div><label>LACP rate<select name="lacp_rate"><option value="">default (slow)</option><option>slow</option><option>fast</option></select></label></div>
             <div><label>Transmit hash<select name="xmit_hash_policy"><option value="">default</option><option>layer2</option><option>layer2+3</option><option>layer3+4</option></select></label></div>
         </div>
-        <p><button class="btn btn-primary" type="submit">Save bond</button></p>
+        <div class="msg ui-banner crit" role="alert"></div>
+        </div>
+        <footer><button class="ui-btn" type="button" onclick="closeDlg('bond-form-dlg')">Cancel</button><button class="ui-btn primary" type="submit">Save bond</button></footer>
     </form>
+    </dialog>
 
     <h2>Bridges</h2>
-    <table id="bridges"><thead><tr><th>Name</th><th>Members</th><th>STP</th><th>Kernel state</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
-    <div id="bridges-empty" class="empty hidden">No bridges configured.</div>
-    <form class="card" id="bridge-form" onsubmit="return addBridge(event)">
+    <div class="ui-toolbar"><div><button type="button" data-open="bridge-form" class="ui-btn primary sm" onclick="openDlg('bridge-form', 'Add bridge')">Add bridge</button></div></div>
+    <div class="ui-grid-wrap"><table id="bridges" class="ui-grid"><thead><tr><th>Name</th><th>Members</th><th>STP</th><th>Kernel state</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+    <div id="bridges-empty" class="ui-grid-state hidden">No bridges configured.</div></div>
+    <dialog class="ui-dialog if-dialog" id="bridge-form-dlg" aria-labelledby="bridge-form-title">
+    <form id="bridge-form" onsubmit="return addBridge(event)">
+        <header id="bridge-form-title">Add bridge</header>
+        <div class="ui-dialog-body">
         <div class="grid">
             <div><label>Name<input name="name" value="br0" maxlength="15" required></label></div>
             <div><label>Member ports</label><div class="ports" data-name="members" data-virtual="1"></div></div>
             <div><label><input type="checkbox" name="stp"> Spanning tree (STP)</label></div>
         </div>
-        <p><button class="btn btn-primary" type="submit">Save bridge</button></p>
+        <div class="msg ui-banner crit" role="alert"></div>
+        </div>
+        <footer><button class="ui-btn" type="button" onclick="closeDlg('bridge-form-dlg')">Cancel</button><button class="ui-btn primary" type="submit">Save bridge</button></footer>
     </form>
+    </dialog>
 
     <h2>PPPoE</h2>
-    <div id="pppoe-off" class="empty hidden">This build has no PPPoE support (Gentoo USE=pppoe).</div>
+    <div id="pppoe-off" class="ui-grid-state hidden">This build has no PPPoE support (Gentoo USE=pppoe).</div>
     <div id="pppoe-on">
         <p class="muted">A PPPoE link is a new interface (e.g. <span class="mono">pppoe0</span>); assign it the WAN role above once created.</p>
-        <table id="pppoe"><thead><tr><th>Name</th><th>Over</th><th>User</th><th>MTU</th><th>Link</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
-        <div id="pppoe-empty" class="empty hidden">No PPPoE links configured.</div>
-        <form class="card" id="pppoe-form" onsubmit="return addPppoe(event)">
+        <div class="ui-toolbar"><div><button type="button" data-open="pppoe-form" class="ui-btn primary sm" onclick="openDlg('pppoe-form', 'Add PPPoE link')">Add PPPoE link</button></div></div>
+        <div class="ui-grid-wrap"><table id="pppoe" class="ui-grid"><thead><tr><th>Name</th><th>Over</th><th>User</th><th>MTU</th><th>Link</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+        <div id="pppoe-empty" class="ui-grid-state hidden">No PPPoE links configured.</div></div>
+        <dialog class="ui-dialog if-dialog" id="pppoe-form-dlg" aria-labelledby="pppoe-form-title">
+        <form id="pppoe-form" onsubmit="return addPppoe(event)">
+            <header id="pppoe-form-title">Add PPPoE link</header>
+            <div class="ui-dialog-body">
             <div class="grid">
                 <div><label>Name<input name="name" value="pppoe0" maxlength="15" required></label></div>
                 <div><label>Over interface<select name="parent" class="parents"></select></label></div>
@@ -167,19 +204,26 @@
                 <div><label><input type="checkbox" name="use_peer_dns" checked> Use provider DNS</label></div>
                 <div><label><input type="checkbox" name="ipv6"> IPv6 (IPV6CP)</label></div>
             </div>
-            <p><button class="btn btn-primary" type="submit">Save PPPoE link</button></p>
+            <div class="msg ui-banner crit" role="alert"></div>
+            </div>
+            <footer><button class="ui-btn" type="button" onclick="closeDlg('pppoe-form-dlg')">Cancel</button><button class="ui-btn primary" type="submit">Save PPPoE link</button></footer>
         </form>
+        </dialog>
     </div>
 
     <h2 id="wu-title">Wi-Fi uplinks <span class="muted">(station mode: a Wi-Fi network as WAN or backup WAN)</span></h2>
-    <div id="wu-off" class="empty hidden"></div>
+    <div id="wu-off" class="ui-banner warn hidden"></div>
     <div id="wu-on">
         <p class="muted">The wireless device joins the upstream network here; give it a role (e.g. OPT1) and IPv4 mode
             DHCP above, then a gateway on the <a href="/routing">Routing</a> page (a gateway group makes it a failover
             uplink). An iwd on the same radio is stopped first.</p>
-        <table id="wu"><thead><tr><th>Device</th><th>Network</th><th>Security</th><th>State</th><th>Signal / channel</th><th>Address</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
-        <div id="wu-empty" class="empty hidden">No Wi-Fi uplinks configured.</div>
-        <form class="card" id="wu-form" onsubmit="return saveUplink(event)">
+        <div class="ui-toolbar"><div><button type="button" data-open="wu-form" class="ui-btn primary sm" onclick="openDlg('wu-form', 'Add Wi-Fi uplink')">Add Wi-Fi uplink</button></div></div>
+        <div class="ui-grid-wrap"><table id="wu" class="ui-grid"><thead><tr><th>Device</th><th>Network</th><th>Security</th><th>State</th><th>Signal / channel</th><th>Address</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+        <div id="wu-empty" class="ui-grid-state hidden">No Wi-Fi uplinks configured.</div></div>
+        <dialog class="ui-dialog if-dialog" id="wu-form-dlg" aria-labelledby="wu-form-title">
+        <form id="wu-form" onsubmit="return saveUplink(event)">
+            <header id="wu-form-title">Add Wi-Fi uplink</header>
+            <div class="ui-dialog-body">
             <div class="grid">
                 <div><label>Wireless device<input name="device" placeholder="wlan0" maxlength="15" required></label></div>
                 <div><label>Network name (SSID)<input name="ssid" maxlength="32" required></label></div>
@@ -190,16 +234,19 @@
                 <div><label>Description<input name="description"></label></div>
                 <div><label><input type="checkbox" name="enabled" checked> Enabled</label></div>
             </div>
-            <p><button class="btn btn-primary" type="submit">Save &amp; connect</button></p>
+            <div class="msg ui-banner crit" role="alert"></div>
+            </div>
+            <footer><button class="ui-btn" type="button" onclick="closeDlg('wu-form-dlg')">Cancel</button><button class="ui-btn primary" type="submit">Save &amp; connect</button></footer>
         </form>
+        </dialog>
     </div>
 
     <h2>DHCP client</h2>
     <p class="muted">Used by interfaces in DHCP mode. Build default: <span id="dhcp-default" class="mono"></span>.
         Running clients: <span id="daemons"></span></p>
     <p><select id="dhcp-client" aria-label="DHCP client"><option value="">build default</option><option value="dhcpcd">dhcpcd</option><option value="udhcpc">busybox udhcpc</option></select>
-       <button class="btn" onclick="setDhcpClient()">Save</button>
-       <button class="btn" onclick="call('POST','/api/interfaces/apply')">Re-apply all interfaces</button></p>
+       <button class="ui-btn sm" onclick="setDhcpClient()">Save</button>
+       <button class="ui-btn sm" onclick="call('POST','/api/interfaces/apply')">Re-apply all interfaces</button></p>
 
     <h2>System DHCP client (installer network)</h2>
     <p class="muted">The system's own <span class="mono">dhcpcd</span> brings the ports up before Patronus is configured. Once a port is set up here,
@@ -209,7 +256,7 @@
     <p><select id="sd-mode" aria-label="System dhcpcd"><option value="release">keep it off the ports Patronus configures</option><option value="leave">leave it alone</option></select>
        <input id="sd-conf" aria-label="System dhcpcd config file" placeholder="/etc/dhcpcd.conf" size="24">
        <input id="sd-run" aria-label="System dhcpcd run directory" placeholder="/run/dhcpcd" size="16">
-       <button class="btn" onclick="setSystemDhcpcd()">Save</button></p>
+       <button class="ui-btn sm" onclick="setSystemDhcpcd()">Save</button></p>
 </div>
 {% endblock %}
 
@@ -222,9 +269,27 @@ const hide = id => document.getElementById(id).classList.add('hidden');
 const show = id => document.getElementById(id).classList.remove('hidden');
 const fmtBytes = b => b > 1e9 ? (b/1e9).toFixed(1)+' GB' : b > 1e6 ? (b/1e6).toFixed(1)+' MB' : b > 1e3 ? (b/1e3).toFixed(1)+' kB' : b+' B';
 
+const NIL = '<span class="nil">&mdash;</span>';
+const updown = up => up ? '<span class="ui-badge ok"><span class="ui-dot ok"></span>up</span>' : '<span class="ui-badge"><span class="ui-dot off"></span>down</span>';
+// forms live in dialogs: Add opens an empty one, Edit a filled one; a refused change stays in its dialog with the reason
+let dlgOpener = null;
+function showDlg(id, title) {
+    const d = document.getElementById(id);
+    if (title) { const h = d.querySelector('header'); if (h) h.textContent = title; }
+    const m = d.querySelector('.msg'); if (m) { m.textContent = ''; m.classList.remove('err'); }
+    if (!d.open) { dlgOpener = document.activeElement; d.showModal(); }
+    const first = [...d.querySelectorAll('input, select, textarea')].find(e => e.type !== 'hidden' && !e.readOnly && e.offsetParent !== null);
+    if (first) first.focus();
+}
+function openDlg(formId, title) { const f = document.getElementById(formId); f.reset(); showDlg(formId + '-dlg', title); }
+function closeDlg(id) { document.getElementById(id).close(); }
+function closeDlgs() { document.querySelectorAll('dialog.if-dialog[open]').forEach(d => d.close()); }
+function dlgError(text) { const d = document.querySelector('dialog.if-dialog[open]'); const m = d && d.querySelector('.msg'); if (!m) return false; m.innerHTML = text; m.classList.add('err'); return true; }
+document.querySelectorAll('dialog.if-dialog').forEach(d => d.addEventListener('close', () => { if (dlgOpener && dlgOpener.focus) dlgOpener.focus(); dlgOpener = null; }));
+
 function msg(kind, text) {
     const m = document.getElementById('msg');
-    m.className = kind;
+    m.className = kind + ' ui-banner ' + ({ok: 'ok', err: 'crit', warn: 'warn'}[kind] || '');
     m.innerHTML = text;
 }
 
@@ -236,10 +301,11 @@ async function call(method, url, body) {
     try { j = await r.json(); } catch (e) {}
     if (r.status === 409 && j.lockout) {
         pending = {method, url, body: Object.assign({}, body || {}, {force: true})};
-        msg('warn', esc(j.error) + '<br><button class="btn btn-warning" onclick="forcePending()">Apply anyway</button>');
+        closeDlgs(); msg('warn', esc(j.error) + '<br><button class="ui-btn sm danger" onclick="forcePending()">Apply anyway</button>');
         return false;
     }
-    if (!r.ok) { msg('err', esc(j.error || ('HTTP ' + r.status))); return false; }
+    if (!r.ok) { const e = esc(j.error || ('HTTP ' + r.status)); if (!dlgError(e)) msg('err', e); return false; }
+    closeDlgs();
     let t = 'Applied.';
     if (j.applied && j.applied.length) t += '\n' + j.applied.map(esc).join('\n');
     if (j.warnings && j.warnings.length) { msg('warn', t + '\nWarnings:\n' + j.warnings.map(esc).join('\n')); }
@@ -253,7 +319,7 @@ function forcePending() { if (pending) { const p = pending; pending = null; call
 function modeSummary(c) {
     if (!c) return '<span class="muted">not configured</span>';
     const p = [];
-    if (!c.enabled) p.push('<span class="badge down">disabled</span>');
+    if (!c.enabled) p.push('<span class="ui-badge"><span class="ui-dot off"></span>disabled</span>');
     if (c.ipv4_mode !== 'unmanaged') p.push('IPv4 ' + esc(c.ipv4_mode) + (c.ipv4.length ? ' ' + c.ipv4.map(esc).join(', ') : '') + (c.gateway4 ? ' gw ' + esc(c.gateway4) : ''));
     if (c.ipv6_mode !== 'unmanaged') p.push('IPv6 ' + esc(c.ipv6_mode) + (c.ipv6.length ? ' ' + c.ipv6.map(esc).join(', ') : '') + ((c.pd_downstream || []).length ? ' (delegating to ' + c.pd_downstream.map(esc).join(', ') + ')' : ''));
     if (c.mtu) p.push('MTU ' + c.mtu);
@@ -269,16 +335,20 @@ function render() {
         'Anti-lockout covers: <b>' + (D.mgmt ? D.mgmt.map(esc).join(', ') : 'every interface (no MGMT/LAN/WAN assigned)') + '</b>.';
     const tb = document.querySelector('#devices tbody');
     tb.innerHTML = '';
-    devs.forEach(d => {
+    const stubs = devs.filter(d => d.kernel_stub && !d.config && !d.addresses.length);
+    const showStubs = document.getElementById('show-stubs').checked;
+    document.getElementById('stub-count').textContent = stubs.length ? '(' + stubs.length + ' hidden)' : '';
+    document.getElementById('show-stubs').closest('label').style.display = stubs.length ? '' : 'none';
+    devs.filter(d => showStubs || !stubs.includes(d)).forEach(d => {
         const c = d.config;
-        const role = c && c.role ? '<span class="badge role">' + esc(c.role.toUpperCase()) + '</span>' : '';
-        const st = '<span class="badge ' + (d.up ? 'up' : 'down') + '">' + (d.up ? 'up' : 'down') + '</span><br><span class="muted">' + esc(d.operstate) + '</span>';
-        const addrs = d.addresses.map(a => '<span class="mono">' + esc(a.address) + '</span>' + (a.dynamic ? ' <span class="badge dyn">dynamic</span>' : '')).join('<br>') || '<span class="muted">none</span>';
-        const kind = esc(d.kind) + (d.patronus_created ? ' <span class="badge grey">patronus</span>' : '') + (d.master ? '<br><span class="muted">member of ' + esc(d.master) + '</span>' : '');
+        const role = c && c.role ? '<span class="ui-badge info">' + esc(c.role.toUpperCase()) + '</span>' : NIL;
+        const st = updown(d.up) + '<br><span class="muted">' + esc(d.operstate) + '</span>';
+        const addrs = d.addresses.map(a => '<span class="mono">' + esc(a.address) + '</span>' + (a.dynamic ? ' <span class="ui-badge">dynamic</span>' : '')).join('<br>') || NIL;
+        const kind = esc(d.kind) + (d.patronus_created ? ' <span class="ui-badge">patronus</span>' : '') + (d.master ? '<br><span class="muted">member of ' + esc(d.master) + '</span>' : '');
         const tr = document.createElement('tr');
         tr.innerHTML = '<td><b>' + esc(d.name) + '</b><br><span class="muted">' + kind + '</span></td><td>' + role + '</td><td>' + st + '</td><td>' + addrs +
-            '</td><td>' + modeSummary(c) + '</td><td class="mono">' + esc(d.mac || '-') + '<br>' + d.mtu + '</td><td>&darr; ' + fmtBytes(d.rx_bytes) + '<br>&uarr; ' + fmtBytes(d.tx_bytes) + '</td>' +
-            '<td><button class="btn btn-primary" data-edit="' + esc(d.name) + '">Edit</button> <button class="btn" data-toggle="' + esc(d.name) + '" data-up="' + (c ? c.enabled : d.up) + '">' + ((c ? c.enabled : d.up) ? 'Disable' : 'Enable') + '</button></td>';
+            '</td><td>' + modeSummary(c) + '</td><td class="mono">' + (d.mac ? esc(d.mac) : NIL) + '<br>' + d.mtu + '</td><td>&darr; ' + fmtBytes(d.rx_bytes) + '<br>&uarr; ' + fmtBytes(d.tx_bytes) + '</td>' +
+            '<td><button class="ui-btn sm" data-edit="' + esc(d.name) + '" aria-label="Edit ' + esc(d.name) + '">Edit</button> <button class="ui-btn sm" data-toggle="' + esc(d.name) + '" data-up="' + (c ? c.enabled : d.up) + '">' + ((c ? c.enabled : d.up) ? 'Disable' : 'Enable') + '</button></td>';
         tb.appendChild(tr);
     });
     tb.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => edit(b.dataset.edit));
@@ -301,7 +371,7 @@ function render() {
             .map(d => '<label><input type="checkbox" value="' + esc(d.name) + '"> ' + esc(d.name) + '</label>').join('') || '<span class="muted">no ports</span>';
     });
 
-    const kstate = n => { const d = devs.find(x => x.name === n); return d ? '<span class="badge ' + (d.up ? 'up' : 'down') + '">' + (d.up ? 'up' : 'down') + '</span>' : '<span class="badge down">absent</span>'; };
+    const kstate = n => { const d = devs.find(x => x.name === n); return d ? updown(d.up) : '<span class="ui-badge warn">absent</span>'; };
     const fill = (id, rows, f) => {
         const t = document.querySelector('#' + id + ' tbody');
         t.innerHTML = rows.map(f).join('');
@@ -310,7 +380,7 @@ function render() {
             if (confirm('Delete ' + b.dataset.del + '?')) call('DELETE', '/api/interfaces/' + id + '/' + encodeURIComponent(b.dataset.del));
         });
     };
-    const del = n => '<button class="btn btn-danger" data-del="' + esc(n) + '">Delete</button>';
+    const del = n => '<button class="ui-btn sm danger" data-del="' + esc(n) + '" aria-label="Delete ' + esc(n) + '">Delete</button>';
     D.features.vlan ? (show('vlan-on'), hide('vlan-off')) : (hide('vlan-on'), show('vlan-off'));
     fill('vlans', D.vlans, v => '<tr><td>' + esc(v.name) + '</td><td>' + esc(v.parent) + '</td><td>' + v.vlan_id + '</td><td>' + esc(v.protocol) + '</td><td>' + kstate(v.name) + '</td><td>' + esc(v.description) + '</td><td>' + del(v.name) + '</td></tr>');
     fill('overlays', D.overlays, o => '<tr><td>' + esc(o.name) + '</td><td>' + esc(o.kind) + '</td><td>' + esc(o.local || '') + '</td><td>' + esc(o.remote) + '</td><td>' + (o.key == null ? '' : o.key) + '</td><td>' + kstate(o.name) + '</td><td>' + esc(o.description) + '</td><td>' + del(o.name) + '</td></tr>');
@@ -324,8 +394,8 @@ function render() {
     document.getElementById('sd-default').textContent = D.system_dhcpcd.default_conf;
     document.getElementById('sd-conf').value = D.system_dhcpcd.conf === D.system_dhcpcd.default_conf ? '' : D.system_dhcpcd.conf;
     document.getElementById('sd-run').value = D.system_dhcpcd.run_dir === D.system_dhcpcd.default_run_dir ? '' : D.system_dhcpcd.run_dir;
-    document.getElementById('problems').innerHTML = (D.problems || []).map(p => '<div class="card" role="alert" style="border-left: 4px solid var(--warn-fg); margin: 10px 0; padding: 10px;"><strong>' + esc(p.interface) + ':</strong> ' + esc(p.message) + '</div>').join('');
-    document.getElementById('daemons').innerHTML = D.daemons.length ? D.daemons.map(x => esc(x.service + '[' + x.instance + ']') + ' ' + (x.running ? '<span class="badge up">running</span>' : '<span class="badge down">stopped</span>')).join(', ') : '<span class="muted">none</span>';
+    document.getElementById('problems').innerHTML = (D.problems || []).map(p => '<div class="ui-banner warn" role="alert"><strong>' + esc(p.interface) + ':</strong> ' + esc(p.message) + '</div>').join('');
+    document.getElementById('daemons').innerHTML = D.daemons.length ? D.daemons.map(x => esc(x.service + '[' + x.instance + ']') + ' ' + (x.running ? '<span class="ui-badge ok">running</span>' : '<span class="ui-badge">stopped</span>')).join(', ') : NIL;
 
     const rs = document.getElementById('role-select');
     let opts = '<option value="">none</option><option value="wan">WAN</option><option value="lan">LAN</option><option value="mgmt">MGMT (management network)</option>';
@@ -367,8 +437,7 @@ function edit(name) {
     f.description.value = c.description || '';
     document.getElementById('edit-title').textContent = 'Edit ' + name;
     modeVis();
-    show('edit-card');
-    document.getElementById('edit-card').scrollIntoView();
+    showDlg('edit-card');
 }
 
 const lines = s => s.split(/[\n,]+/).map(x => x.trim()).filter(x => x);
@@ -382,7 +451,7 @@ async function saveIface(ev) {
         ipv6_mode: f.ipv6_mode.value, ipv6: lines(f.ipv6.value), gateway6: f.gateway6.value || null, pd_downstream: f.pd_downstream.value.split(',').map(x => x.trim()).filter(x => x), dhcp6_duid: f.dhcp6_duid.value || null, dhcp6_iaid: f.dhcp6_iaid.value === '' ? null : parseInt(f.dhcp6_iaid.value, 10),
         metric: f.metric.value ? parseInt(f.metric.value, 10) : null, mtu: f.mtu.value ? parseInt(f.mtu.value, 10) : null, mac: f.mac.value || null, description: f.description.value || null,
     };
-    if (await call('PUT', '/api/interfaces/' + encodeURIComponent(f.name.value), body)) hide('edit-card');
+    await call('PUT', '/api/interfaces/' + encodeURIComponent(f.name.value), body);
     return false;
 }
 
@@ -450,15 +519,15 @@ async function loadUplinks() {
     const u = j.uplinks || [];
     u.length ? hide('wu-empty') : show('wu-empty');
     tb.innerHTML = u.map(x => {
-        const st = !x.enabled ? '<span class="badge grey">disabled</span>'
-            : x.connected ? '<span class="badge up">connected</span>'
-            : '<span class="badge down">not connected</span>';
+        const st = !x.enabled ? '<span class="ui-badge"><span class="ui-dot off"></span>disabled</span>'
+            : x.connected ? '<span class="ui-badge ok"><span class="ui-dot ok"></span>connected</span>'
+            : '<span class="ui-badge crit">not connected</span>';
         const why = x.problem ? '<br><span class="muted">' + esc(x.problem) + '</span>' : '';
         const sig = x.connected ? esc((x.signal != null ? x.signal + ' dBm' : '') + (x.freq ? ' · ' + x.freq + ' MHz' : '') + (x.ap_bssid ? ' · ' + x.ap_bssid : '')) : '';
         return '<tr><td class="mono">' + esc(x.device) + '</td><td>' + esc(x.ssid) + (x.description ? '<br><span class="muted">' + esc(x.description) + '</span>' : '')
             + '</td><td>' + esc(x.security) + '</td><td>' + st + why + '</td><td>' + sig + '</td><td class="mono">' + esc(x.ip_address || '')
-            + '</td><td><button class="btn" onclick="editUplink(' + esc(JSON.stringify(x.device)) + ')">Edit</button>'
-            + '<button class="btn btn-danger" onclick="delUplink(' + esc(JSON.stringify(x.device)) + ')">Delete</button></td></tr>';
+            + '</td><td><button class="ui-btn sm" onclick="editUplink(' + esc(JSON.stringify(x.device)) + ')">Edit</button> '
+            + '<button class="ui-btn sm danger" onclick="delUplink(' + esc(JSON.stringify(x.device)) + ')">Delete</button></td></tr>';
     }).join('');
     WU = u;
     if (j.available === false) msg('warn', 'wpa_supplicant is not installed: emerge net-wireless/wpa_supplicant (USE=wifi-client).');
@@ -469,7 +538,7 @@ function editUplink(dev) {
     const f = document.getElementById('wu-form');
     f.device.value = x.device; f.ssid.value = x.ssid; f.security.value = x.security; f.psk.value = '';
     f.bssid.value = x.bssid || ''; f.description.value = x.description || ''; f.enabled.checked = x.enabled;
-    f.scrollIntoView({behavior: 'smooth'});
+    showDlg('wu-form-dlg', 'Edit Wi-Fi uplink ' + x.device);
 }
 async function saveUplink(ev) {
     ev.preventDefault();

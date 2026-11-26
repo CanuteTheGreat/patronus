@@ -8,9 +8,15 @@
 
 {% block content %}
 <style>
-    .mon-sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--s-3); margin-bottom: var(--s-4); }
-    .mon-sum .ui-kv dd { min-width: 0; }
-    .mon-sum .ui-panel > footer { font-size: var(--fs-sm); }
+    .mon-sum { margin-bottom: var(--s-4); }
+    .mon-sum .ui-panel { margin: 0; }
+    .mon-sum .ui-kv { grid-template-columns: 9rem minmax(0, 1fr); }
+    .mon-more { margin: var(--s-2) 0 0; font-size: var(--fs-sm); }
+    .mon-filter { width: 14rem; max-width: 50%; min-height: 26px; height: 26px; font-size: var(--fs-sm); }
+    .mon-flush { border: 0; border-radius: 0; }
+    #threats-card .ui-grid-wrap { max-height: 22rem; overflow: auto; }
+    #threats-card .ui-grid thead th { position: sticky; top: 0; z-index: 1; }
+    #usage-table td:nth-child(n+3), #usage-table th:nth-child(n+3) { text-align: right; font-variant-numeric: tabular-nums; }
     #interface-stats td, #connections td { white-space: nowrap; }
     #interface-stats td.num, #connections td.num, #interface-stats th.num, #connections th.num { text-align: right; font-variant-numeric: tabular-nums; }
     .mon-log { max-height: 480px; }
@@ -21,43 +27,42 @@
     <p class="page-subtitle">Measured on this box over half a second when the page loaded. <a href="/monitoring">Measure again</a></p>
 </div>
 
-<div class="mon-sum">
+<div class="ui-panels mon-sum">
     <section class="ui-panel">
-        <header><h2>Resources</h2></header>
-        <dl class="ui-kv">
+        <div class="ui-panel-head"><h2>Resources</h2><a href="#history-card">History</a></div>
+        <div class="ui-panel-body"><dl class="ui-kv">
             <dt>CPU</dt><dd><div class="ui-usage {{ cpu_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(metrics.cpu_percent) }}%"></i></span><span class="val">{{ "{:.0}"|format(metrics.cpu_percent) }}%</span></div></dd>
             <dt>Memory</dt><dd><div class="ui-usage {{ mem_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(metrics.memory_percent) }}%"></i></span><span class="val">{{ "{:.0}"|format(metrics.memory_percent) }}%</span></div></dd>
-            <dt>Disk /</dt><dd><div class="ui-usage {{ disk_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(metrics.disk_percent) }}%"></i></span><span class="val">{{ "{:.0}"|format(metrics.disk_percent) }}%</span></div></dd>
+            <dt>Disk (/)</dt><dd><div class="ui-usage {{ disk_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(metrics.disk_percent) }}%"></i></span><span class="val">{{ "{:.0}"|format(metrics.disk_percent) }}%</span></div></dd>
         </dl>
-        <footer><a href="#history-card">History</a> &middot; <a href="/system#display-card">Warning levels</a></footer>
+        <p class="mon-more"><a href="/system#display-card">Warning levels</a></p></div>
     </section>
     <section class="ui-panel">
-        <header><h2>Traffic</h2></header>
-        <dl class="ui-kv">
+        <div class="ui-panel-head"><h2>Traffic</h2><a href="#interfaces-card">Per interface</a></div>
+        <div class="ui-panel-body"><dl class="ui-kv">
             <dt>Received</dt><dd>{{ rx_rate }}</dd>
             <dt>Sent</dt><dd>{{ tx_rate }}</dd>
-            <dt>Packets</dt><dd>{{ packet_rate }}/s ({{ packets_total }} since boot)</dd>
+            <dt>Packets</dt><dd>{{ packet_rate }}/s, {{ packets_total }} since boot</dd>
         </dl>
-        <footer><a href="#interfaces-card">Per interface</a> &middot; <a href="#usage-card">Data usage</a></footer>
+        <p class="mon-more"><a href="#usage-card">Data usage this month</a></p></div>
     </section>
     <section class="ui-panel">
-        <header><h2>Threat feed</h2></header>
-        <dl class="ui-kv">
+        <div class="ui-panel-head"><h2>Threat feed</h2><a href="#threats-card">Entries</a></div>
+        <div class="ui-panel-body"><dl class="ui-kv">
             <dt>Known-bad addresses</dt><dd>{{ threats_detected }}</dd>
             <dt>Blocked automatically</dt><dd>{{ threats_blocked }}</dd>
-            <dt>Alerts</dt><dd>{% if active_alerts == 0 %}<span class="nil">&mdash;</span>{% else %}<span class="ui-badge warn">{{ active_alerts }}</span>{% endif %}</dd>
         </dl>
-        <footer><a href="#threats-card">Feed entries</a> &middot; <a href="/firewall#tab-threat">Threat Intel settings</a></footer>
+        <p class="mon-more"><a href="/firewall#tab-threat">Threat Intel settings</a></p></div>
     </section>
 </div>
 
-<div class="card" id="interfaces-card">
-    <div class="card-header"><h2 class="card-title">Interfaces</h2></div>
+<section class="ui-panel" id="interfaces-card">
+    <div class="ui-panel-head"><h2>Interfaces</h2>
+        {% if !interface_stats.is_empty() %}<input class="ui-input mon-filter" type="search" data-ui-filter="mon-ifaces" placeholder="Filter interfaces" aria-label="Filter interfaces">{% endif %}</div>
     {% if interface_stats.is_empty() %}
     <div class="ui-grid-state">No interfaces besides loopback (or /proc/net/dev unreadable).</div>
     {% else %}
-    <div class="ui-toolbar"><div></div><div><input class="ui-input" type="search" data-ui-filter="mon-ifaces" placeholder="Filter interfaces" aria-label="Filter interfaces"></div></div>
-    <div class="ui-grid-wrap"><table class="ui-grid" data-ui-grid="mon-ifaces" id="interface-stats">
+    <div class="ui-grid-wrap mon-flush"><table class="ui-grid" data-ui-grid="mon-ifaces" id="interface-stats">
         <thead><tr><th>Interface</th><th class="num">Received</th><th class="num">Sent</th><th class="num">RX packets</th><th class="num">TX packets</th><th class="num">Errors</th></tr></thead>
         <tbody>
         {% for stat in interface_stats %}
@@ -67,18 +72,20 @@
             <td class="num">{{ stat.tx_rate }}</td>
             <td class="num">{{ stat.rx_packets }}</td>
             <td class="num">{{ stat.tx_packets }}</td>
-            <td class="num">{% if stat.errors == "0" %}<span class="nil">&mdash;</span>{% else %}<span class="ui-badge warn">{{ stat.errors }}</span>{% endif %}</td>
+            <td class="num">{% if stat.errors == "0" %}0{% else %}<span class="ui-badge warn">{{ stat.errors }}</span>{% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
     </table></div>
+    {% if hidden_stubs > 0 %}<div class="ui-grid-foot"><span>{{ hidden_stubs }} idle kernel stub device(s) not shown (gre0, sit0, ...).</span></div>{% endif %}
     {% endif %}
-</div>
+</section>
 
 <div class="card">
     <div class="card-header"><h2 class="card-title">Largest tracked connections</h2></div>
     {% if !connections_error.is_empty() %}
-    <div class="ui-banner warn">{{ connections_error }}</div>
+    <div class="ui-banner info">Connection tracking is not readable on this system, so there is no connection list.
+        <small class="text-muted">({{ connections_error }})</small></div>
     {% else if top_connections.is_empty() %}
     <div class="ui-grid-state">The connection-tracking table is empty.</div>
     {% else %}
@@ -118,6 +125,20 @@
     {% endif %}
 </div>
 
+<div class="card">
+    <div class="card-header"><h2 class="card-title">System journal (last 200 entries)</h2></div>
+    {% if !logs_error.is_empty() %}
+    <div class="ui-banner warn">Journal unavailable: {{ logs_error }}</div>
+    {% else if live_logs.is_empty() %}
+    <div class="ui-grid-state">No journal entries (no journald on this system, e.g. OpenRC without systemd).</div>
+    {% else %}
+    <div class="ui-log mon-log" id="live-logs">
+        {% for log in live_logs %}
+        <div><span class="ts">{{ log.timestamp }}</span><span class="ui-badge {{ log.level_class }}">{{ log.level }}</span><span class="ts">{{ log.component }}</span><span>{{ log.message }}</span></div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
 <div class="card" id="threats-card">
     <div class="card-header"><h2 class="card-title">Threat intelligence feed</h2></div>
     <p class="text-sm text-muted">Addresses reported by external feeds (EmergingThreats compromised hosts).
@@ -135,7 +156,7 @@
             <td>{{ t.confidence }}%</td>
             <td>{{ t.geoip_display }}</td>
             <td>{{ t.threat_intel_display }}</td>
-            <td>{{ t.timestamp }}</td>
+            <td class="when" data-ts="{{ t.timestamp }}">{{ t.timestamp }}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -143,20 +164,6 @@
     {% endif %}
 </div>
 
-<div class="card">
-    <div class="card-header"><h2 class="card-title">System journal (last 200 entries)</h2></div>
-    {% if !logs_error.is_empty() %}
-    <div class="ui-banner warn">Journal unavailable: {{ logs_error }}</div>
-    {% else if live_logs.is_empty() %}
-    <div class="ui-grid-state">No journal entries (no journald on this system, e.g. OpenRC without systemd).</div>
-    {% else %}
-    <div class="ui-log mon-log" id="live-logs">
-        {% for log in live_logs %}
-        <div><span class="ts">{{ log.timestamp }}</span><span class="ui-badge {{ log.level_class }}">{{ log.level }}</span><span class="ts">{{ log.component }}</span><span>{{ log.message }}</span></div>
-        {% endfor %}
-    </div>
-    {% endif %}
-</div>
 <div class="card" id="history-card">
     <div class="card-header"><h2 class="card-title">History</h2></div>
     <p class="text-sm">5-minute averages recorded by the router.
@@ -185,6 +192,8 @@
 <script>
 (function () {
     const $ = id => document.getElementById(id);
+    // feed timestamps arrive as RFC 3339 with nanoseconds: show local date + minutes
+    document.querySelectorAll('td.when[data-ts]').forEach(td => { const d = new Date(td.dataset.ts); if (!isNaN(d)) { td.textContent = d.toLocaleString([], {dateStyle: 'short', timeStyle: 'short'}); td.title = td.dataset.ts; } });
     async function call(method, path, body) {
         const r = await fetch('/api' + path, {method, headers: {'Content-Type': 'application/json'}, body: body ? JSON.stringify(body) : undefined});
         const j = await r.json().catch(() => ({}));
