@@ -1846,7 +1846,11 @@ mod floating_tests {
         let mut ctx = RenderCtx::default();
         ctx.limiters.insert(
             "cap".into(),
-            LimiterSpec { rate_kbit: 1000, burst_kb: 128, per_source: true },
+            LimiterSpec {
+                rate_kbit: 1000,
+                burst_kb: 128,
+                per_source: true,
+            },
         );
         let mut r = pass_rule(4);
         r.chain = ChainType::Input;
