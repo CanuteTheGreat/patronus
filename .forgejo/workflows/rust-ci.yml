@@ -1023,4 +1023,5 @@ jobs:
         run: |
           python3 -m unittest discover -s ci/ux-qa -p 'test_*.py'
           python3 ci/ux-qa/check_owner_findings.py
+          python3 ci/ux-qa/check_github_workflows.py
           python3 ci/ux-qa/check_public_text.py docs README.md --baseline ci/ux-qa/public-text-baseline.json
