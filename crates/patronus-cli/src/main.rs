@@ -555,7 +555,7 @@ enum CveCommands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Change settings: KEY=VALUE ... (enabled, fetch, security_updates=off|notify|apply, window=HH:MM-HH:MM,
+    /// Change settings: KEY=VALUE ... (enabled, fetch, show_informational, security_updates=off|notify|apply, window=HH:MM-HH:MM,
     /// scan_interval_secs, osv_refresh_hours, osv_stale_days, glsa_stale_days, osv_url, osv_max_bytes, glsa_dir,
     /// pkg_db, binaries, manifest_path, data_dir, portageq, emerge, apply_max_packages, history_days, ...)
     Set {

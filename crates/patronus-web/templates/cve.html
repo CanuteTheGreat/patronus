@@ -87,6 +87,7 @@
     <form class="lan-form" id="c-form" onsubmit="return saveSettings(event)">
         <label class="chk"><input type="checkbox" name="enabled"> <span>Scan on a schedule</span></label>
         <label class="chk"><input type="checkbox" name="fetch"> <span>Download the crate advisory data (about 4 MB a day)</span></label>
+        <label class="chk"><input type="checkbox" name="show_informational"> <span>Also count notices about unmaintained or unsound crates (not vulnerabilities)</span></label>
         <label>Security updates
             <select name="security_updates">
                 <option value="off">off: do not look for fixes</option>
@@ -205,7 +206,7 @@
         if (!FORM_FILLED) {
             FORM_FILLED = true;
             const e = document.getElementById('c-form').elements;
-            e['enabled'].checked = s.enabled; e['fetch'].checked = s.fetch;
+            e['enabled'].checked = s.enabled; e['fetch'].checked = s.fetch; e['show_informational'].checked = s.show_informational;
             e['security_updates'].value = s.security_updates; e['window'].value = s.window;
             e['scan_h'].value = Math.max(1, Math.round(s.scan_interval_secs / 3600));
             e['osv_h'].value = s.osv_refresh_hours; e['stale_d'].value = s.osv_stale_days;
@@ -249,7 +250,7 @@
         ev.preventDefault(); const e = ev.target.elements;
         const lines = v => v.split(/[\n,]+/).map(x => x.trim()).filter(Boolean);
         const body = {
-            enabled: e['enabled'].checked, fetch: e['fetch'].checked,
+            enabled: e['enabled'].checked, fetch: e['fetch'].checked, show_informational: e['show_informational'].checked,
             security_updates: e['security_updates'].value, window: e['window'].value.trim(),
             scan_interval_secs: Number(e['scan_h'].value) * 3600, osv_refresh_hours: Number(e['osv_h'].value),
             osv_stale_days: Number(e['stale_d'].value), glsa_stale_days: Number(e['stale_d'].value),
