@@ -25,6 +25,8 @@ pub mod metrics;
 #[cfg(feature = "plugins")]
 pub mod plugin;
 pub mod policy;
+#[cfg(feature = "lan-audit")]
+pub mod scan;
 pub mod site;
 pub mod status;
 pub mod tunnel;

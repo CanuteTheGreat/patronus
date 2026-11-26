@@ -14,6 +14,12 @@ sys-apps/ethtool
 net-analyzer/tcpdump
 net-analyzer/traceroute
 net-analyzer/mtr
+# LAN security audit (USE=lan-audit): nmap for service/version detection, rustscan for a fast port
+# sweep that feeds it. Owner rule: rustscan is installed wherever nmap is. The built-in TCP connect
+# scan is the fallback where these are absent (router tier). rustscan is Rust-only: x86_64 + aarch64.
+net-analyzer/nmap
+x86_64? net-analyzer/rustscan
+aarch64? net-analyzer/rustscan
 dev-libs/elfutils
 dev-db/sqlite
 # unattended disk encryption: the ZFS key is sealed to the TPM 2.0 (installer + initramfs unlock)

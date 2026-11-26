@@ -170,6 +170,13 @@ enum Commands {
         action: GuardCommands,
     },
 
+    /// LAN security audit: scan the network for open ports and risky services
+    #[cfg(feature = "lan-audit")]
+    Scan {
+        #[command(subcommand)]
+        action: ScanCommands,
+    },
+
     /// Web UI accounts (recovery on the box: lost second factor)
     Users {
         #[command(subcommand)]
@@ -544,6 +551,49 @@ enum GuardCommands {
     },
 }
 
+#[cfg(feature = "lan-audit")]
+#[derive(Subcommand)]
+enum ScanCommands {
+    /// Run a scan now and print the result
+    Now {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the settings and which scanner this unit uses
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// List past scans
+    List {
+        #[arg(long, default_value_t = 50)]
+        limit: i64,
+    },
+    /// Show one scan: findings and open ports
+    Show {
+        id: i64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export a scan as CSV (default) or PDF
+    Export {
+        id: i64,
+        /// Write a PDF report instead of CSV
+        #[arg(long)]
+        pdf: bool,
+        /// Output file (CSV goes to stdout by default; PDF to lan-audit-ID.pdf)
+        #[arg(long, short)]
+        out: Option<std::path::PathBuf>,
+    },
+    /// Change settings: KEY=VALUE ... (enabled, interval_hours, quiet_start_min,
+    /// quiet_end_min, segments, alert_min_severity, max_parallel, max_rate,
+    /// connect_timeout_ms, discover_neighbours, keep_scans)
+    Set {
+        #[arg(required = true)]
+        pairs: Vec<String>,
+    },
+}
+
 #[derive(Subcommand)]
 enum UsersCommands {
     /// List the web UI accounts (role, enabled, two-factor)
@@ -878,6 +928,22 @@ async fn main() -> anyhow::Result<()> {
                 commands::guard::unban(cli.db.as_deref(), &address).await?
             }
             GuardCommands::Set { pairs } => commands::guard::set(cli.db.as_deref(), &pairs).await?,
+        },
+
+        #[cfg(feature = "lan-audit")]
+        Commands::Scan { action } => match action {
+            ScanCommands::Now { json } => commands::scan::now(cli.db.as_deref(), json).await?,
+            ScanCommands::Status { json } => {
+                commands::scan::status(cli.db.as_deref(), json).await?
+            }
+            ScanCommands::List { limit } => commands::scan::list(cli.db.as_deref(), limit).await?,
+            ScanCommands::Show { id, json } => {
+                commands::scan::show(cli.db.as_deref(), id, json).await?
+            }
+            ScanCommands::Export { id, pdf, out } => {
+                commands::scan::export(cli.db.as_deref(), id, pdf, out.as_deref()).await?
+            }
+            ScanCommands::Set { pairs } => commands::scan::set(cli.db.as_deref(), &pairs).await?,
         },
 
         Commands::Users { action } => match action {

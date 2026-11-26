@@ -747,6 +747,10 @@
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"></path></svg>
                         <span>Brute-force protection</span>
                     </a>
+                    <a href="/security/lan-audit" class="nav-item {% if page == "lanaudit" %}active{% endif %}">
+                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        <span>Network scan</span>
+                    </a>
                 </div>
 
                 <div class="nav-section">
@@ -933,7 +937,7 @@
                         <a href="/">Home</a>
                         {% if page != "dashboard" %}
                         <span>/</span>
-                        <span>{% if page == "dhcp" %}DHCP{% else if page == "dns" %}DNS{% else if page == "dns-policy" %}DNS policy{% else if page == "ntp" %}NTP{% else if page == "qos" %}QoS{% else if page == "vpn" %}VPN{% else if page == "wifi" %}Wi-Fi{% else if page == "ha" %}High availability{% else if page == "time-limits" %}Time limits{% else if page == "guard" %}Brute-force protection{% else %}{{ page|capitalize }}{% endif %}</span>
+                        <span>{% if page == "dhcp" %}DHCP{% else if page == "dns" %}DNS{% else if page == "dns-policy" %}DNS policy{% else if page == "ntp" %}NTP{% else if page == "qos" %}QoS{% else if page == "vpn" %}VPN{% else if page == "wifi" %}Wi-Fi{% else if page == "ha" %}High availability{% else if page == "time-limits" %}Time limits{% else if page == "guard" %}Brute-force protection{% else if page == "lanaudit" %}Network scan{% else %}{{ page|capitalize }}{% endif %}</span>
                         {% endif %}
                     </div>
                 </div>
@@ -1054,7 +1058,7 @@
         const need = {'/vpn': ['wireguard', 'ipsec', 'openvpn', 'l2tp'], '/dhcp': ['dhcp'], '/dns': ['dns'], '/ntp': ['ntp'], '/ha': ['ha'], '/qos': ['qos'],
             '/segmentation': ['segmentation'], '/segmentation/time': ['segmentation'], '/segmentation/dns': ['dns'], '/packages': ['plugins'],
             '/svc/syslog': ['syslog'], '/svc/netflow': ['netflow'], '/svc/igmp': ['igmp'], '/svc/mdns': ['mdns'], '/svc/udp-relay': ['udp-relay'], '/svc/nat64': ['nat64'], '/svc/l2tp': ['l2tp'],
-            '/svc/ids': ['intrusion-detection'], '/svc/frr': ['dynamic-routing'], '/svc/guest': ['guest'], '/security/brute-force': ['bruteforce']};
+            '/svc/ids': ['intrusion-detection'], '/svc/frr': ['dynamic-routing'], '/svc/guest': ['guest'], '/security/brute-force': ['bruteforce'], '/security/lan-audit': ['lan-audit']};
         document.querySelectorAll('.sidebar-nav a.nav-item').forEach(a => {
             const f = need[a.getAttribute('href')];
             if (f && !f.some(x => have.has(x))) {

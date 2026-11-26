@@ -88,6 +88,37 @@ fn prepare_app(state: AppState) -> axum::Router {
         );
     }
 
+    // LAN security audit: run scheduled scans when due, and route a scan's
+    // findings into the security events. applyd runs the scheduler where it
+    // exists; without it (container image, root) this process does.
+    #[cfg(feature = "lan-audit")]
+    {
+        let store = state.config_store.clone();
+        let sink = std::sync::Arc::new(patronus_network::lanaudit::EventSink {
+            record: Box::new(move |kind, subject, severity, detail| {
+                let store = store.clone();
+                Box::pin(async move {
+                    let e = crate::state::telemetry::Event {
+                        id: 0,
+                        ts: chrono::Utc::now().timestamp(),
+                        kind,
+                        subject,
+                        severity,
+                        detail,
+                    };
+                    let _ = crate::state::telemetry::record(&store, &e).await;
+                    crate::state::telemetry::deliver(store, e).await;
+                })
+            }),
+        });
+        patronus_network::lanaudit::spawn_task(
+            state.config_store.clone(),
+            false,
+            patronus_network::applyd::socket_path(),
+            Some(sink),
+        );
+    }
+
     // Guest network: expire Wi-Fi vouchers (and follow a changed UTC offset) every minute.
     #[cfg(feature = "guest")]
     {

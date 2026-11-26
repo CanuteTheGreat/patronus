@@ -17,7 +17,7 @@ path = "src/lib.rs"
 # builds patronus-web with --no-default-features and the USE-selected list):
 # lane C interfaces (vlan, pppoe, dhcpcd) and the lane D LAN-service pages
 # (dhcp, dns, ntp).
-default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "udp-relay", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "reverse-proxy", "intrusion-detection", "bruteforce", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "threat-feeds", "journal", "tls-rustls"]
+default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "udp-relay", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "reverse-proxy", "intrusion-detection", "bruteforce", "lan-audit", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "threat-feeds", "journal", "tls-rustls"]
 vlan = ["patronus-network/vlan"]
 pppoe = ["patronus-network/pppoe"]
 dhcpcd = ["patronus-network/dhcpcd"]
@@ -48,6 +48,8 @@ openvpn = ["patronus-network/openvpn"]
 web-proxy = ["patronus-network/web-proxy"]
 reverse-proxy = ["patronus-network/reverse-proxy"]
 intrusion-detection = ["patronus-network/intrusion-detection"]
+# LAN security audit page + background scanner (patronus-network/lanaudit)
+lan-audit = ["patronus-network/lan-audit"]
 # brute-force protection page + web login failures reported to the ban engine
 bruteforce = []
 dynamic-routing = ["patronus-network/dynamic-routing"]

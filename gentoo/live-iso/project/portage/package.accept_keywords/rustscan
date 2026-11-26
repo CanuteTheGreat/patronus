@@ -1,0 +1,3 @@
+# net-analyzer/rustscan is keyworded ~amd64 in ::gentoo and unkeyworded on arm64;
+# the LAN security audit (USE=lan-audit) installs it alongside nmap on the standard tier.
+net-analyzer/rustscan **
