@@ -53,6 +53,8 @@ class H(http.server.SimpleHTTPRequestHandler):
 http.server.test(HandlerClass=H, port=8099, bind=sys.argv[1])
 EOF
 nl_write_installer_toml
+# the fixtures are not system paths: without this the root engine only runs the real emerge/portageq
+export PATRONUS_CVE_TRUST_ANY_PATH=1
 
 cleanup() { set +e; nl_web_stop; pkill -f '[s]rv.py' 2>/dev/null; }
 trap cleanup EXIT

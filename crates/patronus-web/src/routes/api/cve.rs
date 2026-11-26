@@ -85,7 +85,7 @@ struct ScanIn {
 
 async fn scan(State(s): State<AppState>, body: Option<Json<ScanIn>>) -> Response {
     let st = &s.config_store;
-    let now = cve::now();
+    let now = cve::request_marker();
     let fetch = body.map(|b| b.0.fetch).unwrap_or(false);
     let r = async {
         if fetch {
