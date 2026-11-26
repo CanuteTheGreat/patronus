@@ -1,0 +1,135 @@
+00[DMN] Starting charon-systemd IKE daemon (strongSwan 5.9.13, Linux 7.0.0-1018-aws, aarch64)
+00[LIB] providers loaded by OpenSSL: legacy default
+00[CFG] install DNS servers in '/etc/resolv.conf'
+00[NET] using forecast interface eth0
+00[CFG] joining forecast multicast groups: 224.0.0.1,224.0.0.22,224.0.0.251,224.0.0.252,239.255.255.250
+00[CFG] loaded 0 RADIUS server configurations
+00[CFG] HA config misses local/remote address
+00[LIB] loaded plugins: charon-systemd aes rc2 sha2 sha1 md5 mgf1 random nonce x509 revocation constraints pubkey pkcs1 pkcs7 pkcs12 pgp dnskey sshkey pem openssl pkcs8 fips-prf gmp agent xcbc hmac kdf gcm drbg attr kernel-netlink resolve socket-default connmark forecast farp vici updown eap-identity eap-aka eap-md5 eap-gtc eap-mschapv2 eap-dynamic eap-radius eap-tls eap-ttls eap-peap eap-tnc xauth-generic xauth-eap xauth-pam tnc-tnccs dhcp lookip error-notify certexpire led addrblock unity counters
+00[LIB] dropped capabilities, running as uid 0, gid 0
+00[JOB] spawning 16 worker threads
+06[CFG] loaded certificate 'CN=server'
+03[CFG] loaded certificate 'CN=ca'
+04[CFG] loaded RSA private key
+15[CFG] loaded IKE shared key with id 'ike-a' for: 'cl'
+05[CFG] loaded EAP shared key with id 'eap-u' for: 'bob'
+07[CFG] added vici pool p: 10.9.0.0, 254 entries
+05[CFG] added vici connection: psk
+07[CFG] added vici connection: eap
+13[NET] <1> received packet: from 10.77.0.3[500] to 10.77.0.2[500] (464 bytes)
+13[ENC] <1> parsed IKE_SA_INIT request 0 [ SA KE No N(NATD_S_IP) N(NATD_D_IP) N(FRAG_SUP) N(HASH_ALG) N(REDIR_SUP) ]
+13[IKE] <1> 10.77.0.3 is initiating an IKE_SA
+13[CFG] <1> selected proposal: IKE:AES_CBC_256/HMAC_SHA2_256_128/PRF_HMAC_SHA2_256/MODP_2048
+13[IKE] <1> sending cert request for "CN=ca"
+13[ENC] <1> generating IKE_SA_INIT response 0 [ SA KE No N(NATD_S_IP) N(NATD_D_IP) CERTREQ N(FRAG_SUP) N(HASH_ALG) N(CHDLESS_SUP) N(MULT_AUTH) ]
+13[NET] <1> sending packet: from 10.77.0.2[500] to 10.77.0.3[500] (497 bytes)
+14[NET] <1> received packet: from 10.77.0.3[4500] to 10.77.0.2[4500] (272 bytes)
+14[ENC] <1> parsed IKE_AUTH request 1 [ IDi N(INIT_CONTACT) CERTREQ IDr CPRQ(ADDR DNS) SA TSi TSr N(MOBIKE_SUP) N(NO_ADD_ADDR) N(MULT_AUTH) N(EAP_ONLY) N(MSG_ID_SYN_SUP) ]
+14[IKE] <1> received cert request for "CN=ca"
+14[CFG] <1> looking for peer configs matching 10.77.0.2[srv2]...10.77.0.3[10.77.0.3]
+14[CFG] <eap|1> selected peer config 'eap'
+14[IKE] <eap|1> initiating EAP_IDENTITY method (id 0x00)
+14[IKE] <eap|1> peer supports MOBIKE
+14[IKE] <eap|1> authentication of 'srv2' (myself) with RSA_EMSA_PKCS1_SHA2_256 successful
+14[IKE] <eap|1> sending end entity cert "CN=server"
+14[ENC] <eap|1> generating IKE_AUTH response 1 [ IDr CERT AUTH EAP/REQ/ID ]
+14[NET] <eap|1> sending packet: from 10.77.0.2[4500] to 10.77.0.3[4500] (1184 bytes)
+05[NET] <eap|1> received packet: from 10.77.0.3[4500] to 10.77.0.2[4500] (80 bytes)
+05[ENC] <eap|1> parsed IKE_AUTH request 2 [ EAP/RES/ID ]
+05[IKE] <eap|1> received EAP identity 'bob'
+05[IKE] <eap|1> initiating EAP_MSCHAPV2 method (id 0x65)
+05[ENC] <eap|1> generating IKE_AUTH response 2 [ EAP/REQ/MSCHAPV2 ]
+05[NET] <eap|1> sending packet: from 10.77.0.2[4500] to 10.77.0.3[4500] (112 bytes)
+16[NET] <eap|1> received packet: from 10.77.0.3[4500] to 10.77.0.2[4500] (144 bytes)
+16[ENC] <eap|1> parsed IKE_AUTH request 3 [ EAP/RES/MSCHAPV2 ]
+16[IKE] <eap|1> EAP-MS-CHAPv2 verification failed, retry (1)
+16[ENC] <eap|1> generating IKE_AUTH response 3 [ EAP/REQ/MSCHAPV2 ]
+16[NET] <eap|1> sending packet: from 10.77.0.2[4500] to 10.77.0.3[4500] (128 bytes)
+08[NET] <eap|1> received packet: from 10.77.0.3[4500] to 10.77.0.2[4500] (80 bytes)
+08[ENC] <eap|1> parsed INFORMATIONAL request 4 [ N(AUTH_FAILED) ]
+08[ENC] <eap|1> generating INFORMATIONAL response 4 [ ]
+08[NET] <eap|1> sending packet: from 10.77.0.2[4500] to 10.77.0.3[4500] (80 bytes)
+06[NET] <2> received packet: from 10.77.0.3[500] to 10.77.0.2[500] (464 bytes)
+06[ENC] <2> parsed IKE_SA_INIT request 0 [ SA KE No N(NATD_S_IP) N(NATD_D_IP) N(FRAG_SUP) N(HASH_ALG) N(REDIR_SUP) ]
+06[IKE] <2> 10.77.0.3 is initiating an IKE_SA
+06[CFG] <2> selected proposal: IKE:AES_CBC_256/HMAC_SHA2_256_128/PRF_HMAC_SHA2_256/MODP_2048
+06[IKE] <2> sending cert request for "CN=ca"
+06[ENC] <2> generating IKE_SA_INIT response 0 [ SA KE No N(NATD_S_IP) N(NATD_D_IP) CERTREQ N(FRAG_SUP) N(HASH_ALG) N(CHDLESS_SUP) N(MULT_AUTH) ]
+06[NET] <2> sending packet: from 10.77.0.2[500] to 10.77.0.3[500] (497 bytes)
+07[NET] <2> received packet: from 10.77.0.3[4500] to 10.77.0.2[4500] (272 bytes)
+07[ENC] <2> parsed IKE_AUTH request 1 [ IDi N(INIT_CONTACT) CERTREQ IDr CPRQ(ADDR DNS) SA TSi TSr N(MOBIKE_SUP) N(NO_ADD_ADDR) N(MULT_AUTH) N(EAP_ONLY) N(MSG_ID_SYN_SUP) ]
+07[IKE] <2> received cert request for "CN=ca"
+07[CFG] <2> looking for peer configs matching 10.77.0.2[srv2]...10.77.0.3[10.77.0.3]
+07[CFG] <eap|2> selected peer config 'eap'
+07[IKE] <eap|2> initiating EAP_IDENTITY method (id 0x00)
+07[IKE] <eap|2> peer supports MOBIKE
+07[IKE] <eap|2> authentication of 'srv2' (myself) with RSA_EMSA_PKCS1_SHA2_256 successful
+07[IKE] <eap|2> sending end entity cert "CN=server"
+07[ENC] <eap|2> generating IKE_AUTH response 1 [ IDr CERT AUTH EAP/REQ/ID ]
+07[NET] <eap|2> sending packet: from 10.77.0.2[4500] to 10.77.0.3[4500] (1184 bytes)
+03[NET] <eap|2> received packet: from 10.77.0.3[4500] to 10.77.0.2[4500] (80 bytes)
+03[ENC] <eap|2> parsed IKE_AUTH request 2 [ EAP/RES/ID ]
+03[IKE] <eap|2> received EAP identity 'bob'
+03[IKE] <eap|2> initiating EAP_MSCHAPV2 method (id 0x82)
+03[ENC] <eap|2> generating IKE_AUTH response 2 [ EAP/REQ/MSCHAPV2 ]
+03[NET] <eap|2> sending packet: from 10.77.0.2[4500] to 10.77.0.3[4500] (112 bytes)
+04[NET] <eap|2> received packet: from 10.77.0.3[4500] to 10.77.0.2[4500] (144 bytes)
+04[ENC] <eap|2> parsed IKE_AUTH request 3 [ EAP/RES/MSCHAPV2 ]
+04[IKE] <eap|2> EAP-MS-CHAPv2 verification failed, retry (1)
+04[ENC] <eap|2> generating IKE_AUTH response 3 [ EAP/REQ/MSCHAPV2 ]
+04[NET] <eap|2> sending packet: from 10.77.0.2[4500] to 10.77.0.3[4500] (128 bytes)
+15[NET] <eap|2> received packet: from 10.77.0.3[4500] to 10.77.0.2[4500] (80 bytes)
+15[ENC] <eap|2> parsed INFORMATIONAL request 4 [ N(AUTH_FAILED) ]
+15[ENC] <eap|2> generating INFORMATIONAL response 4 [ ]
+15[NET] <eap|2> sending packet: from 10.77.0.2[4500] to 10.77.0.3[4500] (80 bytes)
+02[NET] <3> received packet: from 10.77.0.3[500] to 10.77.0.2[500] (464 bytes)
+02[ENC] <3> parsed IKE_SA_INIT request 0 [ SA KE No N(NATD_S_IP) N(NATD_D_IP) N(FRAG_SUP) N(HASH_ALG) N(REDIR_SUP) ]
+02[IKE] <3> 10.77.0.3 is initiating an IKE_SA
+02[CFG] <3> selected proposal: IKE:AES_CBC_256/HMAC_SHA2_256_128/PRF_HMAC_SHA2_256/MODP_2048
+02[IKE] <3> sending cert request for "CN=ca"
+02[ENC] <3> generating IKE_SA_INIT response 0 [ SA KE No N(NATD_S_IP) N(NATD_D_IP) CERTREQ N(FRAG_SUP) N(HASH_ALG) N(CHDLESS_SUP) N(MULT_AUTH) ]
+02[NET] <3> sending packet: from 10.77.0.2[500] to 10.77.0.3[500] (497 bytes)
+09[NET] <3> received packet: from 10.77.0.3[4500] to 10.77.0.2[4500] (272 bytes)
+09[ENC] <3> parsed IKE_AUTH request 1 [ IDi N(INIT_CONTACT) CERTREQ IDr CPRQ(ADDR DNS) SA TSi TSr N(MOBIKE_SUP) N(NO_ADD_ADDR) N(MULT_AUTH) N(EAP_ONLY) N(MSG_ID_SYN_SUP) ]
+09[IKE] <3> received cert request for "CN=ca"
+09[CFG] <3> looking for peer configs matching 10.77.0.2[srv2]...10.77.0.3[10.77.0.3]
+09[CFG] <eap|3> selected peer config 'eap'
+09[IKE] <eap|3> initiating EAP_IDENTITY method (id 0x00)
+09[IKE] <eap|3> peer supports MOBIKE
+09[IKE] <eap|3> authentication of 'srv2' (myself) with RSA_EMSA_PKCS1_SHA2_256 successful
+09[IKE] <eap|3> sending end entity cert "CN=server"
+09[ENC] <eap|3> generating IKE_AUTH response 1 [ IDr CERT AUTH EAP/REQ/ID ]
+09[NET] <eap|3> sending packet: from 10.77.0.2[4500] to 10.77.0.3[4500] (1184 bytes)
+13[NET] <eap|3> received packet: from 10.77.0.3[4500] to 10.77.0.2[4500] (80 bytes)
+13[ENC] <eap|3> parsed IKE_AUTH request 2 [ EAP/RES/ID ]
+13[IKE] <eap|3> received EAP identity 'bob'
+13[IKE] <eap|3> initiating EAP_MSCHAPV2 method (id 0x6C)
+13[ENC] <eap|3> generating IKE_AUTH response 2 [ EAP/REQ/MSCHAPV2 ]
+13[NET] <eap|3> sending packet: from 10.77.0.2[4500] to 10.77.0.3[4500] (112 bytes)
+14[NET] <eap|3> received packet: from 10.77.0.3[4500] to 10.77.0.2[4500] (144 bytes)
+14[ENC] <eap|3> parsed IKE_AUTH request 3 [ EAP/RES/MSCHAPV2 ]
+14[IKE] <eap|3> EAP-MS-CHAPv2 verification failed, retry (1)
+14[ENC] <eap|3> generating IKE_AUTH response 3 [ EAP/REQ/MSCHAPV2 ]
+14[NET] <eap|3> sending packet: from 10.77.0.2[4500] to 10.77.0.3[4500] (128 bytes)
+16[NET] <eap|3> received packet: from 10.77.0.3[4500] to 10.77.0.2[4500] (80 bytes)
+16[ENC] <eap|3> parsed INFORMATIONAL request 4 [ N(AUTH_FAILED) ]
+16[ENC] <eap|3> generating INFORMATIONAL response 4 [ ]
+16[NET] <eap|3> sending packet: from 10.77.0.2[4500] to 10.77.0.3[4500] (80 bytes)
+11[ENC] generating IKE_SA_INIT response 0 [ N(COOKIE) ]
+11[NET] sending packet: from 10.77.0.2[500] to 10.77.0.3[500] (60 bytes)
+08[NET] <4> received packet: from 10.77.0.3[500] to 10.77.0.2[500] (496 bytes)
+08[ENC] <4> parsed IKE_SA_INIT request 0 [ N(COOKIE) SA KE No N(NATD_S_IP) N(NATD_D_IP) N(FRAG_SUP) N(HASH_ALG) N(REDIR_SUP) ]
+08[IKE] <4> 10.77.0.3 is initiating an IKE_SA
+08[CFG] <4> selected proposal: IKE:AES_CBC_256/HMAC_SHA2_256_128/PRF_HMAC_SHA2_256/MODP_2048
+08[IKE] <4> sending cert request for "CN=ca"
+08[ENC] <4> generating IKE_SA_INIT response 0 [ SA KE No N(NATD_S_IP) N(NATD_D_IP) CERTREQ N(FRAG_SUP) N(HASH_ALG) N(CHDLESS_SUP) N(MULT_AUTH) ]
+08[NET] <4> sending packet: from 10.77.0.2[500] to 10.77.0.3[500] (497 bytes)
+06[NET] <4> received packet: from 10.77.0.3[4500] to 10.77.0.2[4500] (320 bytes)
+06[ENC] <4> parsed IKE_AUTH request 1 [ IDi N(INIT_CONTACT) CERTREQ IDr AUTH CPRQ(ADDR DNS) SA TSi TSr N(MOBIKE_SUP) N(NO_ADD_ADDR) N(MULT_AUTH) N(EAP_ONLY) N(MSG_ID_SYN_SUP) ]
+06[IKE] <4> received cert request for "CN=ca"
+06[CFG] <4> looking for peer configs matching 10.77.0.2[srv]...10.77.0.3[cl]
+06[CFG] <psk|4> selected peer config 'psk'
+06[IKE] <psk|4> tried 1 shared key for 'srv' - 'cl', but MAC mismatched
+06[IKE] <psk|4> peer supports MOBIKE
+06[ENC] <psk|4> generating IKE_AUTH response 1 [ N(AUTH_FAILED) ]
+06[NET] <psk|4> sending packet: from 10.77.0.2[4500] to 10.77.0.3[4500] (80 bytes)

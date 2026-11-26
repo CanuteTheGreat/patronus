@@ -90,14 +90,14 @@ pub async fn set(db: Option<&Path>, pairs: &[String]) -> anyhow::Result<()> {
             "enabled" | "escalate" | "exempt_lan" => {
                 serde_json::Value::Bool(matches!(v, "1" | "true" | "yes" | "on"))
             }
-            "sources" | "allowlist" | "log_files" => serde_json::Value::Array(
+            "sources" | "allowlist" | "log_files" | "log_tags" => serde_json::Value::Array(
                 v.split(',')
                     .map(str::trim)
                     .filter(|x| !x.is_empty())
                     .map(|x| serde_json::Value::String(x.into()))
                     .collect(),
             ),
-            "journal" => serde_json::Value::String(v.into()),
+            "journal" | "openvpn_log" => serde_json::Value::String(v.into()),
             _ => serde_json::Value::Number(
                 v.parse::<u64>()
                     .map_err(|_| anyhow::anyhow!("{k}: a number expected, got {v:?}"))?
