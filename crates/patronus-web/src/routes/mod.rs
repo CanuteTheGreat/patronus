@@ -483,7 +483,8 @@ pub(crate) fn board_settings() -> Vec<serde_json::Value> {
 /// Parse the board settings file: a JSON array of objects with string `key`, `label` and `value` (required) and
 /// optional `default`, `allowed` (array of strings), `reason`, `how` and `state`. Malformed entries are skipped.
 pub(crate) fn board_settings_from(text: &str) -> Vec<serde_json::Value> {
-    let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(text) else {
+    let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(text)
+    else {
         return Vec::new();
     };
     items
@@ -494,7 +495,11 @@ pub(crate) fn board_settings_from(text: &str) -> Vec<serde_json::Value> {
             let allowed: Vec<String> = o
                 .get("allowed")
                 .and_then(|a| a.as_array())
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default();
             Some(serde_json::json!({
                 "key": s("key")?,
