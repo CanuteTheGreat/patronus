@@ -15,7 +15,7 @@ K=${VIRT_KERNEL:?VIRT_KERNEL}; KEY=${UNIT_DIR:?UNIT_DIR}/ci_ed25519
 RES=${RESULTS:-/out/qemu-$INIT}; mkdir -p "$RES"; : > "$RES/results.txt"
 TMO=${BOOT_TIMEOUT:-1200}
 SQ=$(ls "$I"/root.squashfs 2>/dev/null || true); TAR=$(ls "$I"/patronus-*-sysupgrade.tar)
-QP=; SLP=; W=$(mktemp -d "${TMPDIR:-/tmp}/ax-qemu.XXXX"); trap 'kill $QP $SLP ${FEEDPID:-} 2>/dev/null; rm -rf "$W"' EXIT
+QP=; SLP=; W=$(mktemp -d "${TMPDIR:-/tmp}/ax-qemu.XXXX"); trap 'kill $QP $SLP ${NMLP:-} ${FEEDPID:-} 2>/dev/null; rm -rf "$W"' EXIT
 # test copy of the root: the board's kmods replaced by the same pinned netfilter packages built for the virt kernel
 # (kmods.pin "virt"), so the firewall applies for real; everything else is the shipped image byte for byte
 # GATE_ROOT_IMG=<file>: a test root prepared earlier (qemu-bundle.sh, GATE_PREP_ONLY below) so a small test host needs neither the
@@ -543,6 +543,46 @@ if has_feature syslog; then
   check "Syslog page: the test message arrives at the collector" syslog_test_msg
   check "Syslog page: a TCP collector is refused (busybox forwards over UDP only), nothing written" syslog_tcp_refused
 else echo "SKIP: Syslog (not in FEATURES=$FEATURES)" | tee -a "$RES/results.txt"; fi
+# Notification matchers (docs/NOTIFY-MATCHERS.md; every router-tier image, no feature flag): a nested all/any/not matcher
+# with a calendar leaf is saved through the web API, a webhook channel (10.0.2.2 = this container through QEMU's user net)
+# uses it, and "try an event" with send=true must reach the receiver only for the events the matcher accepts
+NMP=5516
+nm_listen() { rm -f "$W/nm-rx.txt"; python3 - "$NMP" "$W/nm-rx.txt" "${1:-900}" >/dev/null 2>&1 <<'PY' &
+import http.server, sys, threading
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        b = self.rfile.read(int(self.headers.get("content-length", 0)))
+        open(sys.argv[2], "ab", buffering=0).write(b + b"\n")
+        self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+    def log_message(self, *a): pass
+srv = http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H)
+threading.Timer(int(sys.argv[3]), srv.shutdown).start()
+srv.serve_forever()
+PY
+  NMLP=$!; sleep 1; }
+nm_count() { grep -ac "$1" "$W/nm-rx.txt" 2>/dev/null || true; }
+nm_try() { c=$(api POST /api/system/events/try "{\"kind\":\"$1\",\"subject\":\"$2\",\"severity\":\"$3\",\"send\":true}"); [ "$c" = 200 ] || { echo "try $1: HTTP $c $(cat "$W/api.json")"; return 1; }; }
+nm_wait() { i=0; while [ "$(nm_count "$1")" -lt "$2" ]; do i=$((i+1)); [ $i -ge 30 ] && { echo "nothing matching '$1' reached the receiver ($(nm_count "$1") of $2): $(cat "$W/nm-rx.txt" 2>/dev/null | head -c 600)"; return 1; }; sleep 2; done; }
+nm_eval() { login || return 1
+  c=$(api PUT /api/system/matchers/ci-gate '{"description":"ci","tree":{"op":"all","items":[{"op":"any","items":[{"op":"kind","kinds":["gateway_down"]},{"op":"kind","kinds":["tunnel_down"]}]},{"op":"severity","min":"warning"},{"op":"not","items":[{"op":"subject","glob":"guest*"}]},{"op":"calendar","days":["mon","tue","wed","thu","fri","sat","sun"],"start":"00:00","end":"00:00"}]}}')
+  [ "$c" = 200 ] || { echo "save matcher: HTTP $c $(cat "$W/api.json")"; return 1; }
+  c=$(api PUT /api/system/matchers/bad '{"tree":{"op":"any","items":[]}}'); [ "$c" = 400 ] || { echo "an empty any was accepted: HTTP $c"; return 1; }
+  c=$(api POST /api/system/hooks "{\"name\":\"ci-gate-hook\",\"url\":\"http://10.0.2.2:$NMP/m\",\"matcher\":\"ci-gate\"}"); [ "$c" = 201 ] || { echo "add channel: HTTP $c $(cat "$W/api.json")"; return 1; }
+  nm_try gateway_down WAN critical || return 1
+  has_all "$(cat "$W/api.json")" '"ci-gate-hook"' '"sent":true' || { echo "routed to: $(cat "$W/api.json")"; return 1; }
+  nm_wait '"kind":"gateway_down"' 1 || return 1
+  for ev in "gateway_down guest-wan critical" "gateway_down WAN info" "tunnel_up office critical"; do
+    set -- $ev; nm_try "$1" "$2" "$3" || return 1
+    case "$(cat "$W/api.json")" in *'"ci-gate-hook"'*) echo "the matcher let $ev through: $(cat "$W/api.json")"; return 1;; esac
+  done
+  nm_try tunnel_down office warning || return 1; nm_wait '"kind":"tunnel_down"' 1 || return 1
+  sleep 5; [ "$(nm_count '"kind":"gateway_down"')" = 1 ] && [ "$(nm_count '"kind"')" = 2 ] || { echo "extra deliveries: $(cat "$W/nm-rx.txt")"; return 1; }; }
+nm_persist() { login || return 1
+  c=$(api GET /api/system/matchers); [ "$c" = 200 ] && has_all "$(cat "$W/api.json")" '"name":"ci-gate"' '"used_by":["ci-gate-hook"]' '"op":"calendar"' || { echo "matcher after reboot: $c $(cat "$W/api.json")"; return 1; }
+  kill $NMLP 2>/dev/null; nm_listen 300
+  nm_try gateway_down WAN critical || return 1; nm_wait '"kind":"gateway_down"' 1; }
+nm_listen 900
+check "notification matchers: a nested all/any/not + calendar matcher saved through the API, a bad tree refused (400), events routed as the matcher says (webhook on the emulator host)" nm_eval
 check "features: role ap, Wi-Fi backend, \"not available\" list with reasons" features_ap
 check "AP role: router-only pages explain the main router, their APIs refuse changes (409); Wi-Fi page served" ap_pages
 check "Wi-Fi channel plan: automatic channel (ACS) by default on both radios, width/DFS/channel lists/survey rounds settable, bad values 400" wifi_chanplan
@@ -650,6 +690,7 @@ if has_feature syslog; then
   kill $SLP 2>/dev/null; syslog_listen 300
   check "boot 2: collector list persisted, syslogd forwards from boot (a logger message arrives)" syslog_boot2
 fi
+check "boot 2: the matcher and its channel persisted and still route an event to the webhook" nm_persist
 sleep 60   # idle: let the boot's apply/ETPhoneHome settle before reading memory
 if [ -n "${GATE_HOLD:-}" ]; then echo "HOLD: unit up for ${GATE_HOLD}s (web on $BIND:$WEBP, user cigate)" | tee -a "$RES/results.txt"; touch "$RES/holding"
   t=0; while [ $t -lt "$GATE_HOLD" ] && [ ! -e "$RES/release" ]; do sleep 5; t=$((t + 5)); done; rm -f "$RES/holding"; fi

@@ -159,6 +159,17 @@ nl_api POST /system/matchers/preview "{\"tree\":$TREE}"
 [ "$NL_CODE" = 200 ] && [ "$(j 'd["total"] > 0')" = True ] || nl_fail "preview: $NL_CODE $(cat "$NL_OUT")"
 nl_api POST /system/matchers/preview '{"tree":{"op":"all","items":[]}}'
 [ "$(j 'd["matched"] == d["total"]')" = True ] || nl_fail "an empty 'all' must match every event: $(cat "$NL_OUT")"
+set_clock "2026-11-23 23:00"
+nl_api POST /system/events/try '{"kind":"gateway_down","subject":"GW_A","severity":"critical"}'
+[ "$NL_CODE" = 200 ] && [ "$(j '"m1" in d["channels"] and "legacy-api" in d["channels"] and d["sent"] == False')" = True ] || nl_fail "try an event (in the window): $NL_CODE $(cat "$NL_OUT")"
+nl_api POST /system/events/try '{"kind":"gateway_down","subject":"GW_B","severity":"critical"}'
+[ "$(j '"m1" not in d["channels"] and "legacy-api" in d["channels"]')" = True ] || nl_fail "try an event (GW_B): $(cat "$NL_OUT")"
+set_clock "2026-11-23 12:00"
+nl_api POST /system/events/try '{"kind":"gateway_down","subject":"GW_A","severity":"critical"}'
+[ "$(j '"m1" not in d["channels"]')" = True ] || nl_fail "try an event (outside the window): $(cat "$NL_OUT")"
+nl_api POST /system/events/try '{"kind":"nonsense"}'
+[ "$NL_CODE" = 400 ] || nl_fail "try an event with a bad kind: $NL_CODE"
+nl_ok "'try an event' says which channels get it now (window, not, legacy) without sending"
 nl_api PUT "/system/hooks/$MID/matcher" '{"matcher":""}'
 [ "$NL_CODE" = 200 ] || nl_fail "rewire: $NL_CODE $(cat "$NL_OUT")"
 nl_api PUT "/system/hooks/$MID/matcher" '{"matcher":"nope"}'
