@@ -288,7 +288,7 @@ mk24 2437; r=$(AP_COORD_EPOCH=1000000 co24 2442 0 now); [ "$r" = "restart-band 2
 r=$(KEEPST=1 AP_COORD_EPOCH=1003600 co24 2442 0 now); [ -z "$r" ] && grep -q 'not moving again' "$A/co-check.out" \
   && ok "ap-coord check: after a restart that left the radio on the same channel, the next check does not restart again" || { no "ap-coord loop guard: '$r'"; cat "$A/co-check.out"; }
 r=$(KEEPST=1 AP_COORD_EPOCH=1003600 co24 2442 0 now); [ -z "$r" ] || no "ap-coord loop guard repeat: '$r'"
-r=$(KEEPST=1 AP_COORD_EPOCH=$((1000000 + 86400 + 60)) co24 2442 0 now); [ "$r" = "restart-band 24" ] && ok "ap-coord check: the guard expires after 24 hours" || no "ap-coord loop guard expiry: '$r'"
+r=$(KEEPST=1 AP_COORD_EPOCH=$((1000000 + 86400 + 60)) co24 2442 0 now); [ -z "$r" ] && ok "ap-coord check: the same-channel guard does not expire" || no "ap-coord loop guard repeated: '$r'"
 # the FIRST check after a start (`now`) respects the quiet hours too (a restart at boot-time clock 14:00 would drop clients)
 mk24 2437; r=$(PATH=$A/bin-nost:$PATH AP_COORD_QUIET=1-5 AP_COORD_NOW=14 co24 2442 0 now); [ -z "$r" ] && grep -q 'outside the quiet hours' "$A/co-check.out" \
   && ok "ap-coord check: the first check (now) outside the quiet hours does not restart either" || { no "ap-coord first check quiet: '$r'"; cat "$A/co-check.out"; }
@@ -299,12 +299,12 @@ mk24 2437; r=$(COCHAN=$A/bin-chan/chan AP_COORD_EPOCH=4000000 co24 2442 0 now)
 [ -s "$A/chan.log" ] && ok "ap-coord check: with ap-chan the overlap is answered by a move" || no "ap-coord move not attempted"
 rm -f "$A/chan.log"; mk24 2437; r=$(KEEPST=1 COCHAN=$A/bin-chan/chan AP_COORD_EPOCH=4003600 co24 2442 0 now); [ ! -s "$A/chan.log" ] && [ -z "$r" ] && grep -q 'not moving again' "$A/co-check.out" \
   && ok "ap-coord check: a move that left the radio on the same channel is not retried within 24 h" || { no "ap-coord failed move retried: '$r'"; cat "$A/co-check.out"; }
-rm -f "$A/chan.log"; mk24 2437; r=$(KEEPST=1 COCHAN=$A/bin-chan/chan AP_COORD_EPOCH=$((4000000 + 86400 + 1)) co24 2442 0 now); [ -s "$A/chan.log" ] \
-  && ok "ap-coord check: the move guard expires after 24 hours" || no "ap-coord move guard did not expire"
+rm -f "$A/chan.log"; mk24 2437; r=$(KEEPST=1 COCHAN=$A/bin-chan/chan AP_COORD_EPOCH=$((4000000 + 86400 + 1)) co24 2442 0 now); [ ! -s "$A/chan.log" ] \
+  && ok "ap-coord check: failed moves are not repeatedly attempted" || no "ap-coord move guard repeated"
 mk24 2437; printf 'garbage x\n' > "$A/co3/patronus-ap-coord-restart-24"; r=$(KEEPST=1 AP_COORD_EPOCH=5000000 co24 2442 0 now); [ "$r" = "restart-band 24" ] \
   && ok "ap-coord check: an unreadable guard file is ignored" || no "ap-coord garbage guard: '$r'"
-mk24 2437; r=$(AP_COORD_EPOCH=6000000 co24 2442 0 now); r=$(KEEPST=1 AP_COORD_EPOCH=5000000 co24 2442 0 now); [ "$r" = "restart-band 24" ] \
-  && ok "ap-coord check: a clock that went backwards does not block the guard for good" || no "ap-coord backwards clock: '$r'"
+mk24 2437; r=$(AP_COORD_EPOCH=6000000 co24 2442 0 now); r=$(KEEPST=1 AP_COORD_EPOCH=5000000 co24 2442 0 now); [ -z "$r" ] \
+  && ok "ap-coord check: clock changes do not defeat the guard" || no "ap-coord backwards clock: '$r'"
 if grep -n 'AP_COORD_LOOP_SECS' "$CO" docs/embedded-routers.md > /dev/null 2>&1; then no "ap-coord: untyped AP_COORD_LOOP_SECS knob is back"; else ok "ap-coord: no untyped loop-guard knob"; fi
 mk24 2437; r=$(AP_COORD_EPOCH=2000000 co24 2442 0 now); r=$(KEEPST=1 AP_COORD_EPOCH=2003600 co24 2452 0 now); [ "$r" = "restart-band 24" ] && ok "ap-coord check: a restart that did move the radio (7 -> 9) does not block a later real overlap" || no "ap-coord loop guard, moved: '$r'"
 mk24 2437; r=$(AP_COORD_EPOCH=3000000 co24 2442 0 now); mk24 2462; r=$(KEEPST=1 AP_COORD_EPOCH=3003600 co24 2412 0 now); [ ! -e "$A/co3/patronus-ap-coord-restart-24" ] && ok "ap-coord check: the guard is cleared once the overlap is gone" || no "ap-coord loop guard not cleared"

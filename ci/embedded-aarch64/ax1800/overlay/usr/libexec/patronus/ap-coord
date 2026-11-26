@@ -213,21 +213,17 @@ check() { # BAND [now]
   # after a start (`now`) too: `now` only makes the check wait for the radio to come up; a later check moves it.
   if ! hours_ok; then
     say "$b GHz: shares channels with $hit; outside the quiet hours (AP_COORD_QUIET=${AP_COORD_QUIET}), moving later"; return 0; fi
-  # Loop guard: a restart or move that lands on the same primary channel as before settles nothing (the pick is
-  # deterministic: same measurements, same best channel; a failed move leaves the radio where it was) and every restart
-  # drops all stations. Once an attempt was made on channel $pch, no further attempt happens while the radio still sits
-  # there, for 24 hours (LOOP_SECS, not a setting). The state is "channel epoch" in /run: gone at reboot, ignored when
-  # unreadable or when the clock went backwards.
-  LOOP_SECS=86400; nw=${AP_COORD_EPOCH:-$(date +%s)}
+  # Do not repeatedly disrupt clients when a move or restart left the radio on the same channel.
+  # Clear the guard when the collision disappears or the channel changes; /run also resets at boot.
   if [ -s "$(stf "$b")" ]; then
-    lch=; lts=; read -r lch lts < "$(stf "$b")"
-    case "$lch$lts" in ''|*[!0-9]*) lch=; lts=;; esac
-    if [ -n "$lts" ] && [ "$lch" = "$pch" ] && [ "$nw" -ge "$lts" ] && [ $((nw - lts)) -lt $LOOP_SECS ]; then
+    lch=; read -r lch < "$(stf "$b")"
+    case "$lch" in ''|*[!0-9]*) lch=;; esac
+    if [ -n "$lch" ] && [ "$lch" = "$pch" ]; then
       say "$b GHz: shares channels with $hit; the last attempt left this radio on the same channel ($pch), not moving again"; return 0; fi
     rm -f "$(stf "$b")"; fi
   # another unit's block: move with a channel switch announcement to the best measured free channel (ap-chan), so the
   # stations follow; a restart (ACS) only when there is no ap-chan or it found nothing
-  echo "$pch $nw" > "$(stf "$b")" 2>/dev/null
+  echo "$pch" > "$(stf "$b")" 2>/dev/null
   if [ -x "$CHAN" ]; then
     l=$(echo "$s" | parse | busy "$b"); [ -n "$l" ] && echo "$l" > "$OUTD/coord-$b"
     best=$("$CHAN" pick "$b" "$ifc" ap 2>/dev/null | tail -1)
