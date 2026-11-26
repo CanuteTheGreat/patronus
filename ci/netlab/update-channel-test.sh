@@ -30,18 +30,20 @@ echo "--- newest release ebuild in the overlay: $rel ($INIT)"
 [ -n "$rel" ] || { echo "FAIL no release ebuild"; exit 1; }
 
 uc --set stable --mirror file:///srv/patronus-overlay --location "$REPO" || { cat /t/uc.log; bad set-stable; }
-chk repos-conf-managed 'head -1 /etc/portage/repos.conf/patronus.conf | grep -q "managed by Patronus"'
+chk repos-conf-managed 'grep -q "managed by Patronus" <<<"$(head -1 /etc/portage/repos.conf/patronus.conf)"'
 chk repos-conf-mirror 'grep -qx "sync-uri = file:///srv/patronus-overlay" /etc/portage/repos.conf/patronus.conf'
 chk repos-conf-location 'grep -qx "location = $REPO" /etc/portage/repos.conf/patronus.conf'
-chk portage-knows-repo 'portageq get_repos / | tr " " "\n" | grep -qx patronus'
+chk portage-knows-repo 'grep -qx patronus <<<"$(portageq get_repos / | tr " " "\n")"'
 b=$(best); echo "stable: $b"
 chk stable-gets-release '[ "$b" = "net-firewall/patronus-$rel" ]'
 
 uc --set development || bad set-development
 b=$(best); echo "development: $b"
 chk development-gets-live '[ "$b" = net-firewall/patronus-9999 ]'
-pv=$(emerge -p --nodeps =net-firewall/patronus-9999 2>&1)
-chk emerge-resolves-live 'grep -q "^\[ebuild.*net-firewall/patronus-9999" <<<"$pv"'
+# (USE: this lab image's package.use turns VPN backends off; a real install has its own USE)
+pv=$(USE="wireguard" emerge -p --nodeps =net-firewall/patronus-9999 2>&1)
+chk emerge-resolves-live 'grep -q "^\[ebuild.*net-firewall/patronus-9999" <<<"$pv"' || true
+grep -q "^\[ebuild.*net-firewall/patronus-9999" <<<"$pv" || tail -25 <<<"$pv"
 
 # a release candidate newer than the release (what a vX.Y.Z-rc.N tag's ebuild looks like)
 cp "$REPO/net-firewall/patronus/patronus-$rel.ebuild" "$REPO/net-firewall/patronus/patronus-99.0.0_rc1.ebuild"
