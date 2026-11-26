@@ -263,7 +263,6 @@ nosta wl5-sta; now 6000; sh "$WF" once
 chk "inside the hold: client stays off" sh -c "[ -f $W/run/wf/wl5-sta.dropped ] && [ ! -f $FX/radio-setup.calls ]"
 now 9070; sh "$WF" once
 chk "hold over: client started again through board-network client5" sh -c "grep -qx 'client5 start' $FX/radio-setup.calls && [ ! -f $W/run/wf/wl5-sta.dropped ] && grep -q 'link set wl5-sta up' $FX/link.calls"
-sh "$WF" status | grep -q 'wl5-sta: watched\|drops so far' || true
 
 # ---- radio watchdog: firmware restarts and a wedged firmware (kernel log from a fixture)
 DEV=0000:00:00.0
