@@ -1,0 +1,3 @@
+# Zabbix agent 2 only (USE=zabbix-agent): the router needs the agent, never the server, proxy, web frontend
+# or a database. The package's default USE (+postgres) would pull a PostgreSQL server onto the firewall.
+net-analyzer/zabbix agent2 -agent -server -proxy -frontend -postgres -mysql -sqlite -snmp -odbc -openipmi -java -ldap -libxml2 -ssh -curl

@@ -22,7 +22,9 @@ Without a token a scraper still needs a session or an API key, as before.
 ## Zabbix agent 2
 
 Package: `net-analyzer/zabbix[agent2]` (Zabbix 7.x). Installed from the Packages page or pulled in by
-the USE flag.
+the USE flag. The package's default USE (`+postgres`) would pull a PostgreSQL server onto the router;
+the image ships `portage/package.use/patronus-monagent` (agent2 only: no server, proxy, frontend or
+database), and an installation built by hand should carry the same line.
 
 | Setting | Default | Notes |
 |---|---|---|
