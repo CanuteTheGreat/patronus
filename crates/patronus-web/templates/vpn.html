@@ -317,7 +317,7 @@
         });
         let j = {};
         try { j = await r.json(); } catch (_) {}
-        if (!r.ok) { alert('Not applied: ' + (j.error || r.status)); return false; }
+        if (!r.ok) { patNotice('Not applied: ' + (j.error || r.status), 'crit'); return false; }
         if (j.generated_psk) prompt('Pre-shared key for the other side (shown only now):', j.generated_psk);
         location.reload();
         return false;

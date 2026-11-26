@@ -265,10 +265,10 @@ async function fwFeedDownload() {
         if (!r.ok) {
             let m = r.status + '';
             try { m = (await r.json()).error || m; } catch (_) {}
-            alert('Not applied: ' + m);
+            patNotice('Not applied: ' + m, 'crit');
             return false;
         }
-        alert('Saved. The firewall already allows the new ports; use "Restart web UI now" to move the listeners.');
+        patNotice('Saved. The firewall already allows the new ports; use "Restart web UI now" to move the listeners.', 'ok');
         return true;
     }
     function submitWeb(ev) { ev.preventDefault(); webPut(formJson(ev.target)); return false; }
@@ -374,7 +374,7 @@ async function fwFeedDownload() {
             const t = line.trim();
             if (!t) continue;
             const i = t.indexOf('=');
-            if (i < 1) { alert('Principals: use user=principal,principal'); return false; }
+            if (i < 1) { patNotice('Principals: use user=principal,principal', 'crit'); return false; }
             pr[t.slice(0, i).trim()] = t.slice(i + 1).split(',').map(x => x.trim()).filter(Boolean);
         }
         delete o.principals;
@@ -777,14 +777,14 @@ async function fwFeedDownload() {
         if (j) loadUpdates();
     }
     async function factoryReset() {
-        if (!{{ is_admin }}) return alert('Only admins can reset the configuration.');
+        if (!{{ is_admin }}) return patNotice('Only admins can reset the configuration.', 'crit');
         if (!confirm('Factory reset: all rules, VPNs, services and settings are replaced by a first-boot configuration. Web accounts stay. A backup is made first. Continue?')) return;
         const confirmText = prompt('Type RESET to confirm');
         if (confirmText !== 'RESET') return;
         const pw = prompt('Your admin password');
         if (!pw) return;
         const j = await post('/api/system/factory-reset', {password: pw, confirm: confirmText});
-        if (j) { alert('Reset done. Backup: ' + j.backup); location.reload(); }
+        if (j) { patNotice('Reset done. Backup: ' + j.backup, 'ok', {afterReload: true}); location.reload(); }
     }
     async function powerOp(what) {
         const j = await post('/api/system/' + what, {});
@@ -806,7 +806,7 @@ async function fwFeedDownload() {
             cell(tr, h.last_attempt_at ? fmtTs(h.last_attempt_at) + ': ' + h.last_result : 'never');
             const td = document.createElement('td');
             const t = document.createElement('button'); t.className = 'btn btn-sm'; t.textContent = 'Send test';
-            t.onclick = async () => { t.disabled = true; const r = await post('/api/system/hooks/' + h.id + '/test', {}); t.disabled = false; if (r) alert('Test sent: ' + r.result); loadEvents(); };
+            t.onclick = async () => { t.disabled = true; const r = await post('/api/system/hooks/' + h.id + '/test', {}); t.disabled = false; if (r) patNotice('Test sent: ' + r.result, 'ok'); loadEvents(); };
             td.appendChild(t);
             const b = document.createElement('button');
             b.className = 'btn btn-sm btn-danger'; b.textContent = 'Delete';
@@ -891,7 +891,7 @@ async function fwFeedDownload() {
             b.onclick = async () => {
                 if (!confirm('Revoke API key ' + k.name + '? Anything using it stops working.')) return;
                 const d = await fetch('/api/system/api-keys/' + k.id, {method: 'DELETE', credentials: 'same-origin'});
-                if (d.ok) loadApiKeys(); else alert('Not revoked: ' + d.status);
+                if (d.ok) loadApiKeys(); else patNotice('Not revoked: ' + d.status, 'crit');
             };
             td.appendChild(b); tr.appendChild(td); tb.appendChild(tr);
         }
@@ -932,7 +932,7 @@ async function fwFeedDownload() {
             const b = document.createElement('button'); b.className = 'btn btn-sm btn-danger'; b.textContent = 'Delete';
             b.onclick = async () => { if (!confirm('Delete group ' + g.name + '?')) return;
                 const x = await fetch('/api/system/groups/' + g.id, {method: 'DELETE', credentials: 'same-origin'});
-                if (x.ok) loadGroups(); else alert('Not deleted: ' + x.status); };
+                if (x.ok) loadGroups(); else patNotice('Not deleted: ' + x.status, 'crit'); };
             act.appendChild(b); tr.appendChild(act); tb.appendChild(tr);
             const o = document.createElement('option'); o.value = g.id; o.textContent = g.name; sel.appendChild(o);
         }
@@ -1029,7 +1029,7 @@ async function fwFeedDownload() {
         });
         let j = {};
         try { j = await r.json(); } catch (_) {}
-        if (!r.ok) { alert('Not applied: ' + (j.error || r.status)); return null; }
+        if (!r.ok) { patNotice('Not applied: ' + (j.error || r.status), 'crit'); return null; }
         return j;
     }
     async function totpSetup(ev) {
@@ -1057,11 +1057,11 @@ async function fwFeedDownload() {
     }
     async function totpRecoveryCopy() {
         const t = totpRecoveryText();
-        try { await navigator.clipboard.writeText(t); alert('Recovery codes copied.'); return; } catch (_) {}
+        try { await navigator.clipboard.writeText(t); patNotice('Recovery codes copied.', 'ok'); return; } catch (_) {}
         const r = document.createRange();
         r.selectNodeContents(document.getElementById('totp-recovery-codes'));
         const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
-        try { document.execCommand('copy'); alert('Recovery codes copied.'); } catch (_) { alert('Select the codes and copy them by hand.'); }
+        try { document.execCommand('copy'); patNotice('Recovery codes copied.', 'ok'); } catch (_) { patNotice('Select the codes and copy them by hand.', 'crit'); }
     }
     function totpRecoveryDownload() {
         const blob = new Blob(['Patronus two-factor recovery codes (each works once)\n\n' + totpRecoveryText() + '\n'], {type: 'text/plain'});
@@ -1126,13 +1126,13 @@ async function fwFeedDownload() {
     async function restoreRevision(id) {
         if (!confirm('Put the configuration of revision ' + id + ' back and apply it now? The current configuration is kept as a new revision.')) return;
         const j = await post('/api/system/history/' + id + '/restore', {});
-        if (j) { alert('Restored revision ' + j.restored + '.'); location.reload(); }
+        if (j) { patNotice('Restored revision ' + j.restored + '.', 'ok', {afterReload: true}); location.reload(); }
     }
     document.addEventListener('DOMContentLoaded', loadHistory);
     async function restoreStored(name) {
         if (!confirm('Replace the whole configuration with ' + name + ' and apply it now?')) return;
         const j = await post('/api/system/backups/' + encodeURIComponent(name) + '/restore', {});
-        if (j) { alert('Restored ' + j.restored + '.'); location.reload(); }
+        if (j) { patNotice('Restored ' + j.restored + '.', 'ok', {afterReload: true}); location.reload(); }
     }
     async function restoreUpload(ev) {
         ev.preventDefault();
@@ -1140,7 +1140,7 @@ async function fwFeedDownload() {
         if (!f) return false;
         if (!confirm('Replace the whole configuration with ' + f.name + ' and apply it now?')) return false;
         const j = await post('/api/system/restore', await f.text(), true);
-        if (j) { alert('Restored (kept as ' + j.restored + ').'); location.reload(); }
+        if (j) { patNotice('Restored (kept as ' + j.restored + ').', 'ok', {afterReload: true}); location.reload(); }
         return false;
     }
 </script>

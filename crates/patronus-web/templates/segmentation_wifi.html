@@ -40,7 +40,7 @@
         for (const n of d.networks) {
             const run = (st.networks || []).find(x => x.network === n.name);
             const info = (d.channels || {})[String(n.id)];
-            const box = mk('div', {class: 'seg-note', id: 'wifi-chan-' + n.id});
+            const box = mk('div', {class: 'ui-banner info seg-note', id: 'wifi-chan-' + n.id});
             box.appendChild(mk('strong', {text: n.name + ': ' + (n.channel === 'auto' ? 'automatic channel' : 'fixed channel ' + n.channel)}));
             const c = run && run.channel ? run.channel : null;
             if (n.channel === 'auto') {
@@ -60,7 +60,7 @@
                 det.appendChild(ul); box.appendChild(det);
             }
             if (CAN_MODIFY) {
-                if (n.channel === 'auto') box.appendChild(btn('Re-check now', '', async () => { const r = await segCall('POST', '/api/segmentation/wifi/networks/' + n.id + '/recheck-channel'); if (r) { alert('Re-check requested: it runs within seconds and takes a few minutes. Open this page again to see the result.'); wifiLoad(); } }));
+                if (n.channel === 'auto') box.appendChild(btn('Re-check now', '', async () => { const r = await segCall('POST', '/api/segmentation/wifi/networks/' + n.id + '/recheck-channel'); if (r) { patNotice('Re-check requested: it runs within seconds and takes a few minutes. Open this page again to see the result.', 'ok'); wifiLoad(); } }));
                 box.appendChild(btn('Channel settings', '', () => chanForm(box, n)));
             }
             root.appendChild(box);
@@ -88,9 +88,9 @@
     function wifiRender() {
         const root = wifiEl(); root.innerHTML = '';
         const d = WIFI, st = d.status || {};
-        if (st.hostapd_installed === false) root.appendChild(mk('div', {class: 'seg-note warn', text: 'hostapd is not installed on this router (emerge net-wireless/hostapd). Networks can be configured but the access point will not start.'}));
-        root.appendChild(mk('div', {class: 'seg-note', text: d.notes.wpa2 + ' ' + d.notes.pending}));
-        root.appendChild(mk('div', {class: 'seg-note warn', text: d.notes.wpa3 + ' ' + d.notes.random_mac}));
+        if (st.hostapd_installed === false) root.appendChild(mk('div', {class: 'ui-banner warn seg-note', text: 'hostapd is not installed on this router (emerge net-wireless/hostapd). Networks can be configured but the access point will not start.'}));
+        root.appendChild(mk('div', {class: 'ui-banner info seg-note', text: d.notes.wpa2 + ' ' + d.notes.pending}));
+        root.appendChild(mk('div', {class: 'ui-banner warn seg-note', text: d.notes.wpa3 + ' ' + d.notes.random_mac}));
 
         // issued secret (shown once)
         root.appendChild(mk('div', {id: 'wifi-issued'}));
@@ -204,7 +204,7 @@
         const r = await api(method, url, body === null ? {} : body); if (!r) return;
         const box = document.getElementById('wifi-issued'); if (!box) { await wifiLoad(); return; }
         box.innerHTML = '';
-        const card = mk('div', {class: 'seg-note'});
+        const card = mk('div', {class: 'ui-banner info seg-note'});
         card.appendChild(mk('strong', {text: (title || 'Passphrase') + (r.ssid ? ' - join "' + r.ssid + '" with:' : ':')}));
         card.appendChild(mk('pre', {class: 'seg-pre', text: r.secret}));
         if (r.qr_svg) { const q = document.createElement('div'); q.style.maxWidth = '200px'; q.innerHTML = r.qr_svg; card.appendChild(q); }

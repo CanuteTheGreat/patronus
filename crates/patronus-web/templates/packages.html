@@ -62,7 +62,7 @@
             headers: raw ? {'content-type': 'application/json'} : (body ? {'content-type': 'application/json'} : {}),
             body: raw ? body : (body ? JSON.stringify(body) : undefined)});
         let j = null; try { j = await r.json(); } catch (e) {}
-        if (!r.ok) { alert((j && j.error) || ('HTTP ' + r.status)); return null; }
+        if (!r.ok) { patNotice((j && j.error) || ('HTTP ' + r.status), 'crit'); return null; }
         return j || {};
     }
     async function showLog(id) {

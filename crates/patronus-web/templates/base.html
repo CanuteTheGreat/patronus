@@ -439,6 +439,42 @@
         /* one glyph for "no value" everywhere (UI findings: em dash, "-", "N/A" and blanks were mixed) */
         .nil { color: var(--c-muted); }
     </style>
+    <script>
+    // patNotice(text, tone): the one way a page reports the outcome of an action (instead of a browser alert() box).
+    // tone ok/info: a kit toast that goes away after 8 s (stays while hovered or focused); crit: stays until closed.
+    // Announced to screen readers (status / alert); nothing steals focus.
+    function patNotice(text, tone, opts) {
+        tone = tone || 'info';
+        // the page reloads right after: keep the message for the next load of this tab
+        if (opts && opts.afterReload) { try { sessionStorage.setItem('pat.notice', JSON.stringify([text, tone])); return null; } catch (_) {} }
+        // a refused change while a form dialog is open is shown inside that dialog, next to what was typed
+        if (tone === 'crit' && typeof lanError === 'function' && document.querySelector('dialog.lan-dialog[open]')) { lanError(text); return null; }
+        if (!document.body) { document.addEventListener('DOMContentLoaded', () => patNotice(text, tone)); return null; }
+        let box = document.getElementById('pat-toasts');
+        if (!box) { box = document.createElement('div'); box.id = 'pat-toasts'; box.className = 'ui-toasts'; document.body.appendChild(box); }
+        const t = document.createElement('div');
+        t.className = 'ui-toast ' + tone; t.setAttribute('role', tone === 'crit' ? 'alert' : 'status');
+        const p = document.createElement('span'); p.textContent = text; t.appendChild(p);
+        const x = document.createElement('button'); x.type = 'button'; x.className = 'ui-btn sm pat-toast-x'; x.textContent = 'Close';
+        x.setAttribute('aria-label', 'Close message'); x.onclick = () => t.remove(); t.appendChild(x);
+        box.appendChild(t);
+        if (tone !== 'crit') {
+            let hold = false; t.onmouseenter = t.onfocusin = () => { hold = true; }; t.onmouseleave = t.onfocusout = () => { hold = false; };
+            const gone = () => { if (hold) setTimeout(gone, 2000); else t.remove(); };
+            setTimeout(gone, 8000);
+        }
+        return t;
+    }
+    try {
+        const kept = sessionStorage.getItem('pat.notice');
+        if (kept) { sessionStorage.removeItem('pat.notice'); const [k, tn] = JSON.parse(kept); patNotice(k, tn); }
+    } catch (_) {}
+    </script>
+    <style>
+        .ui-toast { display: flex; gap: var(--s-2); align-items: flex-start; justify-content: space-between; color: var(--c-ink); }
+        .ui-toast > span { overflow-wrap: anywhere; }
+        .pat-toast-x { flex: none; }
+    </style>
     {% block extra_head %}{% endblock %}
 </head>
 <body>
