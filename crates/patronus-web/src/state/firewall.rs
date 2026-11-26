@@ -123,6 +123,12 @@ fn any_or(s: &str) -> Option<String> {
 /// `@optN`, `@mgmt`) or a device name (checked again by the nft layer).
 fn interface_field(s: &str) -> anyhow::Result<Option<String>> {
     let Some(v) = any_or(s) else { return Ok(None) };
+    if let Some(g) = v.strip_prefix("group:") {
+        if !patronus_firewall::floating::is_valid_group_name(g) {
+            anyhow::bail!("Invalid interface group {g:?}");
+        }
+        return Ok(Some(format!("group:{g}")));
+    }
     if let Some(role) = v.strip_prefix('@') {
         let role = role.to_ascii_lowercase();
         if role != "mgmt" && !patronus_config::store::is_valid_role(&role) {
@@ -140,8 +146,47 @@ fn display_iface(v: Option<&str>) -> String {
     match v {
         None => "any".into(),
         Some(r) if r.starts_with('@') => r[1..].to_uppercase(),
+        Some(r) if r.starts_with("group:") => format!("group {}", &r[6..]),
         Some(d) => d.to_string(),
     }
+}
+
+/// One-line summary of a rule's optional features for the rules table.
+pub(crate) fn ext_summary(e: &patronus_core::types::RuleExt) -> String {
+    let mut v: Vec<String> = Vec::new();
+    if e.floating {
+        let ifs = if e.interfaces.is_empty() {
+            "any interface".to_string()
+        } else {
+            e.interfaces
+                .iter()
+                .map(|i| display_iface(Some(i)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        v.push(format!(
+            "floating, {}, {} on {}",
+            if e.quick { "quick" } else { "not quick" },
+            e.direction,
+            ifs
+        ));
+    }
+    if let Some(n) = e.max_states {
+        v.push(format!("max {n} states"));
+    }
+    if let Some(n) = e.max_src_conn {
+        v.push(format!("max {n} conn/source"));
+    }
+    if let (Some(n), Some(s)) = (e.max_src_rate, e.max_src_rate_secs) {
+        v.push(match &e.overload {
+            Some(o) => format!("max {n} new/{s}s per source, overload {o}"),
+            None => format!("max {n} new/{s}s per source"),
+        });
+    }
+    if let Some(l) = &e.limiter {
+        v.push(format!("limiter {l}"));
+    }
+    v.join("; ")
 }
 
 fn parse_protocol(s: &str) -> anyhow::Result<Option<Protocol>> {
@@ -289,7 +334,13 @@ impl FirewallManager {
             "output" => ChainType::Output,
             other => anyhow::bail!("Invalid chain {other:?} (input, forward or output)"),
         };
-        let iface = interface_field(&rule.interface)?;
+        let ext = Self::ext_from_api(rule)?;
+        let chain = if ext.floating { ChainType::Forward } else { chain };
+        let iface = if ext.floating {
+            None
+        } else {
+            interface_field(&rule.interface)?
+        };
         let (interface_in, mut interface_out) = match chain {
             ChainType::Output => (None, iface),
             _ => (iface, None),
@@ -336,6 +387,82 @@ impl FirewallManager {
                 .map(str::trim)
                 .filter(|g| !g.is_empty())
                 .map(str::to_string),
+            ext,
+        })
+    }
+
+    /// The optional rule features of an API payload, validated.
+    fn ext_from_api(rule: &ApiFirewallRule) -> anyhow::Result<patronus_core::types::RuleExt> {
+        use patronus_core::types::{RuleDirection, RuleExt};
+        let direction = match rule
+            .direction
+            .as_deref()
+            .map(|d| d.trim().to_ascii_lowercase())
+            .as_deref()
+        {
+            None | Some("") | Some("in") => RuleDirection::In,
+            Some("out") => RuleDirection::Out,
+            Some("any") | Some("both") => RuleDirection::Any,
+            Some(o) => anyhow::bail!("Invalid direction {o:?} (in, out or any)"),
+        };
+        let clean = |v: &Option<String>| {
+            v.as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        let mut interfaces = Vec::new();
+        for i in &rule.interfaces {
+            let i = i.trim();
+            if i.is_empty() || i.eq_ignore_ascii_case("any") {
+                continue;
+            }
+            if let Some(g) = i.strip_prefix("group:") {
+                if !patronus_firewall::floating::is_valid_group_name(g) {
+                    anyhow::bail!("Invalid interface group {g:?}");
+                }
+                interfaces.push(format!("group:{g}"));
+            } else if let Some(v) = interface_field(i)? {
+                interfaces.push(v);
+            }
+        }
+        let category = clean(&rule.category);
+        if let Some(c) = &category {
+            if c.len() > 40
+                || !c
+                    .chars()
+                    .all(|ch| ch.is_alphanumeric() || matches!(ch, ' ' | '_' | '-' | '.'))
+            {
+                anyhow::bail!(
+                    "Invalid category {c:?} (at most 40 letters, digits, space, _ - .)"
+                );
+            }
+        }
+        for (what, v) in [
+            ("max_states", rule.max_states),
+            ("max_src_conn", rule.max_src_conn),
+            ("max_src_rate", rule.max_src_rate),
+            ("max_src_rate_secs", rule.max_src_rate_secs),
+            ("overload_secs", rule.overload_secs),
+        ] {
+            if v == Some(0) || v.is_some_and(|n| n > 100_000_000) {
+                anyhow::bail!("Invalid {what}: must be between 1 and 100000000");
+            }
+        }
+        let overload = clean(&rule.overload);
+        Ok(RuleExt {
+            floating: rule.floating,
+            quick: rule.quick.unwrap_or(true),
+            direction,
+            interfaces: if rule.floating { interfaces } else { Vec::new() },
+            max_states: rule.max_states,
+            max_src_conn: rule.max_src_conn,
+            max_src_rate: rule.max_src_rate,
+            max_src_rate_secs: rule.max_src_rate_secs,
+            overload,
+            overload_secs: rule.overload_secs,
+            limiter: clean(&rule.limiter),
+            category,
         })
     }
 
@@ -344,13 +471,38 @@ impl FirewallManager {
     /// stored, and check the schedule exists.
     async fn check_rule(&self, core: &CoreFirewallRule) -> anyhow::Result<()> {
         let mut probe = core.clone();
+        let groups = patronus_firewall::floating::load_groups(&self.store)
+            .await
+            .map_err(Self::e)?;
+        let limiters = patronus_firewall::floating::load_limiters(&self.store)
+            .await
+            .map_err(Self::e)?;
         for f in [&mut probe.interface_in, &mut probe.interface_out] {
-            if f.as_deref().is_some_and(|v| v.starts_with('@')) {
+            if let Some(g) = f.as_deref().and_then(|v| v.strip_prefix("group:")) {
+                if !groups.iter().any(|x| x.name == g) {
+                    anyhow::bail!("Invalid rule: interface group {g:?} does not exist");
+                }
+                *f = Some("probe0".into());
+            } else if f.as_deref().is_some_and(|v| v.starts_with('@')) {
                 *f = Some("probe0".into());
             }
         }
+        let mut ctx = patronus_firewall::nftables::RenderCtx {
+            limiters: limiters.iter().map(|l| (l.name.clone(), l.spec())).collect(),
+            ..Default::default()
+        };
+        if core.ext.floating {
+            for sel in &core.ext.interfaces {
+                if let Some(g) = sel.strip_prefix("group:") {
+                    if !groups.iter().any(|x| x.name == g) {
+                        anyhow::bail!("Invalid rule: interface group {g:?} does not exist");
+                    }
+                }
+            }
+            ctx.iif = Some("iifname \"probe0\"".into());
+        }
         probe.enabled = true;
-        patronus_firewall::nftables::render_filter_rule(&probe, &self.alias_map().await?)
+        patronus_firewall::nftables::render_filter_rule_ext(&probe, &self.alias_map().await?, &ctx)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         if let Some(g) = &core.gateway {
             if !patronus_config::policy::policy_marks(&self.store)
@@ -427,6 +579,8 @@ impl FirewallManager {
             log: r.log,
             schedule: r.schedule.clone().unwrap_or_default(),
             gateway: r.gateway.clone().unwrap_or_default(),
+            ext: r.ext.clone(),
+            ext_summary: ext_summary(&r.ext),
             ip_version: r
                 .ip_version
                 .map(|v| v.to_string())
@@ -1458,6 +1612,7 @@ mod tests {
             ip_version: None,
             gateway: None,
             before: None,
+            ..Default::default()
         }
     }
 

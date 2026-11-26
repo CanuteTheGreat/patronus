@@ -29,7 +29,7 @@ fn yes() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FirewallRule {
     pub id: Option<u32>,
     /// Display name (defaults to `description`).
@@ -77,6 +77,42 @@ pub struct FirewallRule {
     /// Create only: place the new rule just before rule `before`.
     #[serde(default)]
     pub before: Option<u32>,
+    /// Floating rule: matches the listed `interfaces` in `direction`
+    /// instead of one interface.
+    #[serde(default)]
+    pub floating: bool,
+    /// Floating only: quick (first match, before the interface rules;
+    /// default) or not (after the interface rules).
+    #[serde(default)]
+    pub quick: Option<bool>,
+    /// Floating only: `in` (default), `out` or `any`.
+    #[serde(default)]
+    pub direction: Option<String>,
+    /// Floating only: device names, `@role` tokens or `group:NAME`.
+    #[serde(default)]
+    pub interfaces: Vec<String>,
+    /// Pass rules: most open connections of this rule.
+    #[serde(default)]
+    pub max_states: Option<u32>,
+    /// Pass rules: most simultaneous connections per source.
+    #[serde(default)]
+    pub max_src_conn: Option<u32>,
+    /// Pass rules: new connections per source (`max_src_rate` per
+    /// `max_src_rate_secs`); the offender lands in `overload`.
+    #[serde(default)]
+    pub max_src_rate: Option<u32>,
+    #[serde(default)]
+    pub max_src_rate_secs: Option<u32>,
+    #[serde(default)]
+    pub overload: Option<String>,
+    #[serde(default)]
+    pub overload_secs: Option<u32>,
+    /// Name of a limiter (rate cap).
+    #[serde(default)]
+    pub limiter: Option<String>,
+    /// Grouping label.
+    #[serde(default)]
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -786,6 +822,157 @@ pub async fn list_interfaces(State(state): State<AppState>) -> Response {
 
 /// This lane's API routes, mounted under `/api` by `routes::api_routes`
 /// with one `.merge(firewall::router())` line.
+/// GET /api/firewall/interface-groups
+pub async fn list_groups(State(state): State<AppState>) -> Response {
+    match state.firewall.list_groups().await {
+        Ok(g) => Json(g).into_response(),
+        Err(e) => err("Failed to list interface groups", e),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GroupBody {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub members: Vec<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// POST /api/firewall/interface-groups  {"name", "members": ["eth1", "@lan"]}
+pub async fn create_group(State(state): State<AppState>, Json(b): Json<GroupBody>) -> Response {
+    let name = b.name.unwrap_or_default().trim().to_string();
+    match state.firewall.list_groups().await {
+        Ok(all) if all.iter().any(|g| g.name == name) => {
+            return err(
+                "Failed to create interface group",
+                anyhow::anyhow!("Invalid request: interface group {name} already exists"),
+            )
+        }
+        Err(e) => return err("Failed to create interface group", e),
+        _ => {}
+    }
+    let g = patronus_firewall::floating::IfGroup {
+        name,
+        members: b.members.iter().map(|m| m.trim().to_string()).collect(),
+        description: b.description.filter(|d| !d.trim().is_empty()),
+    };
+    match state.firewall.save_group(g).await {
+        Ok(_) => ok("Interface group created"),
+        Err(e) => err("Failed to create interface group", e),
+    }
+}
+
+/// PUT /api/firewall/interface-groups/:name -- members are swapped in the
+/// live nft set, no ruleset reload.
+pub async fn update_group(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(b): Json<GroupBody>,
+) -> Response {
+    match state.firewall.list_groups().await {
+        Ok(all) if !all.iter().any(|g| g.name == name) => {
+            return err(
+                "Failed to update interface group",
+                anyhow::anyhow!("Interface group {name} not found"),
+            )
+        }
+        Err(e) => return err("Failed to update interface group", e),
+        _ => {}
+    }
+    let g = patronus_firewall::floating::IfGroup {
+        name,
+        members: b.members.iter().map(|m| m.trim().to_string()).collect(),
+        description: b.description.filter(|d| !d.trim().is_empty()),
+    };
+    match state.firewall.save_group(g).await {
+        Ok(live) => Json(serde_json::json!({
+            "message": "Interface group updated",
+            "applied_live": live,
+        }))
+        .into_response(),
+        Err(e) => err("Failed to update interface group", e),
+    }
+}
+
+/// DELETE /api/firewall/interface-groups/:name
+pub async fn delete_group(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    match state.firewall.delete_group(&name).await {
+        Ok(_) => ok("Interface group deleted"),
+        Err(e) => err("Failed to delete interface group", e),
+    }
+}
+
+/// GET /api/firewall/limiters
+pub async fn list_limiters(State(state): State<AppState>) -> Response {
+    match state.firewall.list_limiters().await {
+        Ok(l) => Json(l).into_response(),
+        Err(e) => err("Failed to list limiters", e),
+    }
+}
+
+/// PUT /api/firewall/limiters/:name  {"rate_kbit": 5000, "burst_kb": 128, "per_source": true}
+pub async fn put_limiter(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(mut l): Json<patronus_firewall::floating::Limiter>,
+) -> Response {
+    l.name = name;
+    match state.firewall.save_limiter(l).await {
+        Ok(_) => ok("Limiter saved"),
+        Err(e) => err("Failed to save limiter", e),
+    }
+}
+
+/// DELETE /api/firewall/limiters/:name
+pub async fn delete_limiter(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    match state.firewall.delete_limiter(&name).await {
+        Ok(_) => ok("Limiter deleted"),
+        Err(e) => err("Failed to delete limiter", e),
+    }
+}
+
+/// GET /api/firewall/overload -- overload tables with the sources in them
+pub async fn list_overload(State(state): State<AppState>) -> Response {
+    match state.firewall.overload_tables().await {
+        Ok(t) => Json(t).into_response(),
+        Err(e) => err("Failed to read the overload tables", e),
+    }
+}
+
+/// DELETE /api/firewall/overload/:name -- release every source
+pub async fn flush_overload(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    match state.firewall.release_overload(&name, None).await {
+        Ok(_) => ok("Overload table flushed"),
+        Err(e) => err("Failed to flush the overload table", e),
+    }
+}
+
+/// DELETE /api/firewall/overload/:name/:addr -- release one source
+pub async fn release_overload(
+    State(state): State<AppState>,
+    Path((name, addr)): Path<(String, String)>,
+) -> Response {
+    match state.firewall.release_overload(&name, Some(&addr)).await {
+        Ok(_) => ok("Source released"),
+        Err(e) => err("Failed to release the source", e),
+    }
+}
+
+/// GET /api/firewall/categories -- category names with their rule counts
+pub async fn list_categories(State(state): State<AppState>) -> Response {
+    match state.firewall.categories().await {
+        Ok(c) => Json(
+            c.into_iter()
+                .map(|(name, rules)| serde_json::json!({ "name": name, "rules": rules }))
+                .collect::<Vec<_>>(),
+        )
+        .into_response(),
+        Err(e) => err("Failed to list categories", e),
+    }
+}
+
 pub fn router() -> axum::Router<AppState> {
     use axum::routing::{get, post, put};
     axum::Router::new()
@@ -836,4 +1023,27 @@ pub fn router() -> axum::Router<AppState> {
             put(update_schedule).delete(delete_schedule),
         )
         .route("/firewall/interfaces", get(list_interfaces))
+        .route(
+            "/firewall/interface-groups",
+            get(list_groups).post(create_group),
+        )
+        .route(
+            "/firewall/interface-groups/:name",
+            put(update_group).delete(delete_group),
+        )
+        .route("/firewall/limiters", get(list_limiters))
+        .route(
+            "/firewall/limiters/:name",
+            put(put_limiter).delete(delete_limiter),
+        )
+        .route("/firewall/overload", get(list_overload))
+        .route(
+            "/firewall/overload/:name",
+            axum::routing::delete(flush_overload),
+        )
+        .route(
+            "/firewall/overload/:name/:addr",
+            axum::routing::delete(release_overload),
+        )
+        .route("/firewall/categories", get(list_categories))
 }
