@@ -1078,6 +1078,25 @@ mod tests {
         assert_eq!(a[0]["dst"], "2.2.2.2:80");
     }
 
+    /// By hand (`IDS_YAML_OUT=/x/suricata.yaml IDS_RULES_DIR=/x cargo test ... -- --ignored`): the
+    /// generated config for a real rule set, so a real Suricata can be asked to load ET Open with it.
+    #[test]
+    #[ignore = "writes a config for a manual run against a real rule set"]
+    fn dump_yaml_for_a_real_rule_set() {
+        let out = std::env::var("IDS_YAML_OUT").expect("IDS_YAML_OUT");
+        let dir = std::env::var("IDS_RULES_DIR").expect("IDS_RULES_DIR");
+        let y = render_yaml(&YamlInput {
+            mode: "ids",
+            devices: &["eth0".to_string()],
+            home_net: &["192.168.0.0/16".to_string(), "10.0.0.0/8".to_string()],
+            rules_dir: &dir,
+            log_dir: "/tmp/ids-log",
+            distro_rules: false,
+            classification: std::path::Path::new("/etc/suricata/classification.config").exists(),
+        });
+        std::fs::write(out, y).unwrap();
+    }
+
     #[tokio::test]
     async fn rules_are_validated_and_apply_preconditions() {
         let s = crate::lan::testutil::store().await;
