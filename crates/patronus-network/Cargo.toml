@@ -36,6 +36,8 @@ igmp = []
 mdns = []
 # UDP broadcast relay: built-in engine (`patronus udp-relay run`), no external daemon
 udp-relay = []
+# mesh VPN client: Tailscale / Headscale (RDEPEND net-vpn/tailscale)
+tailscale = []
 nat64 = []
 l2tp = []
 upnp = []

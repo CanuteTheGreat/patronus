@@ -84,7 +84,7 @@ pub async fn vpn_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
     let ipsec = sqlx::query(
-        "SELECT name, local_ts, remote_ts FROM ipsec_tunnels WHERE enabled = 1 ORDER BY name",
+        "SELECT name, local_ts, remote_ts, mode, if_id FROM ipsec_tunnels WHERE enabled = 1 ORDER BY name",
     )
     .fetch_all(store.pool()?)
     .await
@@ -108,6 +108,35 @@ pub async fn vpn_rules(store: &ConfigStore) -> Result<VpnRules> {
         let name = safe(&r.get::<String, _>(0));
         let local = nets(&r.get::<String, _>(1));
         let remote = nets(&r.get::<String, _>(2));
+        if r.get::<String, _>(3) == "route" {
+            // route-based: the XFRM interface is the boundary. Traffic the SA
+            // decrypts comes out of it (not as `meta ipsec`), and nothing that
+            // routes into it is NATed (the sites keep their own addresses).
+            let Some(id) = r.get::<Option<i64>, _>(4) else {
+                continue;
+            };
+            let dev = format!("xfrm{id}");
+            for (rf, rn) in &remote {
+                let from = if rn.ends_with("/0") {
+                    format!("meta nfproto {}", if *rf == "ip" { "ipv4" } else { "ipv6" })
+                } else {
+                    format!("{rf} saddr {rn}")
+                };
+                out.filter.push(format!(
+                    "add rule {TABLE} forward iifname \"{dev}\" {from} accept \
+                     comment \"IPsec {name} (route-based)\""
+                ));
+            }
+            out.filter.push(format!(
+                "add rule {TABLE} input iifname \"{dev}\" meta l4proto {{ icmp, ipv6-icmp }} accept \
+                 comment \"IPsec {name} (route-based): ping\""
+            ));
+            out.nat_exempt.push(format!(
+                "add rule {TABLE} postrouting oifname \"{dev}\" accept \
+                 comment \"IPsec {name} (route-based): no NAT\""
+            ));
+            continue;
+        }
         for (lf, l) in &local {
             for (rf, rn) in &remote {
                 if lf != rf {
@@ -242,5 +271,34 @@ mod tests {
         assert_eq!(net("10.0.0.1"), Some(("ip", "10.0.0.1/32".into())));
         assert_eq!(net("10.0.0.0/40"), None);
         assert_eq!(net("x;drop"), None);
+    }
+
+    #[tokio::test]
+    async fn a_route_based_tunnel_is_firewalled_by_its_xfrm_interface() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        sqlx::query(
+            "INSERT INTO ipsec_tunnels (name, remote_address, psk, local_ts, remote_ts, mode, if_id, updated_at)
+             VALUES ('hub','198.51.100.2','x','0.0.0.0/0, ::/0','0.0.0.0/0, ::/0','route',3,0)",
+        )
+        .execute(s.pool().unwrap())
+        .await
+        .unwrap();
+        let r = vpn_rules(&s).await.unwrap();
+        let f = r.filter.join("\n");
+        assert!(f.contains("udp dport { 500, 4500 } accept"), "{f}");
+        assert!(
+            f.contains("forward iifname \"xfrm3\" meta nfproto ipv4 accept"),
+            "{f}"
+        );
+        assert!(
+            f.contains("input iifname \"xfrm3\" meta l4proto { icmp, ipv6-icmp } accept"),
+            "{f}"
+        );
+        assert!(
+            !f.contains("meta ipsec exists"),
+            "no policy-mode rule for a route tunnel: {f}"
+        );
+        assert_eq!(r.nat_exempt.len(), 1, "{:?}", r.nat_exempt);
+        assert!(r.nat_exempt[0].contains("oifname \"xfrm3\" accept"));
     }
 }
