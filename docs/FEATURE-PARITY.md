@@ -283,7 +283,7 @@ Last generated: 2026-11-17 (279 features).
 | Notifications: email (SMTP) | pfS/OPN/UniFi/Forti | missing | missing | missing | `notify_channels` table + sender (lettre or curl smtp://) wired to system_events (M) | P0 |
 | Notifications: Telegram / ntfy / push | OPN(pkg)/OWrt(pkg)/UniFi/FW/eero | missing | missing | missing | Add channel types to the event dispatcher (S: ntfy/Telegram are plain HTTPS POSTs) | P0 |
 | Event log + signed webhooks (gateway up/down, tunnel, HA, config change) | OPN/UniFi | tested | untested | untested | event kinds limited to gateway, group, tunnel, ha, config | P1 |
-| Notification matchers: nested all/any/not over kind, severity, subject glob and calendar windows, tree editor, preview | UniFi/PVE 9.3 | tested | tested | tested | C87; every channel names a matcher | P1 |
+| Notification matchers: nested all/any/not over kind, severity, subject glob and calendar windows, tree editor, preview | UniFi/PVE 9.3 | tested | tested | untested | C87; every channel names a matcher. Router tier: GL-AX1800 QEMU gate. Small tier: the check is in the Slate lab gate (qemu-gate.py), which CI does not run | P1 |
 | Diagnostics: ping / traceroute / DNS lookup | pfS/OPN/OWrt/UniFi/GL | missing | missing | missing | `/api/system/diag/{ping,traceroute,dns}` through applyd with structured args (reuse the capture pattern, lane-j-capture), Diagnostics page; netlab asserts output (S) | P0 |
 | Diagnostics: ARP / NDP tables, routing table, open sockets | pfS/OPN/OWrt/UniFi | partial | partial | partial | add `ip neigh`, `ss -tulpn` views (S) | P1 |
 | Packet capture with download | pfS/OPN/OWrt(tcpdump)/UniFi | partial | untested | untested | no `.pcap` download, no stop/duration UI | P1 |
