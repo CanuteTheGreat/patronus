@@ -38,7 +38,8 @@
         <div class="ui-grid-wrap"><table class="ui-grid" id="ap-radios"><thead><tr><th>Radio</th><th>State</th><th>Channel</th><th>Networks (clients)</th></tr></thead><tbody></tbody></table>
             <div class="ui-grid-state" id="ap-radios-state">Loading…</div></div>
         <h3 class="text-sm mt-4 mb-2">Uplink ports</h3>
-        <div class="ui-grid-wrap"><table class="ui-grid" id="ap-uplink-ports"><thead><tr><th>Port</th><th>Link</th><th>Speed</th></tr></thead><tbody></tbody></table></div>
+        <div class="ui-grid-wrap"><table class="ui-grid" id="ap-uplink-ports"><thead><tr><th>Port</th><th>Link</th><th>Speed</th></tr></thead><tbody></tbody></table>
+            <div class="ui-grid-state" id="ap-ports-state" style="display:none">No wired port is a member of the uplink bridge.</div></div>
     </div>
 </section>
 
@@ -162,7 +163,7 @@ fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() :
         const up = u.uplink;
         row('Address', ((up.addresses || []).join(', ') || 'none yet') + ' (' + up.addressing + ') on ' + up.bridge);
         row('Main router', up.gateway ? up.gateway + (up.gateway_reachable ? ' (reachable)' : ' (not answering yet)') : '\u2014');
-        row('DNS', (up.dns || []).join(', ') || '\u2014');
+        row('DNS', [...new Set(up.dns || [])].join(', ') || '\u2014');
         const tb = document.querySelector('#ap-uplink-ports tbody');
         for (const p of up.ports || []) {
             const tr = document.createElement('tr');
@@ -171,6 +172,7 @@ fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() :
             }
             tb.appendChild(tr);
         }
+        if (!(up.ports || []).length) document.getElementById('ap-ports-state').style.display = '';
     } else row('Uplink', 'could not be read');
     const st = document.getElementById('ap-radios-state');
     if (!f.wifi_backend) { st.textContent = 'This unit has no radio that Patronus drives.'; return; }
