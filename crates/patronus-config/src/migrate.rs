@@ -38,6 +38,7 @@ pub const LANE_RANGES: &[(&str, u32, u32)] = &[
     ("n", 1200, 1299), // stub-elimination pass: RBAC, backups, PD, proxy, OpenVPN, VRF
     ("s", 1300, 1399), // device segmentation: groups, devices, isolation, Wi-Fi credentials, DNS/time policy
     ("t", 1400, 1499), // guest network: vouchers (settings live in lan_settings)
+    ("u", 1500, 1599), // hardware + monitoring: S.M.A.R.T., UPS, dashboard layout, monitoring agents
 ];
 
 /// Whether `version` is recorded in `schema_migrations`, read inside the caller's transaction.
