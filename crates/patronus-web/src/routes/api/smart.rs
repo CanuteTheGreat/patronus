@@ -35,7 +35,7 @@ mod built {
         let msg = e.to_string();
         let code = if msg.contains("Invalid") {
             StatusCode::BAD_REQUEST
-        } else if msg.starts_with("no ") || msg.contains(": no ") {
+        } else if msg.contains("no S.M.A.R.T. disk") {
             StatusCode::NOT_FOUND
         } else {
             StatusCode::INTERNAL_SERVER_ERROR

@@ -592,6 +592,9 @@ mod seg_tests;
 #[cfg(all(test, feature = "guest"))]
 mod guest_tests;
 
+#[cfg(all(test, feature = "smart"))]
+mod smart_tests;
+
 #[cfg(test)]
 mod auth_gate_tests {
     //! Regression tests: the management UI/API used to answer anonymous

@@ -1036,12 +1036,13 @@ impl PollReport {
 }
 
 async fn set_test_time(store: &ConfigStore, device: &str, kind: TestKind, now: i64) -> Result<()> {
-    let col = match kind {
-        TestKind::Short => "last_short",
-        TestKind::Long => "last_long",
+    // a long test covers the short one: the short test is not due again right after it
+    let cols = match kind {
+        TestKind::Short => "last_short = ?1",
+        TestKind::Long => "last_short = ?1, last_long = ?1",
     };
     sqlx::query(&format!(
-        "UPDATE smart_state SET {col} = ?, test_request = '', request_at = NULL WHERE device = ?"
+        "UPDATE smart_state SET {cols}, test_request = '', request_at = NULL WHERE device = ?2"
     ))
     .bind(now)
     .bind(device)
@@ -1643,7 +1644,10 @@ mod tests {
     }
 
     async fn enable(s: &ConfigStore) {
-        svc::put_settings(s, &SPEC, &json!({"enabled": true})).await.unwrap();
+        // QEMU's emulated NVMe controller reports 50 °C, which the default limit would flag
+        svc::put_settings(s, &SPEC, &json!({"enabled": true, "temp_warn": 55, "temp_crit": 70}))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1663,6 +1667,7 @@ mod tests {
         let sda = all.iter().find(|d| d.disk.device == "/dev/sda").unwrap();
         assert_eq!(sda.level, Level::Ok);
         assert_eq!(sda.last_long, Some(now));
+        assert_eq!(sda.last_short, Some(now), "a long test covers the short one");
         let started = f.started.lock().unwrap().clone();
         assert_eq!(started.len(), 2, "{started:?}");
         assert!(started.iter().all(|(_, k)| *k == "long"));
@@ -1763,7 +1768,7 @@ mod tests {
         // bad requests
         assert!(request_test(&s, Some("sda; reboot"), TestKind::Short).await.is_err());
         let e = request_test(&s, Some("sdz"), TestKind::Short).await.unwrap_err().to_string();
-        assert!(e.starts_with("no "), "{e}");
+        assert!(e.contains("no S.M.A.R.T. disk"), "{e}");
         let e = request_test(&s, Some("sdb"), TestKind::Short).await.unwrap_err().to_string();
         assert!(e.contains("Invalid"), "{e}");
         // one disk
@@ -1814,7 +1819,7 @@ mod tests {
         a.apply(&s).await.unwrap();
         enable(&s).await;
         let r = a.render(&s).await.unwrap();
-        assert!(r.contains("poll_minutes=30") && r.contains("temp_crit=60"), "{r}");
+        assert!(r.contains("poll_minutes=30") && r.contains("temp_crit=70"), "{r}");
         // critical must be above warning
         svc::put_settings(&s, &SPEC, &json!({"temp_warn": 70, "temp_crit": 60})).await.unwrap();
         assert!(a.apply(&s).await.unwrap_err().to_string().contains("higher"));
