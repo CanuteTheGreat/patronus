@@ -842,9 +842,63 @@ mod tests {
             refresh_seconds: 0,
             customized: false,
             traffic: vec![],
+            uplinks: vec![],
+            uplink_events: vec![],
         }
         .render()
         .unwrap()
+    }
+
+    /// The Uplinks tile lists each gateway with its warning level and the last gateway events, and is
+    /// absent when no gateway is configured.
+    #[test]
+    fn dashboard_uplinks_tile_shows_warnings_and_events() {
+        let none = dashboard(0, vec![]);
+        assert!(!none.contains("id=\"uplinks-card\""), "{none}");
+        let mut t = DashboardTemplate {
+            page: "dashboard",
+            interfaces: vec![],
+            active_rules: 0,
+            vpn_connections: 0,
+            vpn_errors: vec![],
+            system_info: SystemInfo::default(),
+            uptime: "1 min".into(),
+            services: vec![],
+            internet_dev: String::new(),
+            internet_gw: String::new(),
+            dhcp_leases: None,
+            iface_rows: vec![],
+            traffic: vec![],
+            uplinks: vec![
+                DashUplink {
+                    name: "WAN1".into(),
+                    state: "online".into(),
+                    class: "warn",
+                    warning: "latency".into(),
+                    detail: "62.0 ms / 0 %".into(),
+                },
+                DashUplink {
+                    name: "WAN2".into(),
+                    state: "down".into(),
+                    class: "bad",
+                    warning: String::new(),
+                    detail: String::new(),
+                },
+            ],
+            uplink_events: vec![DashUplinkEvent {
+                when: "11-25 16:00".into(),
+                severity: "warning".into(),
+                text: "gateway WAN1: latency above its warning level".into(),
+            }],
+        };
+        let h = t.render().unwrap();
+        assert!(h.contains("id=\"uplinks-card\""), "{h}");
+        assert!(h.contains("data-uplink=\"WAN1\""), "{h}");
+        assert!(h.contains("online, warning: latency"), "{h}");
+        assert!(h.contains("data-uplink=\"WAN2\"") && h.contains("class=\"bad\">down"), "{h}");
+        assert!(h.contains("latency above its warning level"), "{h}");
+        t.uplink_events.clear();
+        assert!(!t.render().unwrap().contains("uplink-event"));
     }
 
     /// The dashboard says whether the box has a way out, and through where.
@@ -874,6 +928,8 @@ mod tests {
             refresh_seconds: 0,
             customized: false,
             traffic: vec![],
+            uplinks: vec![],
+            uplink_events: vec![],
         }
         .render()
         .unwrap();
@@ -910,6 +966,8 @@ mod tests {
             refresh_seconds: 0,
             customized: false,
             traffic: vec![],
+            uplinks: vec![],
+            uplink_events: vec![],
         };
         let shown = t.render().unwrap();
         assert!(
@@ -964,6 +1022,8 @@ mod tests {
                 rx: "1.5 KB/s".into(),
                 tx: "200 B/s".into(),
             }],
+            uplinks: vec![],
+            uplink_events: vec![],
         };
         let h = t.render().unwrap();
         assert!(

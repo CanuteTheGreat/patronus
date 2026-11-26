@@ -436,6 +436,21 @@ jobs:
           REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
           NETLAB_TEST: segmentation-dns-services-test.sh
         run: ci/netlab/lan-services.sh systemd
+      # Multi-WAN polish (ci/netlab/multiwan-services-test.sh): latency trigger,
+      # kill states (an open UDP flow moves, TCP state deleted, conntrack from
+      # the distro), sticky connections, the DNS server pinned to its gateway,
+      # reboot-equivalent apply; applyd's gateway monitor runs under the init
+      # system. Once per init system.
+      - name: Multi-WAN kill states + sticky connections - OpenRC path (Gentoo stage3)
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          NETLAB_TEST: multiwan-services-test.sh
+        run: ci/netlab/lan-services.sh openrc
+      - name: Multi-WAN kill states + sticky connections - systemd path (Gentoo stage3)
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          NETLAB_TEST: multiwan-services-test.sh
+        run: ci/netlab/lan-services.sh systemd
 
   netlab-features:
     # Lane J (syslog, NetFlow, IGMP, NAT64/DNS64, L2TP, Suricata IDS/IPS,

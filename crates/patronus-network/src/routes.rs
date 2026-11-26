@@ -3120,9 +3120,12 @@ impl Applier for RoutesApplier {
         };
         let g = GroupInput {
             name: config.metadata.name.clone(),
-            trigger: None,
-            sticky_secs: None,
-            kill_states: None,
+            trigger: spec.trigger.clone(),
+            sticky_secs: spec.sticky_secs.or_else(|| {
+                spec.sticky
+                    .then_some(patronus_config::declarative::DEFAULT_STICKY_SECS)
+            }),
+            kill_states: spec.kill_states.clone(),
             members: MembersInput::List(
                 spec.members
                     .iter()
@@ -3296,7 +3299,7 @@ pub struct NoKiller;
 
 #[async_trait]
 impl crate::multiwan::Killer for NoKiller {
-    async fn kill_reply_dst(&self, _addr: IpAddr) -> u32 {
+    async fn kill_flows(&self, _addr: IpAddr) -> u32 {
         0
     }
 }
@@ -3729,7 +3732,7 @@ impl Monitor {
         for o in kills {
             let mut n = 0;
             for a in self.gw_addrs.get(&o.gateway).cloned().unwrap_or_default() {
-                n += self.killer.kill_reply_dst(a).await;
+                n += self.killer.kill_flows(a).await;
             }
             tracing::info!("gateway monitor: {} ({n} connections deleted)", o.why);
             if let Some(s) = self.states.get_mut(&o.gateway) {
