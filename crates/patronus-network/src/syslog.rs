@@ -451,8 +451,14 @@ impl SyslogApplier {
                 "wrote {conf} (system log with priorities in {})",
                 s.managed_file
             ));
-            self.env.services.restart(service)?;
-            rep.applied(format!("{service} restarted"));
+            // The viewer's file is a side feature: a logger that cannot be restarted (no init in a
+            // container, service not enabled) must not fail the whole syslog apply.
+            match self.env.services.restart(service) {
+                Ok(()) => rep.applied(format!("{service} restarted")),
+                Err(e) => rep.warn(format!(
+                    "{service} not restarted ({e}): the system log page uses the new format after its next start"
+                )),
+            }
         }
         if self.env.path("/etc/logrotate.d").is_dir()
             && lan::install(

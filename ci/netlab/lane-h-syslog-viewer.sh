@@ -94,7 +94,7 @@ if [ "$HAVE_RSYSLOG" = 1 ]; then
   nl_api GET "/logs/system?identifier=test-ident&min_priority=warning"
   [ "$(j '[e["message"] for e in d["entries"]]')" = "['flap one']" ] || nl_fail "min_priority=warning: $(cat "$NL_OUT")"
   nl_api GET "/logs/system?min_priority=err"
-  [ "$(j '[e["message"] for e in d["entries"] if e["type"]=="line"]')" = "['boom two']" ] || nl_fail "min_priority=err: $(cat "$NL_OUT")"
+  [ "$(j '[e["message"] for e in d["entries"] if e["type"]=="line" and e["ident"]!="rsyslogd"]')" = "['boom two']" ] || nl_fail "min_priority=err: $(cat "$NL_OUT")"
   nl_ok "minimum priority keeps warning and worse, err and worse"
   nl_api GET "/logs/system?identifier=*-ident"
   [ "$(j 'len(d["entries"])')" = 3 ] || nl_fail "wildcard: $(cat "$NL_OUT")"
