@@ -70,7 +70,7 @@
         <label>Re-check every (s) <input name="coord_interval" type="number" min="0" max="86400" size="6"
             title="0 = only the first check. If another access point sits on an overlapping block and has the lower MAC address, this unit restarts that radio so it picks another block."></label>
         <label>Quiet hours for moves <input name="coord_quiet" size="5" placeholder="any time"
-            title="Hours like 1-5: outside them a radio that still has stations connected is not restarted for a channel move. Empty = any time."></label>
+            title="Hours like 1-5: outside them a radio is not moved or restarted for a channel overlap, with or without stations connected. Empty = any time."></label>
         <label>Channel scan time (s) <input name="coord_scan_secs" type="number" min="5" max="120" size="4"
             title="Longest time a scan for other access points may take (also the wait for a starting radio before the first re-check)"></label>
         <label class="wifi-check"><input type="checkbox" name="wifi6"> Wi-Fi 6 (802.11ax)</label>

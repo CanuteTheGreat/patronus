@@ -28,7 +28,7 @@ mac() { cat /sys/class/ieee80211/$1/macaddress; }
 key() { mac "$1" | cut -d: -f2-; }
 board() { # UNIT PHY24 PHY5 extra...: the unit's board file
   u=$1; shift 3
-  printf '. %s/etc/patronus/board.sh\n%s\nAP_COUNTRY=US\nAP_SSIDS=%s\nSSID_%s=coordnet KEY_%s=coordtest123 SEC_%s=wpa2\nAP_COORD_DELAY=3600 AP_COORD_INTERVAL=0 AP_ACS_SCANS=1\n%s\n' \
+  printf '. %s/etc/patronus/board.sh\n%s\nAP_COUNTRY=US\nAP_SSIDS=%s\nSSID_%s=coordnet KEY_%s=coordtest123 SEC_%s=wpa2\nAP_COORD_DELAY=3600 AP_COORD_INTERVAL=0 AP_COORD_QUIET= AP_ACS_SCANS=1\n%s\n' \
     "$AP_DIR" "$HWSIM_CAPS" "$u" "$u" "$u" "$u" "$*" > $T/board-$u.sh; }
 NSA=; NSB=
 holder() { # UNIT: a mount namespace of its own, kept alive by a sleep; its pid in $T/ns-UNIT
@@ -74,6 +74,7 @@ repair)
   # more than a dwell, and the mover's dwell on the other unit's channel falls into the other unit's off-channel time),
   # so the case staggers the two checks by 30 s. The other cases never run the re-check (AP_COORD_DELAY=3600 in board()):
   # a unit's re-check taking its radio off the air while the other unit scans made 'plan' miss it, 2 runs of 4 on rw-man-02.
+  # AP_COORD_QUIET is empty in board() (any hour): a re-check outside the quiet hours holds the move, so the case would fail by wall clock.
   RA=${COORD_REPAIR_DELAY:-30}; RB=$((RA + 30))
   board a $A24 $A5 AP_COORD_DELAY=$RA; board b $B24 $B5 AP_COORD_DELAY=$RB
   ap_start a $A24 $A5 AP_COORD_NOPLAN=1 & pa=$!; ap_start b $B24 $B5 AP_COORD_NOPLAN=1 & pb=$!; wait $pa $pb
