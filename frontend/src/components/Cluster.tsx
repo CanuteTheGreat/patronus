@@ -28,10 +28,11 @@ export function LeaderBadge() {
   }
   return (
     <span data-testid="leader-badge"
+      title={view.leader_id ? `The primary node accepts config changes and copies them to the others (election round ${view.term}; a higher number means a newer primary)` : "No node has been chosen as primary yet; a majority of nodes must be reachable"}
       className={clsx('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
         view.leader_id ? 'bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-200' : 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-200')}>
       <Crown className="h-3 w-3" />
-      {view.leader_id ? `Leader: ${view.leader_id} (term ${view.term})` : 'No leader'}
+      {view.leader_id ? `Primary: ${view.leader_id}` : 'No primary elected'}
     </span>
   )
 }
@@ -50,7 +51,7 @@ export default function Cluster() {
       ) : (
         <>
           <p className="mb-6 text-gray-600 dark:text-gray-300">
-            Leader: <strong data-testid="cluster-leader">{view.leader_id ?? 'none elected'}</strong> &middot; term {view.term}
+            Primary node: <strong data-testid="cluster-leader">{view.leader_id ?? 'none elected'}</strong> <span title="A higher election round means a newer primary">&middot; election round {view.term}</span>
           </p>
           <p className="mb-1 text-xs text-gray-500 dark:text-gray-400 md:hidden">Swipe the table sideways to see all columns.</p>
           <div className="overflow-x-auto rounded-lg" tabIndex={0} role="region" aria-label="Cluster members (scrolls horizontally)">
@@ -59,8 +60,8 @@ export default function Cluster() {
               <tr>
                 <th className="px-4 py-3">Node</th>
                 <th className="px-4 py-3">Role</th>
-                <th className="px-4 py-3" title="Election round; a higher term means a newer leader">Term</th>
-                <th className="px-4 py-3" title="Replication progress: entries received / agreed by a majority / applied to this node's config">Replication (received / agreed / applied)</th>
+                <th className="px-4 py-3" title="Election round; a higher number means a newer primary">Election round</th>
+                <th className="px-4 py-3" title="How far this node has copied the primary's config changes: received / confirmed by a majority / applied to this node">Sync progress (received / confirmed / applied)</th>
                 <th className="px-4 py-3">Address</th>
               </tr>
             </thead>

@@ -7,6 +7,10 @@ stands on each hardware tier. It is generated from a code-and-CI audit, not
 from plans: a feature counts only when it is compiled into the shipped
 binaries and reachable from the web UI or CLI.
 
+A hands-on comparison against the current pfSense CE and OPNsense releases
+(installed in QEMU, every installer screen and web page inventoried) and the
+resulting gap plan is in [design/pfsense-opnsense-parity.md](design/pfsense-opnsense-parity.md).
+
 Status words:
 
 - **tested**: shipped and exercised by an automated test that CI runs
