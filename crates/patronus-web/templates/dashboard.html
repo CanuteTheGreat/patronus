@@ -119,7 +119,7 @@
                     <dt>CPU</dt><dd><div class="ui-usage {{ cpu_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(system_info.cpu_usage) }}%"></i></span><span class="val">{{ "{:.0}"|format(system_info.cpu_usage) }}%</span></div></dd>
                     <dt>Memory</dt><dd><div class="ui-usage {{ mem_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(system_info.memory_usage) }}%"></i></span><span class="val">{{ "{:.0}"|format(system_info.memory_usage) }}%</span></div></dd>
                     <dt>Disk /</dt><dd><div class="ui-usage {{ disk_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(system_info.disk_usage) }}%"></i></span><span class="val">{{ "{:.0}"|format(system_info.disk_usage) }}%</span></div></dd>
-                    <dt>Load</dt><dd class="mono">{{ system_info.load_avg.0 }} &middot; {{ system_info.load_avg.1 }} &middot; {{ system_info.load_avg.2 }}</dd>
+                    <dt>Load</dt><dd class="mono">{{ "{:.2}"|format(system_info.load_avg.0) }} &middot; {{ "{:.2}"|format(system_info.load_avg.1) }} &middot; {{ "{:.2}"|format(system_info.load_avg.2) }}</dd>
                 </dl>
             </div>
         </section>

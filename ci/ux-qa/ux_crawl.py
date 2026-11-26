@@ -84,7 +84,7 @@ FACTS_JS = r"""() => {
   const root = document.documentElement;
   return {
     textLen: text.trim().length, text: text.slice(0, 60000), title: document.title,
-    overflowX: root.scrollWidth - root.clientWidth, overlays: overlays.slice(0, 4), unlinked: unlinked.slice(0, 6), empty: empty.slice(0, 3),
+    /* body too: overflow-x:hidden on html/body clips instead of scrolling */ overflowX: Math.max(root.scrollWidth, document.body.scrollWidth) - root.clientWidth, overlays: overlays.slice(0, 4), unlinked: unlinked.slice(0, 6), empty: empty.slice(0, 3),
     h1: ((document.querySelector('main h1, h1, main h2, h2') || {}).innerText || '').trim().slice(0, 60),
   };
 }"""
@@ -295,6 +295,7 @@ def main():
                                 pass
                         if opened:
                             page.evaluate(NAV_CLOSE_JS)
+                            page.wait_for_timeout(350)  # let the drawer's close transition finish before the page shot
                     if f["overflowX"] > 1:
                         add("overflow", "fail" if vp == "phone" else "warn", route, vp, scheme, f"scrolls sideways by {f['overflowX']}px")
                     for o in f["overlays"]:
