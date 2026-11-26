@@ -16,6 +16,7 @@
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 
+export PATH="$NL_T:$PATH"   # the relay daemon is `patronus udp-relay run`
 DB=/t/lane-j-udp-relay.db
 rm -f "$DB" "$NL_T/nl-jar"
 nl_write_installer_toml
@@ -29,6 +30,8 @@ iot_up() {
   ip link add rtr-iot netns nl-rtr type veth peer name iot0 netns nl-iot
   R ip addr add $IOT_RTR/24 dev rtr-iot; R ip link set rtr-iot up
   ip -n nl-iot addr add $IOT_DEV/24 dev iot0; ip -n nl-iot link set iot0 up
+  # a real device has a default route; without one the kernel (rp_filter) drops a relayed packet whose kept source address is not on its segment
+  ip -n nl-iot route add default via $IOT_RTR
 }
 
 cat > "$NL_T/nl-bcast.py" <<'PY'
@@ -62,19 +65,21 @@ PY
 # on_iot "payload-list"...: listener on the IoT segment while the LAN client sends
 # bcast_iot DST PORT SPORT PAYLOAD -> $NL_T/iot.txt
 bcast_iot() {
-  : > "$NL_T/iot.txt"
-  ip netns exec nl-iot python3 "$NL_T/nl-bcast.py" listen 4 137,138,1900,9999,5000 >"$NL_T/iot.txt" 2>&1 &
+  rm -f "$NL_T/iot.txt"
+  ip netns exec nl-iot python3 "$NL_T/nl-bcast.py" listen 4 137,138,1900,9999,5000 >>"$NL_T/iot.txt" 2>&1 &
+  ip netns exec nl-rtr timeout 4 tcpdump -nel -i rtr-iot udp >"$NL_T/cap.txt" 2>&1 &
   local lp=$!
   nl_wait 5 grep -q listening "$NL_T/iot.txt" || true
   C python3 "$NL_T/nl-bcast.py" send $NL_CLIENT "$1" "$2" "$3" "$4"
   sleep 1.5
   kill $lp 2>/dev/null; wait $lp 2>/dev/null || true
+  cp "$NL_T/iot.txt" "$NL_T/iot.last"; echo "--- heard on IoT:"; cat "$NL_T/iot.txt"
 }
 # bcast_lan: a device on the IoT segment broadcasts; a listener on the LAN hears it
 lan_hears=/tmp/lan-hears.txt
 bcast_lan() { # DST PORT SPORT PAYLOAD
-  : > "$lan_hears"
-  C python3 "$NL_T/nl-bcast.py" listen 4 137,5000 >"$lan_hears" 2>&1 &
+  rm -f "$lan_hears"
+  ip netns exec nl-client python3 "$NL_T/nl-bcast.py" listen 4 137,5000 >>"$lan_hears" 2>&1 &
   local lp=$!
   sleep 0.5
   ip netns exec nl-iot python3 "$NL_T/nl-bcast.py" send $IOT_DEV "$1" "$2" "$3" "$4"
@@ -120,6 +125,15 @@ assert by[("rtr-lan", ((1900, 1900),))]["spoof"] is False, c
 assert by[("rtr-iot", ((5000, 5000),))]["dst"] == ["rtr-lan"], c
 PY
 nl_ok "relay running with a multi-port rule list on rtr-lan"
+diag() {
+  set +e
+  echo "--- diag: relay processes"; ps -eo pid,stat,args | grep '[u]dp-relay'
+  echo "--- diag: stats"; cat /run/patronus/udp-relay.stats /var/lib/patronus/net/run/udp-relay.stats 2>/dev/null
+  echo "--- diag: iot rp_filter"; ip netns exec nl-iot sysctl net.ipv4.conf.all.rp_filter net.ipv4.conf.iot0.rp_filter
+  echo "--- diag: logs"; ls /var/lib/patronus/net/svc /var/lib/patronus/net 2>/dev/null; tail -5 /var/log/patronus-daemon.udp-relay.log /var/lib/patronus/net/log/*udp-relay* 2>/dev/null
+  echo "--- diag: last capture on rtr-iot"; cat "$NL_T/cap.txt"
+}
+trap 'rc=$?; [ $rc = 0 ] || diag' EXIT
 nl_assert_nft_lacks "udp dport 137" "udp dport 1900"
 
 echo "=== real broadcasts"
@@ -138,19 +152,25 @@ nl_ok "second rule on the same interface: 1900 relayed with the router's own sou
 bcast_iot 255.255.255.255 9999 4999 "no-rule-port"
 [ "$(count "$NL_T/iot.txt" no-rule-port)" = 0 ] || nl_fail "port 9999 has no rule but was relayed"
 nl_ok "a port with no rule is not relayed"
-bcast_iot 255.255.255.255 5000 4500 "loop-probe"
+# loop guard: rules 3 (OPT1 -> LAN 5000) and 4 (LAN -> OPT1 5000) form a cycle.
+# One datagram from the LAN must show up exactly once on the IoT side, and the
+# relayed copy (marked, TTL 1) must not be relayed back to the LAN: the LAN
+# listener hears only the original.
+rm -f "$NL_T/iot.txt" "$lan_hears"
+ip netns exec nl-iot python3 "$NL_T/nl-bcast.py" listen 5 5000 >>"$NL_T/iot.txt" 2>&1 &
+lp1=$!
+ip netns exec nl-client python3 "$NL_T/nl-bcast.py" listen 5 5000 >>"$lan_hears" 2>&1 &
+lp2=$!
+sleep 1
+C python3 "$NL_T/nl-bcast.py" send $NL_CLIENT 255.255.255.255 5000 4500 "loop-probe"
+sleep 3
+kill $lp1 $lp2 2>/dev/null; wait $lp1 $lp2 2>/dev/null || true
+echo "--- IoT side:"; cat "$NL_T/iot.txt"; echo "--- LAN side:"; cat "$lan_hears"
 n=$(count "$NL_T/iot.txt" loop-probe)
-[ "$n" = 1 ] || { cat "$NL_T/iot.txt"; nl_fail "loop-probe arrived $n times on the IoT side (want exactly 1)"; }
-sleep 1; echo "--- LAN side for loop-probe: a relayed copy must not come back"
-: > "$lan_hears"
-C python3 "$NL_T/nl-bcast.py" listen 3 5000 >"$lan_hears" 2>&1 &
-lp=$!; sleep 0.5
-bcast_iot 255.255.255.255 5000 4501 "loop-probe-2"
-wait $lp 2>/dev/null || true
-back=$(grep -c "loop-probe-2" "$lan_hears" || true)
-# the only LAN-side sighting allowed is the client's own original (it sent it from the LAN, the listener is a different socket in the same netns)
-[ "$back" -le 1 ] || { cat "$lan_hears"; nl_fail "relayed copy looped back to the LAN ($back sightings)"; }
-nl_ok "no relay loop: one copy on the IoT side, none re-relayed back"
+[ "$n" = 1 ] || nl_fail "loop-probe arrived $n times on the IoT side (want exactly 1)"
+back=$(count "$lan_hears" loop-probe)
+[ "$back" = 1 ] || nl_fail "LAN listener heard loop-probe $back times (want 1: the original only; more = a relayed copy came back)"
+nl_ok "no relay loop across a two-rule cycle: 1 copy on the IoT side, none re-relayed to the LAN"
 bcast_lan 255.255.255.255 137 4237 "iot-to-lan-no-rule"
 [ "$(count "$lan_hears" iot-to-lan-no-rule)" = 0 ] || nl_fail "137 from OPT1 relayed to the LAN with no such rule"
 nl_ok "relay is per direction: OPT1 -> LAN on 137 stays home"
@@ -176,6 +196,9 @@ nl_ok "status + page show the relay"
 echo "=== reboot: patronus apply brings it back"
 nl_web_stop
 nl_kill_daemons
+# a reboot ends every process: the relay too
+pkill -f '[u]dp-relay run' || true
+nl_wait 10 sh -c '! pgrep -f "[u]dp-relay run"' || nl_fail "relay survived the simulated reboot"
 nl_up; iot_up
 nl_apply "$DB" || { cat "$NL_OUT"; nl_fail "boot apply"; }
 nl_wait 10 pgrep -f 'udp-relay run' || nl_fail "relay not started by the boot apply"

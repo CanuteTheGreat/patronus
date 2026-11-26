@@ -9,8 +9,6 @@ pub mod captiveportal;
 pub mod daemon;
 pub mod deploy;
 pub mod edge;
-#[cfg(feature = "udp-relay")]
-pub mod udprelay;
 pub mod firewall;
 pub mod firstboot;
 #[cfg(feature = "gitops")]
@@ -28,6 +26,8 @@ pub mod policy;
 pub mod site;
 pub mod status;
 pub mod tunnel;
+#[cfg(feature = "udp-relay")]
+pub mod udprelay;
 pub mod users;
 pub mod validate;
 pub mod web;
