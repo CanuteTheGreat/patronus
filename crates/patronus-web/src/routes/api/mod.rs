@@ -5,9 +5,13 @@
 pub mod apikeys;
 pub mod authservers;
 pub mod backup_targets;
+#[cfg(feature = "cve")]
+pub mod cve;
 pub mod device;
 pub mod firewall;
 pub mod groups;
+#[cfg(feature = "bruteforce")]
+pub mod guard;
 pub mod ha;
 pub mod insight_history;
 pub mod insights;

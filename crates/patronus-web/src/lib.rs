@@ -5,6 +5,10 @@
 use std::net::SocketAddr;
 
 pub mod apikeys;
+
+// The crates of this binary's Cargo.lock closure, read back by the CVE exposure scan.
+#[cfg(feature = "cve")]
+patronus_network::embed_dependency_list!();
 pub mod auth;
 pub mod backup_remote;
 pub mod geo_centroid;
@@ -72,6 +76,32 @@ fn prepare_app(state: AppState) -> axum::Router {
             }
         }
     });
+
+    #[cfg(feature = "cve")]
+    patronus_network::cve::inventory::keep(PATRONUS_DEP_LIST);
+    // Router CVE exposure: the scan engine runs in applyd when it exists (root: it can also
+    // install security updates); without it (container image) this process runs it.
+    #[cfg(feature = "cve")]
+    patronus_network::cve::spawn_task(
+        state.config_store.clone(),
+        true,
+        patronus_network::applyd::socket_path(),
+    );
+
+    // Brute-force protection: refused web logins are reported to the ban engine. patronus
+    // applyd runs the engine when it exists; without it (container image, root) this process does.
+    #[cfg(feature = "bruteforce")]
+    {
+        state
+            .auth
+            .login_throttle
+            .set_reporter(state.config_store.clone());
+        patronus_firewall::guard::spawn_task(
+            state.config_store.clone(),
+            true,
+            patronus_network::applyd::socket_path(),
+        );
+    }
 
     // Guest network: expire Wi-Fi vouchers (and follow a changed UTC offset) every minute.
     #[cfg(feature = "guest")]

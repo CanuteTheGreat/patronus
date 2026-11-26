@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "udp-relay", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "uci-import"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "udp-relay", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "bruteforce", "cve", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "uci-import"]
 
 # `patronus import-uci`: OpenWrt UCI config importer (no extra dependencies;
 # its wifi-ap / dhcp-server parts are cfg-gated inside it)
@@ -79,6 +79,10 @@ wifi-client = ["patronus-network/wifi-client", "patronus-web?/wifi-client"]
 vrf = ["patronus-network/vrf", "patronus-web?/vrf"]
 web-proxy = ["patronus-network/web-proxy", "patronus-web?/web-proxy"]
 intrusion-detection = ["patronus-network/intrusion-detection", "patronus-web?/intrusion-detection"]
+# brute-force protection (patronus-firewall guard.rs): SSH and web UI login failures -> nft bans
+bruteforce = ["patronus-web?/bruteforce"]
+# router CVE exposure: scan engine in applyd, `patronus cve`, dependency list embedded in the binary
+cve = ["patronus-network/cve", "patronus-web?/cve"]
 dynamic-routing = ["patronus-network/dynamic-routing", "patronus-web?/dynamic-routing"]
 sdwan-edge = ["patronus-network/sdwan-edge", "patronus-web?/sdwan-edge", "dep:reqwest"]
 backup = []

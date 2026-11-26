@@ -32,6 +32,18 @@ pub async fn run(
         let store = std::sync::Arc::new(open_store(db.as_deref()).await?);
         patronus_network::routes::Monitor::system(routes).spawn(store);
     }
+    // brute-force protection: follow the SSH logs and the web UI's reports, ban in nft
+    #[cfg(feature = "bruteforce")]
+    {
+        let store = std::sync::Arc::new(open_store(db.as_deref()).await?);
+        patronus_firewall::guard::spawn_task(store, false, socket.clone());
+    }
+    // router CVE exposure: scans, advisory data downloads and (policy "apply") security updates
+    #[cfg(feature = "cve")]
+    {
+        let store = std::sync::Arc::new(open_store(db.as_deref()).await?);
+        patronus_network::cve::spawn_task(store, false, socket.clone());
+    }
     // access point: names of Wi-Fi clients from the DHCP requests crossing the bridge (read only)
     let ap = patronus_network::apwifi::Paths::default();
     if ap.present() {

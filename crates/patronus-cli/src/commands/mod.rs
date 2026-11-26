@@ -6,6 +6,8 @@ pub mod applyd;
 pub mod apwifi;
 pub mod bgp;
 pub mod captiveportal;
+#[cfg(feature = "cve")]
+pub mod cve;
 pub mod daemon;
 pub mod deploy;
 pub mod edge;
@@ -13,6 +15,7 @@ pub mod firewall;
 pub mod firstboot;
 #[cfg(feature = "gitops")]
 pub mod gitops;
+pub mod guard;
 #[cfg(feature = "guest")]
 pub mod guest;
 #[cfg(feature = "uci-import")]

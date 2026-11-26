@@ -65,6 +65,22 @@ that are not finished are listed separately under
   feed of your own): enabled feeds are refreshed, capped, and their addresses
   are dropped ahead of your rules; private ranges a feed lists are never
   blocked and an `ti_allow` alias exempts hosts. [C58]
+- Brute-force protection (USE=bruteforce, off until switched on): addresses
+  that keep failing SSH (OpenSSH, Dropbear) or web UI logins are banned in the
+  firewall, to the router and through it; repeat offenders get longer bans,
+  IPv6 sources are banned per /64, your own LAN and an allow list are never
+  banned, bans survive a reboot and can be lifted from the page or the CLI.
+  See docs/BRUTE-FORCE.md. [C151]
+- Router CVE exposure (USE=cve): a page, a CLI and an API that list which installed software has a
+  published advisory (Gentoo GLSA for the system, OSV for the Rust crates compiled into the Patronus
+  binaries), the version that fixes it, whether that fix is installable now, and a link to the
+  advisory. Missing or old data is reported as unknown, never as clean; security updates follow a
+  policy (show only, notify, install in the window). See docs/CVE-EXPOSURE.md. [C1190]
+- CVE exposure (USE=cve): Security > CVE exposure lists the installed packages that a Gentoo security
+  advisory (GLSA) affects, the Rust crates inside the installed Patronus programs that an OSV advisory affects,
+  the version that fixes each, whether Portage offers it now, and a link to the advisory; advisory data that is
+  missing or old is reported as "cannot tell" or "too old", never as clean, offline use keeps the last data and
+  shows its age, and the update policy can install the GLSA fixes in a nightly window. See docs/CVE-EXPOSURE.md. [C1190]
 - Firewall log viewer: packets that a logging rule (or a threat feed, or the
   default policy) drops or accepts are recorded with the rule that caught them;
   search by rule, action, address, port, interface or text, follow it live. [C59]

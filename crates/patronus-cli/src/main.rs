@@ -5,6 +5,10 @@ use colored::Colorize;
 use std::path::PathBuf;
 
 mod commands;
+
+// The crates of this binary's Cargo.lock closure, read back by the CVE exposure scan.
+#[cfg(feature = "cve")]
+patronus_network::embed_dependency_list!();
 #[cfg(feature = "gitops")]
 use commands::gitops;
 use commands::{
@@ -161,6 +165,20 @@ enum Commands {
     ApWifi {
         #[command(subcommand)]
         action: ApWifiCommands,
+    },
+
+    /// Brute-force protection: active bans, ban/unban, settings
+    #[cfg(feature = "bruteforce")]
+    Guard {
+        #[command(subcommand)]
+        action: GuardCommands,
+    },
+
+    /// Router CVE exposure: scan, advisory data, security updates
+    #[cfg(feature = "cve")]
+    Cve {
+        #[command(subcommand)]
+        action: CveCommands,
     },
 
     /// Web UI accounts (recovery on the box: lost second factor)
@@ -507,6 +525,66 @@ enum WifiChanCommands {
     Status,
 }
 
+#[cfg(feature = "bruteforce")]
+#[derive(Subcommand)]
+enum GuardCommands {
+    /// Settings and active bans
+    Status {
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Ban an address (IPv4, IPv6 or an IPv6 prefix) by hand
+    Ban {
+        address: String,
+        /// Seconds (default: until lifted)
+        #[arg(long)]
+        secs: Option<u64>,
+        /// Note shown with the ban
+        #[arg(long, default_value = "")]
+        reason: String,
+    },
+    /// Lift the active ban of an address
+    Unban { address: String },
+    /// Change settings: KEY=VALUE ... (enabled, max_failures, find_secs, ban_secs, ban_max_secs,
+    /// escalate, escalate_window_secs, exempt_lan, allowlist, sources, ipv6_prefix, log_files,
+    /// journal, history_days, history_max_rows, tick_secs)
+    Set {
+        #[arg(required = true)]
+        pairs: Vec<String>,
+    },
+}
+
+#[cfg(feature = "cve")]
+#[derive(Subcommand)]
+enum CveCommands {
+    /// Last result: affected software, fixes, age of the advisory data
+    Status {
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Scan now (this process, not the engine); --fetch downloads the crate advisory data first
+    Scan {
+        #[arg(long)]
+        fetch: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Install the fixes the last scan found (what the nightly window does with policy "apply"); --dry-run only lists them
+    Apply {
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Change settings: KEY=VALUE ... (enabled, fetch, show_informational, security_updates=off|notify|apply, window=HH:MM-HH:MM,
+    /// scan_interval_secs, osv_refresh_hours, osv_stale_days, glsa_stale_days, osv_url, osv_max_bytes, glsa_dir,
+    /// pkg_db, binaries, manifest_path, data_dir, portageq, emerge, apply_max_packages, history_days, ...)
+    Set {
+        #[arg(required = true)]
+        pairs: Vec<String>,
+    },
+}
+
 #[derive(Subcommand)]
 enum UsersCommands {
     /// List the web UI accounts (role, enabled, two-factor)
@@ -717,6 +795,8 @@ fn restore_default_sigpipe() {}
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     restore_default_sigpipe();
+    #[cfg(feature = "cve")]
+    patronus_network::cve::inventory::keep(PATRONUS_DEP_LIST);
     // Multi-call (embedded tier, feature `web-multicall`): invoked as
     // `patronus-web` (a link to this binary) it is the web UI server, so the
     // router image carries std, tokio, SQLite and the appliers once.
@@ -825,6 +905,34 @@ async fn main() -> anyhow::Result<()> {
             ApWifiCommands::Export { json } => commands::apwifi::export(json)?,
             ApWifiCommands::Plan { file } => commands::apwifi::plan(file)?,
             ApWifiCommands::Apply { file } => commands::apwifi::apply(file)?,
+        },
+
+        #[cfg(feature = "bruteforce")]
+        Commands::Guard { action } => match action {
+            GuardCommands::Status { json } => {
+                commands::guard::status(cli.db.as_deref(), json).await?
+            }
+            GuardCommands::Ban {
+                address,
+                secs,
+                reason,
+            } => commands::guard::ban(cli.db.as_deref(), &address, secs, &reason).await?,
+            GuardCommands::Unban { address } => {
+                commands::guard::unban(cli.db.as_deref(), &address).await?
+            }
+            GuardCommands::Set { pairs } => commands::guard::set(cli.db.as_deref(), &pairs).await?,
+        },
+
+        #[cfg(feature = "cve")]
+        Commands::Cve { action } => match action {
+            CveCommands::Status { json } => commands::cve::status(cli.db.as_deref(), json).await?,
+            CveCommands::Scan { fetch, json } => {
+                commands::cve::scan(cli.db.as_deref(), fetch, json).await?
+            }
+            CveCommands::Apply { dry_run } => {
+                commands::cve::apply(cli.db.as_deref(), dry_run).await?
+            }
+            CveCommands::Set { pairs } => commands::cve::set(cli.db.as_deref(), &pairs).await?,
         },
 
         Commands::Users { action } => match action {

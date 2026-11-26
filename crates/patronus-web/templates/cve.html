@@ -1,0 +1,271 @@
+{% extends "base.html" %}
+
+{% block title %}CVE exposure - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    .scroll-x { overflow-x: auto; }
+    .pill { display: inline-block; padding: 1px 10px; border-radius: 10px; font-size: 0.8em; font-weight: 600; background: var(--info-bg); color: var(--info-fg); margin-right: 4px; }
+    .pill.on { background: var(--ok-bg); color: var(--ok-fg); }
+    .pill.off { background: var(--warn-bg); color: var(--warn-fg); }
+    .pill.ban { background: var(--bad-bg); color: var(--bad-fg); }
+    .pill.high { background: var(--bad-bg); color: var(--bad-fg); }
+    .pill.medium { background: var(--warn-bg); color: var(--warn-fg); }
+    .hint { color: var(--muted); font-size: 0.85em; margin: 4px 0 10px; }
+    .g-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+    .g-stat { flex: 1 1 150px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--card-bg); }
+    .g-stat b { display: block; font-size: 1.5em; }
+    .g-stat span { color: var(--muted); font-size: 0.85em; }
+    fieldset.g-src { border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.85em; }
+    fieldset.g-src legend { font-size: 0.8em; color: var(--muted); }
+    fieldset.g-src label { flex-direction: row !important; gap: 4px; align-items: center; color: var(--ink-2) !important; font-size: 1em !important; }
+    form.lan-form label.chk { flex-direction: row; align-items: center; gap: 6px; color: var(--ink-2); font-size: 0.85em; justify-content: flex-start; }
+    form.lan-form input[type=checkbox] { min-width: 0; }
+    details.g-adv { flex-basis: 100%; }
+    details.g-adv > div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    @media (max-width: 640px) {
+        form.lan-form input, form.lan-form select, form.lan-form textarea { min-width: 0; width: 100%; }
+        form.lan-form label { width: 100%; }
+        form.lan-form label.chk { width: 100%; }
+        form.lan-form input[type=checkbox] { width: auto; flex: 0 0 auto; }
+        fieldset.g-src { width: 100%; box-sizing: border-box; }
+        fieldset.g-src label { width: auto !important; }
+        table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; box-sizing: border-box; }
+        table.stack tr.hd { display: none; }
+        table.stack tr { border-bottom: 1px solid var(--line); padding: 8px 0; }
+        table.stack td { border: 0; padding: 3px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; text-align: right; overflow-wrap: anywhere; }
+        table.stack td::before { content: attr(data-label); color: var(--muted); font-size: 0.8em; text-align: left; flex: 0 0 34%; }
+        table.stack td > * { max-width: 62%; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">CVE exposure</h1>
+    <p class="page-subtitle">Which of the software on this router has a published security advisory, which version fixes it, and whether that fix can be installed.</p>
+</div>
+<div id="c-error" class="alert-error" style="display:none" role="alert"></div>
+
+<div class="g-stats" id="c-stats" aria-live="polite">
+    <div class="g-stat"><b id="c-verdict">...</b><span>Result of the last scan</span></div>
+    <div class="g-stat"><b id="c-count">...</b><span>Advisories that affect this router</span></div>
+    <div class="g-stat"><b id="c-fix">...</b><span>With a fix you can install now</span></div>
+    <div class="g-stat"><b id="c-glsa">...</b><span id="c-glsa-label">Operating system advisory data</span></div>
+    <div class="g-stat"><b id="c-osv">...</b><span>Crate advisory data</span></div>
+</div>
+<ul class="hint" id="c-reasons"></ul>
+<p class="hint" id="c-last"></p>
+<div id="c-actions" style="margin-bottom:12px">
+    <button class="btn btn-primary btn-sm" type="button" id="c-scan">Scan now</button>
+    <button class="btn btn-sm" type="button" id="c-scan-fetch">Download crate data and scan</button>
+    <span class="hint" id="c-pending" role="status"></span>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Affected software</h2></div>
+    <label class="hint">Show <select id="c-filter" aria-label="Filter findings by source"><option value="">everything</option><option value="glsa">operating system packages</option><option value="osv">Rust crates in Patronus</option><option value="image">image packages</option></select></label>
+    <div class="scroll-x" id="c-findings"><p class="empty">Loading...</p></div>
+    <p class="hint">Operating system packages are read from the package database and matched with the Gentoo Linux Security Advisories; "installable now" means the package tree offers a version that is no longer affected. Crates are the Rust libraries compiled into the Patronus programs; a fix there arrives with a new Patronus release.</p>
+</div>
+
+<div class="card" id="c-image-card" style="display:none">
+    <div class="card-header"><h2 class="card-title">Image packages</h2></div>
+    <p class="hint" id="c-image"></p>
+    <details><summary>All packages of this image</summary><div class="scroll-x" id="c-image-pkgs"></div></details>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Patronus programs and their crates</h2></div>
+    <div class="scroll-x" id="c-bins"><p class="empty">Loading...</p></div>
+    <p class="hint">Each program lists the crates in its Cargo.lock closure at build time. That can include a crate for a feature or platform the build does not use, so a crate here is a candidate, not proof that the code is compiled in.</p>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Settings</h2></div>
+    <form class="lan-form" id="c-form" onsubmit="return saveSettings(event)">
+        <label class="chk"><input type="checkbox" name="enabled"> <span>Scan on a schedule</span></label>
+        <label class="chk"><input type="checkbox" name="fetch"> <span>Download the crate advisory data (about 4 MB a day)</span></label>
+        <label class="chk"><input type="checkbox" name="show_informational"> <span>Also count notices about unmaintained or unsound crates (not vulnerabilities)</span></label>
+        <label>Security updates
+            <select name="security_updates">
+                <option value="off">off: do not look for fixes</option>
+                <option value="notify">show only: I install them</option>
+                <option value="apply">install them in the update window</option>
+            </select></label>
+        <label>Update window (local time)<input name="window" placeholder="02:00-05:00" pattern="[0-9]{2}:[0-9]{2}-[0-9]{2}:[0-9]{2}" required></label>
+        <label>Scan every (hours)<input name="scan_h" type="number" min="1" max="168" required></label>
+        <label>Refresh crate data every (hours)<input name="osv_h" type="number" min="1" max="2160" required></label>
+        <label>Call data stale after (days)<input name="stale_d" type="number" min="1" max="365" required></label>
+        <details class="g-adv"><summary>Advanced</summary><div>
+            <label style="flex:1 1 320px">Crate data URL<input name="osv_url" maxlength="500"></label>
+            <label>Largest download (MB)<input name="osv_mb" type="number" min="1" max="1024"></label>
+            <label style="flex:1 1 260px">Advisory directory<input name="glsa_dir"></label>
+            <label style="flex:1 1 260px">Package database<input name="pkg_db"></label>
+            <label style="flex:1 1 260px">Image manifest<input name="manifest_path"></label>
+            <label style="flex:1 1 260px">Programs to read (empty = every patronus program)<input name="binaries"></label>
+            <label>Most packages per update run<input name="max_pkgs" type="number" min="1" max="500"></label>
+            <label>Keep history (days)<input name="history_days" type="number" min="1" max="3650"></label>
+        </div></details>
+        <button class="btn btn-primary btn-sm" type="submit" id="c-save">Save</button>
+    </form>
+    <p class="hint">Only the crate data download uses the network, and it sends nothing about this router: the matching happens here. Offline, the last data keeps working and its age is shown. Installing fixes never reboots the router and never restarts the web interface by itself; a package that needs a restart says so in its own notes.</p>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Scans and actions</h2></div>
+    <div class="scroll-x" id="c-hist"><p class="empty">Loading...</p></div>
+    <div class="scroll-x" id="c-log"></div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const CAN_MODIFY = {% if can_modify %}true{% else %}false{% endif %};
+    let DATA = null, FORM_FILLED = false;
+    function h(tag, attrs, kids) {
+        const el = document.createElement(tag);
+        for (const [k, v] of Object.entries(attrs || {})) {
+            if (k === 'class') el.className = v; else if (k === 'text') el.textContent = v;
+            else if (k.startsWith('on')) el.addEventListener(k.slice(2), v); else el.setAttribute(k, v);
+        }
+        for (const c of [].concat(kids || [])) el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+        return el;
+    }
+    function stackify(t) {
+        const rows = [...t.querySelectorAll('tr')];
+        if (!rows.length) return;
+        const labels = [...rows[0].children].map(c => c.textContent);
+        rows[0].classList.add('hd');
+        for (const r of rows.slice(1)) [...r.children].forEach((c, i) => { if (labels[i]) c.setAttribute('data-label', labels[i]); });
+        t.classList.add('stack');
+    }
+    function showError(msg) { const el = document.getElementById('c-error'); el.textContent = msg; el.style.display = msg ? '' : 'none'; }
+    async function api(method, url, body) {
+        const r = await fetch(url, {method, credentials: 'same-origin',
+            headers: body !== undefined ? {'content-type': 'application/json'} : {},
+            body: body !== undefined ? JSON.stringify(body) : undefined});
+        let j = {}; try { j = await r.json(); } catch (_) {}
+        if (!r.ok) { showError('Not applied: ' + (j.error || r.status)); return null; }
+        showError(''); return j;
+    }
+    function when(t) { return t ? new Date(t * 1000).toLocaleString() : '-'; }
+    function ageText(a) {
+        if (a === null || a === undefined) return 'none';
+        if (a >= 172800) return Math.floor(a / 86400) + ' days old';
+        if (a >= 7200) return Math.floor(a / 3600) + ' hours old';
+        return Math.max(1, Math.floor(a / 60)) + ' min old';
+    }
+    function table(head, rows) {
+        const t = h('table', {class: 'lan'});
+        t.appendChild(h('tr', {}, head.map(x => h('th', {text: x}))));
+        for (const r of rows) t.appendChild(h('tr', {}, r.map(c => c instanceof Node ? h('td', {}, [c]) : h('td', {text: String(c)}))));
+        stackify(t); return t;
+    }
+    function link(url, text) {
+        if (/^https:\/\//.test(url)) return h('a', {href: url, rel: 'noopener noreferrer', target: '_blank', text: text});
+        return document.createTextNode(text);
+    }
+    const VERDICT = {affected: 'Affected', clean: 'No known advisories', stale: 'Data too old to say', unknown: 'Cannot tell'};
+    const SRC = {glsa: 'package', osv: 'crate', image: 'image package'};
+    function updateCell(f) {
+        if (f.update === 'available') return h('span', {class: 'pill on', text: 'Installable now: ' + f.update_version});
+        if (f.update === 'needs-release') return h('span', {class: 'pill', text: 'Needs a new Patronus release'});
+        if (f.update === 'none') return h('span', {class: 'pill off', text: 'No fixed version offered yet'});
+        return h('span', {class: 'pill', text: 'Not known'});
+    }
+    function render() {
+        const d = DATA, s = d.settings, r = d.report;
+        const v = document.getElementById('c-verdict'); v.textContent = '';
+        if (!r) { v.appendChild(h('span', {class: 'pill off', text: 'Not scanned yet'})); }
+        else v.appendChild(h('span', {class: 'pill ' + (r.verdict === 'affected' ? 'high' : r.verdict === 'clean' ? 'on' : 'off'), text: VERDICT[r.verdict] || r.verdict}));
+        document.getElementById('c-count').textContent = r ? r.findings.length : '-';
+        document.getElementById('c-fix').textContent = r ? r.findings.filter(f => f.update === 'available').length : '-';
+        document.getElementById('c-glsa').textContent = r ? (r.glsa.present ? ageText(r.glsa.age_secs) : 'none') : '-';
+        document.getElementById('c-glsa-label').textContent = r && r.tier === 'router' ? 'Image advisory check' : 'Operating system advisory data';
+        document.getElementById('c-osv').textContent = r ? (r.osv.present ? ageText(r.osv.age_secs) : 'none') : '-';
+        const rs = document.getElementById('c-reasons'); rs.textContent = '';
+        for (const x of (r ? r.reasons : [])) rs.appendChild(h('li', {text: x}));
+        document.getElementById('c-last').textContent = r ? ('Last scan ' + when(r.at) + ' (' + r.tier + ' tier, ' + r.packages_checked + ' packages, ' + r.crates_checked + ' crates, ' + r.ms + ' ms).') : 'No scan has run yet. Press Scan now.';
+        document.getElementById('c-pending').textContent = d.scan_pending ? 'A scan was asked for and is running...' : '';
+        renderFindings();
+        const ic = document.getElementById('c-image-card');
+        if (r && r.manifest) {
+            ic.style.display = '';
+            const m = r.manifest, g = m.gate;
+            document.getElementById('c-image').textContent = m.image + ' ' + m.version + ' (' + m.distribution + ' packages), built ' + m.built + '. ' + (g ? 'Checked when the image was built against ' + g.source + ' on ' + g.checked_at + ': ' + g.findings.length + ' advisories.' : 'This image carries no advisory check.');
+            const p = document.getElementById('c-image-pkgs'); p.textContent = '';
+            p.appendChild(table(['Package', 'Version'], m.packages.map(x => [h('span', {class: 'mono', text: x.name}), x.version])));
+        } else ic.style.display = 'none';
+        const b = document.getElementById('c-bins'); b.textContent = '';
+        if (!r || !r.binaries.length) b.appendChild(h('p', {class: 'empty', text: 'No Patronus program with an embedded crate list was found.'}));
+        else b.appendChild(table(['Program', 'Version', 'Crates', 'Scope', 'File'], r.binaries.map(x =>
+            [h('span', {class: 'mono', text: x.binary}), x.version, x.crates.length, x.scope === 'lockfile-closure' ? 'may include' : x.scope, h('span', {class: 'mono', text: x.path})])));
+        document.getElementById('c-scan').disabled = !CAN_MODIFY; document.getElementById('c-scan-fetch').disabled = !CAN_MODIFY;
+        if (!FORM_FILLED) {
+            FORM_FILLED = true;
+            const e = document.getElementById('c-form').elements;
+            e['enabled'].checked = s.enabled; e['fetch'].checked = s.fetch; e['show_informational'].checked = s.show_informational;
+            e['security_updates'].value = s.security_updates; e['window'].value = s.window;
+            e['scan_h'].value = Math.max(1, Math.round(s.scan_interval_secs / 3600));
+            e['osv_h'].value = s.osv_refresh_hours; e['stale_d'].value = s.osv_stale_days;
+            e['osv_url'].value = s.osv_url; e['osv_mb'].value = Math.max(1, Math.round(s.osv_max_bytes / 1048576));
+            e['glsa_dir'].value = s.glsa_dir; e['pkg_db'].value = s.pkg_db; e['manifest_path'].value = s.manifest_path;
+            e['binaries'].value = s.binaries.join(', '); e['max_pkgs'].value = s.apply_max_packages; e['history_days'].value = s.history_days;
+            if (!CAN_MODIFY) for (const el of e) el.disabled = true;
+        }
+        const hist = document.getElementById('c-hist'); hist.textContent = '';
+        hist.appendChild(d.history.length ? table(['When', 'Result', 'Affected', 'Packages', 'Crates', 'Advisory data age'], d.history.map(x =>
+            [when(x.at), VERDICT[x.verdict] || x.verdict, x.affected, x.packages, x.crates, 'system ' + ageText(x.glsa_age) + ', crates ' + ageText(x.osv_age)])) : h('p', {class: 'empty', text: 'No scans yet.'}));
+        const lg = document.getElementById('c-log'); lg.textContent = '';
+        if (d.log.length) lg.appendChild(table(['When', 'What', 'Result', 'Detail'], d.log.map(x =>
+            [when(x.at), {fetch: 'data download', apply: 'security update', scan: 'scan'}[x.kind] || x.kind, h('span', {class: 'pill ' + (x.ok ? 'on' : 'ban'), text: x.ok ? 'ok' : 'failed'}), h('span', {class: 'mono', text: x.detail.split('\n')[0].slice(0, 160)})])));
+    }
+    function renderFindings() {
+        const r = DATA.report, el = document.getElementById('c-findings'); el.textContent = '';
+        const src = document.getElementById('c-filter').value;
+        const list = r ? r.findings.filter(f => !src || f.source === src) : [];
+        if (!r) { el.appendChild(h('p', {class: 'empty', text: 'No scan yet.'})); return; }
+        if (!list.length) { el.appendChild(h('p', {class: 'empty', text: r.verdict === 'affected' ? 'Nothing of this kind is affected.' : (r.verdict === 'clean' ? 'No advisory affects the installed software.' : 'No advisory found, but see the notes above: the data is incomplete.')})); return; }
+        el.appendChild(table(['Severity', 'Software', 'Installed', 'Fixed in', 'Fix', 'Advisory', 'Since'], list.map(f => [
+            h('span', {class: 'pill ' + (f.severity === 'high' ? 'high' : f.severity === 'medium' ? 'medium' : ''), text: f.severity === 'unknown' ? 'not rated' : f.severity}),
+            h('span', {}, [h('span', {class: 'mono', text: f.subject}), document.createTextNode(' (' + SRC[f.source] + (f.binary ? ' in ' + f.binary : '') + ')')]),
+            f.installed, f.fixed_in.length ? f.fixed_in.join(', ') : 'not known', updateCell(f),
+            h('span', {}, [link(f.url, f.advisory), document.createTextNode(f.aliases.length ? ' ' + f.aliases.slice(0, 3).join(', ') : ''), h('br'), document.createTextNode(f.title)]),
+            when(f.first_seen)])));
+    }
+    async function load() {
+        try {
+            const r = await fetch('/api/cve', {credentials: 'same-origin'});
+            const j = await r.json();
+            if (!r.ok) { showError(j.error || ('HTTP ' + r.status)); return; }
+            DATA = j; render();
+        } catch (e) { showError('Could not load: ' + e); }
+    }
+    async function scanNow(fetchToo) {
+        if (await api('POST', '/api/cve/scan', {fetch: fetchToo})) { document.getElementById('c-pending').textContent = 'A scan was asked for and is running...'; setTimeout(load, 3000); }
+    }
+    async function saveSettings(ev) {
+        ev.preventDefault(); const e = ev.target.elements;
+        const lines = v => v.split(/[\n,]+/).map(x => x.trim()).filter(Boolean);
+        const body = {
+            enabled: e['enabled'].checked, fetch: e['fetch'].checked, show_informational: e['show_informational'].checked,
+            security_updates: e['security_updates'].value, window: e['window'].value.trim(),
+            scan_interval_secs: Number(e['scan_h'].value) * 3600, osv_refresh_hours: Number(e['osv_h'].value),
+            osv_stale_days: Number(e['stale_d'].value), glsa_stale_days: Number(e['stale_d'].value),
+            osv_url: e['osv_url'].value.trim(), osv_max_bytes: Number(e['osv_mb'].value) * 1048576,
+            glsa_dir: e['glsa_dir'].value.trim(), pkg_db: e['pkg_db'].value.trim(), manifest_path: e['manifest_path'].value.trim(),
+            binaries: lines(e['binaries'].value), apply_max_packages: Number(e['max_pkgs'].value), history_days: Number(e['history_days'].value),
+        };
+        const j = await api('PUT', '/api/cve/settings', body);
+        if (j) { DATA = j; FORM_FILLED = false; render(); }
+        return false;
+    }
+    document.getElementById('c-scan').addEventListener('click', () => scanNow(false));
+    document.getElementById('c-scan-fetch').addEventListener('click', () => scanNow(true));
+    document.getElementById('c-filter').addEventListener('change', () => { if (DATA) renderFindings(); });
+    load();
+    setInterval(() => { if (!document.hidden) load(); }, 15000);
+</script>
+{% endblock %}

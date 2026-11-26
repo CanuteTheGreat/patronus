@@ -95,6 +95,16 @@ const NON_CONFIG_TABLES: &[&str] = &[
     // Wi-Fi automatic channel choice (lane s): what each radio is on and why, plus its history
     "seg_wifi_chan_state",
     "seg_wifi_chan_history",
+    // brute-force protection (lane b): ban history, counted failures and the web UI's
+    // reports of refused logins: measured data, never carried or rewound by a restore
+    "guard_bans",
+    "guard_failures",
+    "guard_reports",
+    // router CVE exposure (lane b): findings, scan history, engine log, latest report
+    "cve_findings",
+    "cve_scans",
+    "cve_log",
+    "cve_state",
     // measured history (lane h): 5-minute CPU/memory/throughput samples (tens of thousands
     // of rows within days), monthly data accounting, the event log and the firewall log.
     // In the export they made every revision, backup and drift check carry megabytes of

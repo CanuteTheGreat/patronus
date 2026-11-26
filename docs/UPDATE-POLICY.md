@@ -66,6 +66,12 @@ product site's download section; the signing key is `keys/release-signing.asc` i
   Patronus server to look for a new version (see [PRIVACY.md](PRIVACY.md)). The administrator updates the
   installed packages with Portage (`emerge -uDN @world`) or reinstalls from a newer ISO and imports the
   exported configuration.
+* **Security updates** (USE=cve, docs/CVE-EXPOSURE.md): the CVE exposure engine can install the Portage
+  versions that fix installed packages named in a Gentoo security advisory, inside the update window
+  (`cve.security_updates=apply`, `cve.window`, default 02:00-05:00 local). The default is `notify`: findings and the
+  fix on offer are shown, nothing is installed. It does not sync the Portage tree and never reboots; the full
+  `emerge -avuUND --with-bdeps=y @world` stays the administrator's. Without the policy there is still no unattended
+  update service.
 * The Packages page of the web UI installs and updates the optional daemons only (it runs `emerge` with
   binary packages on an administrator's click).
 * On a ZFS root (the installer's default), an `emerge` run first takes a boot-environment snapshot
