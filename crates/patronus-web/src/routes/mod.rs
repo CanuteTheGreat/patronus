@@ -10,9 +10,9 @@ pub mod legal;
 pub mod pages;
 
 use axum::{
+    Router,
     response::Redirect,
     routing::{get, post},
-    Router,
 };
 use tower_http::services::ServeDir;
 
@@ -180,7 +180,11 @@ async fn access_log_layer(
             None => ("anonymous", None, None),
         };
         // the attempted name is kept for sign-in failures only
-        let attempted = if name.is_none() { who.attempted_user } else { None };
+        let attempted = if name.is_none() {
+            who.attempted_user
+        } else {
+            None
+        };
         log.record(Entry {
             timestamp_ms,
             client,
@@ -282,7 +286,7 @@ impl Drop for CountedBody {
 ///
 /// The CSP is only `frame-ancestors`: the templates use inline scripts.
 async fn security_headers(mut res: axum::response::Response) -> axum::response::Response {
-    use axum::http::{header, HeaderValue};
+    use axum::http::{HeaderValue, header};
     let h = res.headers_mut();
     for (name, value) in [
         (header::X_FRAME_OPTIONS, "DENY"),
@@ -349,7 +353,7 @@ async fn require_session(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use axum::extract::FromRequestParts;
-    use axum::http::{header, Method, StatusCode};
+    use axum::http::{Method, StatusCode, header};
     use axum::response::IntoResponse;
 
     let path = req.uri().path().to_string();
@@ -835,7 +839,7 @@ mod auth_gate_tests {
     //! Regression tests: the management UI/API used to answer anonymous
     //! requests (only /api/auth/me and /api/auth/logout checked a session).
     use axum::body::Body;
-    use axum::http::{header, Method, Request, StatusCode};
+    use axum::http::{Method, Request, StatusCode, header};
     use tower::ServiceExt;
 
     async fn app() -> (axum::Router, String) {
