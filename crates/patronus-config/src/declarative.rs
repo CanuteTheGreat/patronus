@@ -274,9 +274,24 @@ pub struct InterfaceSpec {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayGroupSpec {
     pub members: Vec<GatewayMemberSpec>,
+    /// Older documents: `sticky: true` = sticky connections with the default
+    /// timeout (`sticky_secs` wins when both are given).
     #[serde(default)]
     pub sticky: bool,
+    /// Sticky connections: seconds a client keeps its uplink (0 = off).
+    #[serde(default)]
+    pub sticky_secs: Option<u32>,
+    /// What makes a member unusable: down | loss | latency | loss_latency.
+    #[serde(default)]
+    pub trigger: Option<String>,
+    /// none | down | down_recovery (default down).
+    #[serde(default)]
+    pub kill_states: Option<String>,
 }
+
+/// Sticky timeout (seconds) of a group document that says `sticky: true` and
+/// names no timeout.
+pub const DEFAULT_STICKY_SECS: u32 = 300;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayMemberSpec {
@@ -435,6 +450,13 @@ impl ConfigParser {
             }
             (ResourceKind::VpnConnection, ResourceSpec::VpnConnection(spec)) => {
                 Self::validate_vpn_connection(spec)?;
+            }
+            (ResourceKind::GatewayGroup, ResourceSpec::GatewayGroup(spec)) => {
+                if spec.members.is_empty() {
+                    return Err(Error::Config(
+                        "A gateway group needs at least one member".to_string(),
+                    ));
+                }
             }
             (
                 ResourceKind::Alias

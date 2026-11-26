@@ -472,3 +472,55 @@ async fn settings_round_trip_through_the_store() {
         assert_eq!((g.sticky_secs, g.kill_states), (300, KillStates::DownRecovery));
     }
 }
+
+#[cfg(feature = "multiwan")]
+#[tokio::test]
+async fn gitops_group_documents_carry_the_new_settings() {
+    use patronus_config::applier::Applier;
+    let s = ConfigStore::open_in_memory().await.unwrap();
+    for n in ["A", "B"] {
+        crate::routes::save_gateway(
+            &s,
+            None,
+            &GatewayInput {
+                name: n.into(),
+                interface: "@wan".into(),
+                ..Default::default()
+            }
+            .validated()
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    }
+    let doc = |extra: &str| {
+        let y = format!(
+            "- apiVersion: patronus.firewall/v1\n  kind: GatewayGroup\n  metadata: {{ name: LB }}\n  spec:\n    members:\n      - {{ gateway_name: A, tier: 1, weight: 1 }}\n      - {{ gateway_name: B, tier: 1, weight: 1 }}\n{extra}"
+        );
+        patronus_config::declarative::ConfigParser::parse_yaml(&y)
+            .unwrap()
+            .remove(0)
+    };
+    let ap = crate::routes::RoutesApplier::default();
+    ap.upsert_resource(
+        &s,
+        &doc("    sticky_secs: 900\n    kill_states: down_recovery\n    trigger: loss_latency\n"),
+    )
+    .await
+    .unwrap();
+    let c = crate::routes::load(&s).await.unwrap();
+    let g = c.group("LB").unwrap();
+    assert_eq!(g.sticky_secs, 900);
+    assert_eq!(g.kill_states, KillStates::DownRecovery);
+    assert_eq!(g.trigger, Trigger::LossLatency);
+    // the older `sticky: true` means the documented default timeout
+    ap.upsert_resource(&s, &doc("    sticky: true\n")).await.unwrap();
+    let g = crate::routes::load(&s).await.unwrap().group("LB").cloned().unwrap();
+    assert_eq!(g.sticky_secs, patronus_config::declarative::DEFAULT_STICKY_SECS);
+    assert_eq!(g.kill_states, KillStates::Down);
+    // an unknown kill-states value is refused
+    assert!(ap
+        .upsert_resource(&s, &doc("    kill_states: sometimes\n"))
+        .await
+        .is_err());
+}
