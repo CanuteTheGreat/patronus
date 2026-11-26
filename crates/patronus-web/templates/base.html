@@ -88,6 +88,8 @@
         /* the shadow tells that the menu above scrolls under the footer */
         .sidebar-footer { padding: var(--s-2) var(--s-3); border-top: 1px solid var(--c-border); font-size: var(--fs-sm); box-shadow: 0 -8px 10px -8px rgb(0 0 0 / .35); position: relative; }
         input[type=checkbox], input[type=radio] { accent-color: var(--c-accent); }
+        /* links inside a tinted banner take the banner's ink (the accent blue is too weak on dark amber/red) */
+        .ui-banner a { color: inherit; text-decoration: underline; font-weight: 600; }
         .sidebar-version { display: block; margin-top: 2px; font-size: var(--fs-sm); color: var(--c-muted); text-decoration: none; }
         .sidebar-version:hover { color: var(--c-accent); }
         .status-indicator { display: flex; align-items: center; gap: var(--s-2); color: var(--c-muted); }
@@ -405,7 +407,10 @@
             .content textarea { max-width: 100%; box-sizing: border-box; }
             .stat-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--s-2); }
             .stat-card .value { font-size: var(--fs-xl); }
-            .header-right { gap: 4px; }
+            .header-right { gap: 4px; min-width: 0; }
+            /* the header must fit 390 px: menu, brand, search, theme, user */
+            .header .search-input { width: clamp(96px, 28vw, 220px); }
+            .header-left { min-width: 0; }
             #user-name { display: none; }
             .breadcrumbs { display: none; }
         }
@@ -677,7 +682,7 @@
 
             <!-- Page Content -->
             <main class="content">
-                <div id="setup-banner" style="display:none;background:var(--warn-bg);color:var(--warn-fg);padding:.6em 1em;margin-bottom:1em;border-radius:4px">This router has not been set up yet. <a href="/setup">Run the setup wizard</a></div>
+                <div id="setup-banner" class="ui-banner warn" role="status" style="display:none">This router has not been set up yet. <a href="/setup">Run the setup wizard</a></div>
                 {% block content %}{% endblock %}
             </main>
         </div>
