@@ -1251,6 +1251,11 @@ impl std::error::Error for WrongTotpCode {}
 #[derive(Clone, Default)]
 pub struct LoginThrottle {
     failures: Arc<std::sync::Mutex<FailureTable>>,
+    /// Brute-force protection: every refused login is also reported to the store, where
+    /// the ban engine (`patronus_firewall::guard`, in patronus applyd or this process)
+    /// counts it together with SSH failures and bans the source in the firewall.
+    #[cfg(feature = "bruteforce")]
+    reporter: Arc<std::sync::OnceLock<Arc<patronus_config::ConfigStore>>>,
 }
 
 /// Client key -> (failed attempts, start of the current window).
@@ -1295,8 +1300,24 @@ impl LoginThrottle {
         }
     }
 
+    /// Report refused logins to the brute-force protection (see `reporter`).
+    #[cfg(feature = "bruteforce")]
+    pub fn set_reporter(&self, store: Arc<patronus_config::ConfigStore>) {
+        let _ = self.reporter.set(store);
+    }
+
     /// Record a failed login from `ip`.
     pub fn record_failure(&self, ip: std::net::IpAddr) {
+        #[cfg(feature = "bruteforce")]
+        if let (Some(store), Ok(rt)) = (self.reporter.get(), tokio::runtime::Handle::try_current())
+        {
+            let store = store.clone();
+            rt.spawn(async move {
+                if let Err(e) = patronus_firewall::guard::report(&store, "web", ip, "").await {
+                    tracing::warn!("brute-force protection: report failed login: {e}");
+                }
+            });
+        }
         self.record_failure_at(ip, Utc::now())
     }
 

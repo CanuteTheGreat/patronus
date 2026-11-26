@@ -73,6 +73,21 @@ fn prepare_app(state: AppState) -> axum::Router {
         }
     });
 
+    // Brute-force protection: refused web logins are reported to the ban engine. patronus
+    // applyd runs the engine when it exists; without it (container image, root) this process does.
+    #[cfg(feature = "bruteforce")]
+    {
+        state
+            .auth
+            .login_throttle
+            .set_reporter(state.config_store.clone());
+        patronus_firewall::guard::spawn_task(
+            state.config_store.clone(),
+            true,
+            patronus_network::applyd::socket_path(),
+        );
+    }
+
     // Guest network: expire Wi-Fi vouchers (and follow a changed UTC offset) every minute.
     #[cfg(feature = "guest")]
     {
