@@ -193,6 +193,55 @@ fn is_public(method: &axum::http::Method, path: &str) -> bool {
         || (method == Method::POST && path == "/api/auth/login")
 }
 
+enum MetricsGate {
+    Deny(axum::response::Response),
+    /// the request carries the scrape token: no session needed
+    Token,
+    Normal,
+}
+
+async fn metrics_gate(
+    app_state: &crate::AppState,
+    req: &axum::http::Request<axum::body::Body>,
+) -> MetricsGate {
+    use axum::http::{header, StatusCode};
+    use axum::response::IntoResponse;
+    let Ok(p) = patronus_network::monagent::metrics_policy(&app_state.config_store).await else {
+        return MetricsGate::Normal;
+    };
+    if !p.enabled {
+        return MetricsGate::Deny(
+            (
+                StatusCode::NOT_FOUND,
+                axum::Json(serde_json::json!({"error": "the metrics endpoint is switched off (Metrics endpoint page)"})),
+            )
+                .into_response(),
+        );
+    }
+    let peer = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|c| c.0.ip());
+    if !p.allows_source(peer) {
+        return MetricsGate::Deny(
+            (
+                StatusCode::FORBIDDEN,
+                axum::Json(serde_json::json!({"error": "this source address may not read /metrics"})),
+            )
+                .into_response(),
+        );
+    }
+    let auth = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if p.token_matches(auth) {
+        MetricsGate::Token
+    } else {
+        MetricsGate::Normal
+    }
+}
+
 /// Authentication gate for the whole UI and API.
 ///
 /// Before this, only `/api/auth/me` and `/api/auth/logout` checked the
@@ -227,6 +276,16 @@ async fn require_session(
         } else {
             axum::response::Redirect::to("/first-run").into_response()
         };
+    }
+
+    // The typed /metrics settings (Prometheus metrics page): the switch and the
+    // allowed source network bind everyone; a scrape token replaces the login.
+    if path == "/metrics" {
+        match metrics_gate(&app_state, &req).await {
+            MetricsGate::Deny(r) => return r,
+            MetricsGate::Token => return next.run(req).await,
+            MetricsGate::Normal => {}
+        }
     }
 
     let (mut parts, body) = req.into_parts();
@@ -430,7 +489,9 @@ async fn features() -> axum::Json<serde_json::Value> {
         "plugins",
         "segmentation",
         "wifi-ap",
-        "guest"
+        "guest",
+        "zabbix-agent",
+        "telegraf"
     ];
     let role = api::wifi::role();
     let (_, tier, board) = release_info();
@@ -502,6 +563,8 @@ pub fn absent_features(
         ("dns", "DNS resolver"),
         ("segmentation", "Device segmentation"),
         ("guest", "Guest network"),
+        ("zabbix-agent", "Zabbix agent"),
+        ("telegraf", "Telegraf metrics agent"),
     ];
     let ap = role == api::setup::DeviceRole::Ap;
     let router_job = AP_ROUTER_JOBS;
@@ -587,6 +650,9 @@ mod seg_tests;
 
 #[cfg(all(test, feature = "guest"))]
 mod guest_tests;
+
+#[cfg(all(test, feature = "zabbix-agent", feature = "telegraf"))]
+mod monagent_tests;
 
 #[cfg(test)]
 mod auth_gate_tests {

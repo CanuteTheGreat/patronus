@@ -184,6 +184,19 @@ pub fn write_atomic(path: &Path, content: &str, mode: u32) -> Result<bool> {
     Ok(true)
 }
 
+/// The program a command line really runs: behind a `setpriv ... --` wrapper
+/// (an agent started under its own unprivileged account) it is the word
+/// after the `--`, because that is what the process turns into.
+fn real_program<'a>(argv: &[&'a str]) -> &'a str {
+    let first = argv.first().copied().unwrap_or("");
+    if first.rsplit('/').next() == Some("setpriv") {
+        if let Some(i) = argv.iter().position(|a| *a == "--") {
+            return argv.get(i + 1).copied().unwrap_or(first);
+        }
+    }
+    first
+}
+
 fn pid_alive(pid: i32, argv0: Option<&str>) -> bool {
     // /proc/<pid>/comm, not cmdline: daemons like dhcpcd rewrite their
     // argv ("dhcpcd: rtr-wan [ip4]"), the kernel's comm stays the binary.
@@ -275,8 +288,7 @@ impl Supervisor {
         let env = std::fs::read_to_string(self.paths.env_file(service, inst)).ok()?;
         env.lines()
             .find_map(|l| l.strip_prefix("PATRONUS_CMD=\""))
-            .and_then(|c| c.split_whitespace().next())
-            .map(str::to_string)
+            .map(|c| real_program(&c.split_whitespace().collect::<Vec<_>>()).to_string())
     }
 
     /// Instances of `service` Patronus started (have an env file).
@@ -426,7 +438,8 @@ impl Supervisor {
         )?;
         // fail fast if it dies immediately (bad option, missing plugin)
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        if !pid_alive(pid, spec.argv.first().map(String::as_str)) {
+        let argv_refs: Vec<&str> = spec.argv.iter().map(String::as_str).collect();
+        if !pid_alive(pid, Some(real_program(&argv_refs)).filter(|p| !p.is_empty())) {
             let tail = std::fs::read_to_string(&log).unwrap_or_default();
             let tail: Vec<&str> = tail.lines().rev().take(5).collect();
             return Err(Error::Network(format!(

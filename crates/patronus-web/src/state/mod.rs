@@ -21,6 +21,7 @@ pub mod host;
 pub mod insight;
 pub mod interfaces;
 pub mod lan;
+pub mod monagent;
 pub mod monitoring;
 pub mod network;
 pub mod routing;

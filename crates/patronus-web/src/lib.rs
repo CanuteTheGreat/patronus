@@ -73,6 +73,10 @@ fn prepare_app(state: AppState) -> axum::Router {
         }
     });
 
+    // Monitoring agents (Zabbix agent, Telegraf): keep the metrics snapshot they read fresh.
+    #[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
+    state::monagent::start(state.clone());
+
     // Guest network: expire Wi-Fi vouchers (and follow a changed UTC offset) every minute.
     #[cfg(feature = "guest")]
     {

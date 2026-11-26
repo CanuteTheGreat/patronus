@@ -33,6 +33,9 @@ dynamic-routing = []
 syslog = []
 netflow = []
 igmp = []
+# optional monitoring agents (monagent.rs): Zabbix agent 2 and Telegraf next to /metrics
+zabbix-agent = []
+telegraf = []
 mdns = []
 nat64 = []
 l2tp = []
@@ -57,6 +60,7 @@ sdwan-edge = ["wireguard"]
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
 tempfile = "3.10"
+toml.workspace = true
 
 [dependencies]
 patronus-core = { path = "../patronus-core" }

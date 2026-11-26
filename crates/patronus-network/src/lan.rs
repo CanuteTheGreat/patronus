@@ -54,6 +54,7 @@ pub const LAN_TABLES: &[&str] = &[
     // feature pages (crate::svc): syslog, IGMP proxy, L2TP, IDS, FRR, Wake-on-LAN
     "syslog_targets",
     "igmp_interfaces",
+    "zabbix_servers",
     "mdns_interfaces",
     "l2tp_users",
     "proxy_blocked",
@@ -1021,6 +1022,10 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::frr::FrrApplier::new(env.clone())));
     #[cfg(feature = "sdwan-edge")]
     v.push(Arc::new(crate::edge::EdgeApplier::default()));
+    #[cfg(feature = "zabbix-agent")]
+    v.push(Arc::new(crate::monagent::ZabbixApplier::new(env.clone())));
+    #[cfg(feature = "telegraf")]
+    v.push(Arc::new(crate::monagent::TelegrafApplier::new(env.clone())));
     #[cfg(feature = "plugins")]
     v.push(Arc::new(crate::plugins::PluginsApplier::default()));
     let _ = env;

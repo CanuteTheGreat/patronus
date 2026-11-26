@@ -13,6 +13,8 @@ pub mod firewall;
 pub mod firstboot;
 #[cfg(feature = "gitops")]
 pub mod gitops;
+#[cfg(feature = "zabbix-agent")]
+pub mod monagent;
 #[cfg(feature = "guest")]
 pub mod guest;
 #[cfg(feature = "uci-import")]

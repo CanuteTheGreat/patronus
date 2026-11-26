@@ -227,6 +227,35 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- monitoring agents (Zabbix agent 2, Telegraf's Prometheus client):
+    // their port on the configured interface only (the LAN by default), never
+    // the WAN. Both are off unless switched on.
+    for (slug, label, def_port, only_when) in [
+        ("zabbix", "Zabbix agent", 10050_i64, None),
+        ("telegraf", "Telegraf scrape", 9273_i64, Some(("output", "prometheus_client"))),
+    ] {
+        let m = settings(store, slug).await?;
+        if !on(&m, "enabled") {
+            continue;
+        }
+        if let Some((k, v)) = only_when {
+            if m.get(k).map(String::as_str).unwrap_or(v) != v {
+                continue;
+            }
+        }
+        let port = m
+            .get("listen_port")
+            .and_then(|p| p.trim().parse::<i64>().ok())
+            .filter(|p| (1..=65535).contains(p))
+            .unwrap_or(def_port);
+        let spec = m.get("listen_iface").map(String::as_str).unwrap_or("@lan");
+        for d in devices(store, spec).await {
+            out.filter.push(format!(
+                "add rule {t} input iifname \"{d}\" tcp dport {port} accept comment \"{label}\""
+            ));
+        }
+    }
+
     // --- mDNS repeater: avahi-daemon receives 224.0.0.251 / ff02::fb on
     // every reflected interface (the table may not exist on old stores)
     let mdns = settings(store, "mdns").await?;
@@ -677,6 +706,37 @@ mod tests {
             svc_rules(&s).await.unwrap().filter.is_empty(),
             "unsafe device names are dropped"
         );
+    }
+
+    #[tokio::test]
+    async fn monitoring_agents_open_their_port_on_the_lan_only() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth0", Some("wan")).await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        put(&s, "zabbix.enabled", "0").await;
+        put(&s, "telegraf.enabled", "0").await;
+        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default(), "off: nothing");
+        put(&s, "zabbix.enabled", "1").await;
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(f.contains("input iifname \"eth1\" tcp dport 10050 accept"), "{f}");
+        assert!(!f.contains("eth0"), "never the WAN: {f}");
+        put(&s, "zabbix.listen_port", "10051").await;
+        put(&s, "zabbix.listen_iface", "@opt1").await;
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(f.is_empty(), "an unassigned role opens nothing, never 'any': {f}");
+        put(&s, "zabbix.listen_iface", "@lan").await;
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(f.contains("tcp dport 10051 accept"), "{f}");
+        put(&s, "telegraf.enabled", "1").await;
+        put(&s, "telegraf.output", "influxdb_v2").await;
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(!f.contains("9273"), "a push output has no listener: {f}");
+        put(&s, "telegraf.output", "prometheus_client").await;
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(f.contains("input iifname \"eth1\" tcp dport 9273 accept"), "{f}");
+        put(&s, "telegraf.listen_port", "9999; drop").await;
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(f.contains("tcp dport 9273 accept") && !f.contains("drop"), "{f}");
     }
 
     #[tokio::test]

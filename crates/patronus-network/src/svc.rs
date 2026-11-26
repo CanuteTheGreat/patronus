@@ -195,6 +195,11 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     #[cfg(feature = "dynamic-routing")]
     v.push(Arc::new(crate::frr::FrrSvc));
     v.push(Arc::new(crate::wol::WolSvc));
+    v.push(Arc::new(crate::monagent::MetricsSvc));
+    #[cfg(feature = "zabbix-agent")]
+    v.push(Arc::new(crate::monagent::ZabbixSvc));
+    #[cfg(feature = "telegraf")]
+    v.push(Arc::new(crate::monagent::TelegrafSvc));
     #[cfg(feature = "guest")]
     v.push(Arc::new(crate::guest::GuestSvc));
     #[cfg(feature = "sdwan-edge")]
@@ -225,6 +230,7 @@ pub const SVC_TABLES: &[&str] = &[
     "edge_endpoints",
     "edge_subnets",
     "guest_vouchers",
+    "zabbix_servers",
 ];
 
 pub fn find_coll(spec: &Spec, key: &str) -> Result<&'static Coll> {
