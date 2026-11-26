@@ -67,6 +67,11 @@ cp "$CLI" "$OUT/patronus-cli"
 cp "$WEB" "$OUT/patronus-web"
 cp "ci/netlab/$TEST" "$OUT/"
 cp gentoo/net-firewall/patronus/files/patronus-{applyd,web,firewall}.{service,initd} "$OUT/"
+if [ "$TEST" = update-channel-test.sh ]; then
+  # the Portage overlay exactly as overlay-sync.yml publishes it (ci/overlay-tree.sh)
+  mkdir -p "$OUT/overlay"
+  git -c safe.directory="$PWD" archive "$(bash ci/overlay-tree.sh)" | tar -x -C "$OUT/overlay"
+fi
 
 COMMON=(--cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN
         --security-opt apparmor=unconfined --security-opt systempaths=unconfined
