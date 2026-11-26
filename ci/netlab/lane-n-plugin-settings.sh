@@ -31,13 +31,13 @@ serves_nothing() { [ -z "$(served)" ]; }
 jv() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$NL_OUT" "$1"; }
 
 # --- a plugin whose service serves its own settings file (read on every request)
-mk() { # version, interval max
+mk() { # version, interval max, interval default
   rm -rf "$W/src"; mkdir -p "$W/src/files/bin"
   cat >"$W/src/plugin.json" <<JSON
 {"name":"setdemo","version":"$1","description":"netlab settings demo","author":"netlab",
  "service":{"exec":["bin/serve","18081","{settings}"],"port":18081,"proto":"tcp","expose":"lan"},
  "settings":[
-  {"key":"interval","type":"int","label":"Check interval","hint":"Seconds between two checks; shorter means more load.","min":5,"max":$2,"default":60},
+  {"key":"interval","type":"int","label":"Check interval","hint":"Seconds between two checks; shorter means more load.","min":5,"max":$2,"default":$3},
   {"key":"name","type":"string","label":"Instance name","hint":"Lowercase letters, digits and dashes.","pattern":"[a-z][a-z0-9-]*","max":20,"default":"demo"},
   {"key":"mode","type":"enum","label":"Mode","hint":"Fast skips the safety checks.","values":["fast","safe"],"default":"safe"},
   {"key":"token","type":"string","label":"API token","hint":"Kept on the router; shown only as 'saved'.","secret":true,"required":true},
@@ -61,8 +61,8 @@ PY
   chmod 755 "$W/src/files/bin/serve"
 }
 "$P" plugin keygen --out "$W/good" >/dev/null
-mk 1.0.0 3600; "$P" plugin pack "$W/src" --key "$W/good.key" --out "$W/v1.pplug" >/dev/null
-mk 1.1.0 50;   "$P" plugin pack "$W/src" --key "$W/good.key" --out "$W/v11.pplug" >/dev/null
+mk 1.0.0 3600 60; "$P" plugin pack "$W/src" --key "$W/good.key" --out "$W/v1.pplug" >/dev/null
+mk 1.1.0 50 30; "$P" plugin pack "$W/src" --key "$W/good.key" --out "$W/v11.pplug" >/dev/null
 # a schema that breaks its own rule is refused at pack time, before anything is signed
 sed 's/"min":5,"max":3600/"min":9,"max":3/' "$W/src/plugin.json" > "$W/bad.json"
 cp -r "$W/src" "$W/badsrc"; cp "$W/bad.json" "$W/badsrc/plugin.json"
@@ -120,7 +120,7 @@ nl_ok "removing a required value stops the service; saving it again starts it wi
 # --- update with a narrower limit: the stored 77 no longer fits (max 50) and falls back to the default
 nl_api POST /packages/plugins "$(cat "$W/v11.pplug")"
 [ "$NL_CODE" = 201 ] || nl_fail "update: $NL_CODE $(cat "$NL_OUT")"
-nl_wait 20 serves_has '"interval": 60' || { served; nl_fail "the dropped value did not fall back to the default"; }
+nl_wait 20 serves_has '"interval": 30' || { served; nl_fail "the dropped value did not fall back to the default"; }
 serves_has 'tok-S3CRET-api-1' || nl_fail "the update lost the secret"
 nl_api PUT /packages/plugins/setdemo/settings '{"values":{"interval":51}}'
 [ "$NL_CODE" = 400 ] || nl_fail "the new limit must apply: $NL_CODE"
