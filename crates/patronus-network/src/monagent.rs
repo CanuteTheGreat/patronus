@@ -543,8 +543,8 @@ pub use zabbix::{check_psk, ZabbixApplier, ZabbixConf, ZabbixSvc, ZABBIX_SPEC};
 
 #[cfg(feature = "zabbix-agent")]
 pub mod zabbix {
-    use crate::svc::{Coll, SECRET_MASK};
     use super::*;
+    use crate::svc::{Coll, SECRET_MASK};
 
     static FIELDS: [Field; 8] = [
         Field::new("enabled", "Zabbix agent", Kind::Bool).def("0"),
