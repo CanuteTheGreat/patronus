@@ -61,6 +61,8 @@
     ['imp-kind', 'imp-file', 'imp-maps'].forEach(id => document.getElementById(id).addEventListener('input', () => {
         const b = document.getElementById('imp-apply'); if (b) b.disabled = impKey() !== impPlanned;
     }));
+    // after this long without an answer to an import, the page explains a moved router address (the answer is lost)
+    const IMP_SLOW_MS = 30000;
     async function impRun(step) {
         const st = document.getElementById('imp-state'), out = document.getElementById('imp-out');
         const f = document.getElementById('imp-file').files[0];
@@ -70,11 +72,27 @@
         const maps = document.getElementById('imp-maps').value.trim();
         const url = '/api/system/import/' + encodeURIComponent(kind) + '/' + step + (maps ? '?maps=' + encodeURIComponent(maps) : '');
         st.textContent = step === 'plan' ? 'Reading the file...' : 'Importing and applying...';
+        // Applying an import can move the address this browser is connected to (the LAN address of the old box): the
+        // answer then never arrives (or the connection drops), but the import is in place. Say where to go next.
+        const m = /role lan, static ([0-9.]+|[0-9a-fA-F:]+)\//.exec(out.textContent || '');
+        const where = m ? (m[1].includes(':') ? '[' + m[1] + ']' : m[1]) : '';
+        const moved = (lead) => lead + ' This is expected when the import changes the address you are connected to'
+            + (where ? ': open https://' + where + '/ from a device on that network' : ': open the router at its new address')
+            + ' and check System > Configuration history. An import that a part of the system refused is undone automatically.';
+        const slow = step === 'apply' ? setTimeout(() => {
+            st.textContent = moved('No answer from the router yet: it may still be applying the import.');
+        }, IMP_SLOW_MS) : null;
         let r, j = {};
         try {
             r = await fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'content-type': 'application/octet-stream'}, body: f});
             try { j = await r.json(); } catch (_) {}
-        } catch (e) { st.textContent = 'Could not reach the router: ' + e; return; }
+        } catch (e) {
+            clearTimeout(slow);
+            st.textContent = step === 'apply' ? moved('The connection to the router dropped while it applied the import.')
+                : 'Could not reach the router: ' + e;
+            return;
+        }
+        clearTimeout(slow);
         if (!r.ok) { st.textContent = j.error || ('Failed (HTTP ' + r.status + ').'); return; }
         out.hidden = false;
         if (step === 'plan') {
