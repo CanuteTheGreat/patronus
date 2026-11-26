@@ -33,7 +33,7 @@ CONF
   SW_PID=$!
   nl_wait 10 test -S "$SW_SOCK" || { cat "$NL_T/nl-sw-lldpd.log"; nl_fail "the client's lldpd did not start"; }
 }
-sw_stop() { pkill -f "lldpd -d -u $SW_SOCK" 2>/dev/null || true; sleep 0.5; }
+sw_stop() { pkill -F /tmp/nl-sw-lldpd.pid 2>/dev/null || true; sleep 0.5; }
 # what the "switch" has heard (system names of its neighbours)
 sw_hears() { lldpcli -u "$SW_SOCK" -f keyvalue show neighbors details 2>/dev/null | grep -F "chassis.name=" || true; }
 # LLDP frames seen on a wire for N seconds, by source role
@@ -70,8 +70,12 @@ CONF=/var/lib/patronus/net/lldpd.conf
 grep -x "configure ports $NL_LAN_IF lldp status rx-and-tx" "$CONF" >/dev/null \
   && grep -x 'configure system hostname nl-router' "$CONF" >/dev/null \
   || { cat "$CONF"; nl_fail "lldpd.conf does not carry the page's settings"; }
-pgrep -ax lldpd | grep -F -e "-I $NL_LAN_IF" >/dev/null || { pgrep -ax lldpd; nl_fail "lldpd is not limited to $NL_LAN_IF"; }
-nl_ok "lldpd running for $NL_LAN_IF only: $(pgrep -ax lldpd | grep -F -e "-I $NL_LAN_IF" | head -1 | cut -c1-150)"
+# lldpd renames its processes ("lldpd: monitor."), so the daemon is asked instead of its command line
+RSOCK=$(find /run /var/run /var/lib/patronus -name lldpd.socket 2>/dev/null | head -1)
+[ -S "$RSOCK" ] || nl_fail "router lldpd control socket not found"
+IFS_SEEN=$(lldpcli -u "$RSOCK" -f keyvalue show interfaces | sed -n 's/^lldp\.\([^.]*\)\..*/\1/p' | sort -u | tr '\n' ' ')
+[ "$IFS_SEEN" = "$NL_LAN_IF " ] || nl_fail "lldpd is not limited to $NL_LAN_IF: [$IFS_SEEN]"
+nl_ok "lldpd running for $NL_LAN_IF only (its interface list: $IFS_SEEN)"
 nl_wait 20 sh -c "lldpcli -u $SW_SOCK -f keyvalue show neighbors details | grep -qF 'chassis.name=nl-router'" \
   || { lldpcli -u "$SW_SOCK" show neighbors details || true; nl_fail "the switch never heard the router's LLDP announcement"; }
 nl_ok "the switch hears the router: $(sw_hears | head -1)"
@@ -80,7 +84,7 @@ echo "=== the router lists the switch (real frames, read live)"
 ok=0
 for _ in $(seq 1 30); do
   nl_api GET /svc/lldp
-  if python3 - "$NL_OUT" <<'PY'
+  if python3 - "$NL_OUT" <<'PY' 2>/dev/null
 import json, sys
 st = json.load(open(sys.argv[1]))["status"]
 assert st["enabled"] and st["installed"] and st["running"], st
@@ -107,15 +111,16 @@ n=$(frames nl-client lan0 4)
 nl_ok "0 LLDP frames on the WAN port, $n on the LAN"
 
 echo "=== rx-only: the router stays silent but still listens"
-# the router daemon's own control socket, taken from its command line
-RSOCK=$(pgrep -ax lldpd | grep -F -e "-I $NL_LAN_IF" | sed -n 's/.* -u \([^ ]*\) .*/\1/p' | head -1)
-[ -S "$RSOCK" ] || nl_fail "router lldpd control socket not found: $RSOCK"
 nl_api_ok "rx-only" PUT /svc/lldp/interfaces/"$ROW" '{"iface":"@lan","mode":"rx-only"}'
 nl_wait 10 sh -c "grep -qx 'configure ports $NL_LAN_IF lldp status rx-only' $CONF" || nl_fail "mode not written"
 nl_wait 10 pgrep -x lldpd || nl_fail "lldpd gone after a mode change"
-nl_wait 15 sh -c "lldpcli -u $RSOCK -f keyvalue show ports $NL_LAN_IF 2>/dev/null | grep -q 'status=rx-only'" \
-  || nl_fail "the daemon does not report rx-only on $NL_LAN_IF"
-nl_ok "daemon reports rx-only on $NL_LAN_IF"
+nl_wait 15 sh -c "lldpcli -u $RSOCK -f keyvalue show interfaces detail ports $NL_LAN_IF 2>/dev/null | grep -qx 'lldp.$NL_LAN_IF.status=RX only'" \
+  || nl_fail "the daemon does not report RX only on $NL_LAN_IF"
+stat() { lldpcli -u "$RSOCK" -f keyvalue show statistics ports "$NL_LAN_IF" | sed -n "s/^lldp\\.$NL_LAN_IF\\.$1\\.$1=//p"; }
+sleep 2; TX1=$(stat tx); RX1=$(stat rx); sleep 4; TX2=$(stat tx); RX2=$(stat rx)
+[ "$TX1" = "$TX2" ] || nl_fail "the router still transmits in rx-only mode (tx $TX1 -> $TX2)"
+[ "$RX2" -gt "$RX1" ] || nl_fail "the router stopped listening in rx-only mode (rx $RX1 -> $RX2)"
+nl_ok "rx-only: tx counter frozen at $TX2, rx still counting ($RX1 -> $RX2)"
 
 echo "=== reboot: patronus apply brings LLDP back"
 nl_web_stop
@@ -130,7 +135,7 @@ nl_web_start "$DB"; nl_login
 ok=0
 for _ in $(seq 1 30); do
   nl_api GET /svc/lldp
-  if python3 - "$NL_OUT" <<'PY'
+  if python3 - "$NL_OUT" <<'PY' 2>/dev/null
 import json, sys
 st = json.load(open(sys.argv[1]))["status"]
 assert any(x.get("system_name") == "nl-switch" for x in st["neighbors"]), st
@@ -143,7 +148,7 @@ nl_ok "after reboot: lldpd back, nl-switch listed"
 
 echo "=== disable"
 nl_api_ok "disable" PUT /svc/lldp '{"enabled":false}'
-nl_wait 10 sh -c "! pgrep -f 'lldpd -d -u $RSOCK'" || nl_fail "router lldpd still running"
+nl_wait 10 sh -c "! lldpcli -u $RSOCK show chassis" || nl_fail "router lldpd still running"
 nl_api GET /svc/lldp
 [ "$(nl_json "$NL_OUT" 'd["status"]["running"]')" = False ] || nl_fail "status still says running"
 nl_ok "disabled: router lldpd stopped"
