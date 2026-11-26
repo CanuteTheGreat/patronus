@@ -61,6 +61,7 @@ matcher a channel uses cannot be deleted. "Send test" always sends.
 | `PUT /api/system/matchers/{name}` | `{"description", "tree"}`, created or replaced, validated (400 with the reason) |
 | `DELETE /api/system/matchers/{name}` | 400 while a channel uses it |
 | `POST /api/system/matchers/preview` | `{"tree"}` (not saved): the last events of the event log, each `matched` or not, judged at the local time it happened |
+| `POST /api/system/events/try` | `{"kind", "subject", "severity", "send"}`: which channels would get such an event right now (judged at the box's local time); with `send` true it is delivered to them (nothing is written to the event log) |
 | `PUT /api/system/hooks/{id}/matcher` | `{"matcher": "name"}`; `""` = the channel's own kinds and severity |
 | `POST /api/system/hooks` | also takes `"matcher"` |
 
@@ -73,7 +74,7 @@ System > Events and notifications > Notification matchers. The tree is nested li
 Indent (into the group above) / Outdent / Remove buttons. With a row focused, `Alt`+arrows do the same and `Delete`
 removes it; dragging a row onto another row's top or bottom edge moves it before/after, onto the middle of a group
 moves it inside. A refused move (a second item in a "not", a group inside itself, too deep) is announced in the status
-line and changes nothing. A calendar leaf has seven weekday toggle buttons (`aria-pressed`) and two time pickers. Preview
+line and changes nothing. A calendar leaf has seven weekday toggle buttons (`aria-pressed`) and two time pickers. "Try an event" names the channels an event of your choice would reach right now, and can send it. Preview
 shows "N of M recent events would be sent" and a Yes/No column (text, not only colour). The page follows the device's
 light/dark setting and works at phone width.
 

@@ -227,7 +227,10 @@ impl Matcher {
     /// can raise (empty slice = do not check).
     pub fn validated(mut self, lim: &Limits, known_kinds: &[&str]) -> Result<Matcher> {
         if self.depth() > lim.max_depth {
-            return Err(invalid(format!("nested deeper than {} levels", lim.max_depth)));
+            return Err(invalid(format!(
+                "nested deeper than {} levels",
+                lim.max_depth
+            )));
         }
         if self.nodes() > lim.max_nodes {
             return Err(invalid(format!("more than {} nodes", lim.max_nodes)));
@@ -249,7 +252,10 @@ impl Matcher {
         match self {
             Matcher::All { items } | Matcher::Any { items } | Matcher::Not { items } => {
                 if items.len() > lim.max_items {
-                    return Err(invalid(format!("more than {} items in a group", lim.max_items)));
+                    return Err(invalid(format!(
+                        "more than {} items in a group",
+                        lim.max_items
+                    )));
                 }
                 for m in items.iter_mut() {
                     m.normalise(lim, known)?;
@@ -292,7 +298,9 @@ impl Matcher {
             }
             Matcher::Subject { glob } => {
                 let g = glob.trim();
-                if g.is_empty() || g.chars().count() > lim.max_glob_len || g.chars().any(char::is_control)
+                if g.is_empty()
+                    || g.chars().count() > lim.max_glob_len
+                    || g.chars().any(char::is_control)
                 {
                     return Err(invalid(format!(
                         "subject glob (1-{} printable characters)",
@@ -370,8 +378,7 @@ pub fn check_name(n: &str) -> Result<()> {
     let ok = !n.is_empty()
         && n.chars().count() <= 64
         && n.trim() == n
-        && n
-            .chars()
+        && n.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ' '));
     if ok {
         Ok(())
@@ -518,7 +525,13 @@ impl Applier for NotifyMatcherApplier {
         Ok(list(store)
             .await?
             .iter()
-            .map(|m| format!("{} {}\n", m.name, serde_json::to_string(&m.tree).unwrap_or_default()))
+            .map(|m| {
+                format!(
+                    "{} {}\n",
+                    m.name,
+                    serde_json::to_string(&m.tree).unwrap_or_default()
+                )
+            })
             .collect())
     }
 
@@ -529,9 +542,11 @@ impl Applier for NotifyMatcherApplier {
     async fn upsert_resource(&self, store: &ConfigStore, config: &DeclarativeConfig) -> Result<()> {
         let v = spec_value(config)?;
         let name = &config.metadata.name;
-        let s: Spec = serde_json::from_value(v.clone())
-            .map_err(|e| invalid(format!("{name}: {e}")))?;
-        upsert(store, name, &s.description, s.tree, &[]).await.map(|_| ())
+        let s: Spec =
+            serde_json::from_value(v.clone()).map_err(|e| invalid(format!("{name}: {e}")))?;
+        upsert(store, name, &s.description, s.tree, &[])
+            .await
+            .map(|_| ())
     }
 
     async fn delete_resource(
@@ -600,7 +615,9 @@ mod tests {
         assert!(!m.matches(&ctx("tunnel_down", "warning", "guest-vpn", t)));
         assert!(!m.matches(&ctx("config_changed", "critical", "x", t)));
         // not of an any, and double negation
-        let n = parse(r#"{"op":"not","items":[{"op":"not","items":[{"op":"kind","kinds":["test"]}]}]}"#);
+        let n = parse(
+            r#"{"op":"not","items":[{"op":"not","items":[{"op":"kind","kinds":["test"]}]}]}"#,
+        );
         assert!(n.matches(&ctx("test", "info", "", t)));
         assert!(!n.matches(&ctx("tunnel_up", "info", "", t)));
         // empty all matches everything
@@ -612,28 +629,108 @@ mod tests {
         let d = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let wk = d(&["mon", "tue", "wed", "thu", "fri"]);
         // 2026-11-23 is a Monday
-        assert!(calendar_active(&wk, "09:00", "17:00", at(2026, 11, 23, 9, 0)));
-        assert!(calendar_active(&wk, "09:00", "17:00", at(2026, 11, 23, 16, 59)));
-        assert!(!calendar_active(&wk, "09:00", "17:00", at(2026, 11, 23, 17, 0)));
-        assert!(!calendar_active(&wk, "09:00", "17:00", at(2026, 11, 23, 8, 59)));
-        assert!(!calendar_active(&wk, "09:00", "17:00", at(2026, 11, 28, 10, 0))); // Saturday
-        // across midnight: Friday 22:00 -> Saturday 06:00 belongs to Friday
-        assert!(calendar_active(&wk, "22:00", "06:00", at(2026, 11, 27, 23, 30)));
-        assert!(calendar_active(&wk, "22:00", "06:00", at(2026, 11, 28, 5, 59)));
-        assert!(!calendar_active(&wk, "22:00", "06:00", at(2026, 11, 28, 6, 0)));
-        assert!(!calendar_active(&wk, "22:00", "06:00", at(2026, 11, 28, 23, 0))); // Saturday night
-        // Sunday early morning is Saturday's night: not scheduled
-        assert!(!calendar_active(&wk, "22:00", "06:00", at(2026, 11, 29, 3, 0)));
+        assert!(calendar_active(
+            &wk,
+            "09:00",
+            "17:00",
+            at(2026, 11, 23, 9, 0)
+        ));
+        assert!(calendar_active(
+            &wk,
+            "09:00",
+            "17:00",
+            at(2026, 11, 23, 16, 59)
+        ));
+        assert!(!calendar_active(
+            &wk,
+            "09:00",
+            "17:00",
+            at(2026, 11, 23, 17, 0)
+        ));
+        assert!(!calendar_active(
+            &wk,
+            "09:00",
+            "17:00",
+            at(2026, 11, 23, 8, 59)
+        ));
+        assert!(!calendar_active(
+            &wk,
+            "09:00",
+            "17:00",
+            at(2026, 11, 28, 10, 0)
+        )); // Saturday
+            // across midnight: Friday 22:00 -> Saturday 06:00 belongs to Friday
+        assert!(calendar_active(
+            &wk,
+            "22:00",
+            "06:00",
+            at(2026, 11, 27, 23, 30)
+        ));
+        assert!(calendar_active(
+            &wk,
+            "22:00",
+            "06:00",
+            at(2026, 11, 28, 5, 59)
+        ));
+        assert!(!calendar_active(
+            &wk,
+            "22:00",
+            "06:00",
+            at(2026, 11, 28, 6, 0)
+        ));
+        assert!(!calendar_active(
+            &wk,
+            "22:00",
+            "06:00",
+            at(2026, 11, 28, 23, 0)
+        )); // Saturday night
+            // Sunday early morning is Saturday's night: not scheduled
+        assert!(!calendar_active(
+            &wk,
+            "22:00",
+            "06:00",
+            at(2026, 11, 29, 3, 0)
+        ));
         // Monday 03:00 is Sunday's tail: not scheduled either
-        assert!(!calendar_active(&wk, "22:00", "06:00", at(2026, 11, 23, 3, 0)));
+        assert!(!calendar_active(
+            &wk,
+            "22:00",
+            "06:00",
+            at(2026, 11, 23, 3, 0)
+        ));
         // Tuesday 03:00 is Monday's tail
-        assert!(calendar_active(&wk, "22:00", "06:00", at(2026, 11, 24, 3, 0)));
+        assert!(calendar_active(
+            &wk,
+            "22:00",
+            "06:00",
+            at(2026, 11, 24, 3, 0)
+        ));
         // start == end = the whole day
-        assert!(calendar_active(&d(&["sat"]), "00:00", "00:00", at(2026, 11, 28, 13, 0)));
-        assert!(!calendar_active(&d(&["sat"]), "00:00", "00:00", at(2026, 11, 29, 13, 0)));
+        assert!(calendar_active(
+            &d(&["sat"]),
+            "00:00",
+            "00:00",
+            at(2026, 11, 28, 13, 0)
+        ));
+        assert!(!calendar_active(
+            &d(&["sat"]),
+            "00:00",
+            "00:00",
+            at(2026, 11, 29, 13, 0)
+        ));
         // 23:59 / 00:00 boundaries
-        assert!(calendar_active(&wk, "00:00", "23:59", at(2026, 11, 23, 23, 58)));
-        assert!(!calendar_active(&wk, "00:00", "23:59", at(2026, 11, 23, 23, 59)));
+        assert!(calendar_active(
+            &wk,
+            "00:00",
+            "23:59",
+            at(2026, 11, 23, 23, 58)
+        ));
+        assert!(!calendar_active(
+            &wk,
+            "00:00",
+            "23:59",
+            at(2026, 11, 23, 23, 59)
+        ));
     }
 
     /// A DST change moves the wall clock: the window is in local time, so on
@@ -652,12 +749,27 @@ mod tests {
         // 2026-03-08 09:30 UTC = 01:30 PST (inside), 09:59 UTC = 01:59 PST (inside)
         let base = 1772962200; // 2026-03-08 09:30:00 UTC
         assert!(calendar_active(&days, "01:30", "03:30", local(base)));
-        assert!(calendar_active(&days, "01:30", "03:30", local(base + 29 * 60)));
+        assert!(calendar_active(
+            &days,
+            "01:30",
+            "03:30",
+            local(base + 29 * 60)
+        ));
         // 10:00 UTC = 03:00 PDT: wall clock jumped, still inside (no 02:xx)
         assert_eq!(local(base + 30 * 60).hour(), 3);
-        assert!(calendar_active(&days, "01:30", "03:30", local(base + 30 * 60)));
+        assert!(calendar_active(
+            &days,
+            "01:30",
+            "03:30",
+            local(base + 30 * 60)
+        ));
         // 10:30 UTC = 03:30 PDT: window over after only 1 real hour
-        assert!(!calendar_active(&days, "01:30", "03:30", local(base + 60 * 60)));
+        assert!(!calendar_active(
+            &days,
+            "01:30",
+            "03:30",
+            local(base + 60 * 60)
+        ));
         // fall back 2026-11-01: 01:30 happens twice and matches both times
         let fall = |utc: i64| {
             let off = if utc < 1793523600 { -7 } else { -8 }; // 09:00 UTC
@@ -678,11 +790,10 @@ mod tests {
     #[test]
     fn validation_and_limits() {
         let lim = Limits::default();
-        let ok = parse(
-            r#"{"op":"calendar","days":["fri","MON","mon"],"start":"7:05","end":"18:00"}"#,
-        )
-        .validated(&lim, &[])
-        .unwrap();
+        let ok =
+            parse(r#"{"op":"calendar","days":["fri","MON","mon"],"start":"7:05","end":"18:00"}"#)
+                .validated(&lim, &[])
+                .unwrap();
         assert_eq!(
             ok,
             Matcher::Calendar {
@@ -709,20 +820,41 @@ mod tests {
             .validated(&lim, &["test"])
             .is_err());
         // depth and size limits
-        let mut m = Matcher::Kind { kinds: vec!["test".into()] };
+        let mut m = Matcher::Kind {
+            kinds: vec!["test".into()],
+        };
         for _ in 0..8 {
             m = Matcher::All { items: vec![m] };
         }
         assert_eq!(m.depth(), 9);
         assert!(m.clone().validated(&lim, &[]).is_err());
         assert!(m
-            .validated(&Limits { max_depth: 9, ..lim }, &[])
+            .validated(
+                &Limits {
+                    max_depth: 9,
+                    ..lim
+                },
+                &[]
+            )
             .is_ok());
         let wide = Matcher::All {
-            items: (0..40).map(|_| Matcher::Kind { kinds: vec!["test".into()] }).collect(),
+            items: (0..40)
+                .map(|_| Matcher::Kind {
+                    kinds: vec!["test".into()],
+                })
+                .collect(),
         };
         assert!(wide.clone().validated(&lim, &[]).is_err()); // > 32 items
-        assert!(wide.validated(&Limits { max_items: 64, max_nodes: 64, ..lim }, &[]).is_ok());
+        assert!(wide
+            .validated(
+                &Limits {
+                    max_items: 64,
+                    max_nodes: 64,
+                    ..lim
+                },
+                &[]
+            )
+            .is_ok());
     }
 
     #[test]
@@ -761,19 +893,35 @@ mod tests {
             .execute(s.pool().unwrap())
             .await
             .unwrap();
-        assert!(a.delete_resource(&s, &ResourceKind::NotifyMatcher, "night-wan").await.is_err());
-        sqlx::query("DELETE FROM event_hooks").execute(s.pool().unwrap()).await.unwrap();
-        a.delete_resource(&s, &ResourceKind::NotifyMatcher, "night-wan").await.unwrap();
+        assert!(a
+            .delete_resource(&s, &ResourceKind::NotifyMatcher, "night-wan")
+            .await
+            .is_err());
+        sqlx::query("DELETE FROM event_hooks")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        a.delete_resource(&s, &ResourceKind::NotifyMatcher, "night-wan")
+            .await
+            .unwrap();
         assert!(list(&s).await.unwrap().is_empty());
         // export / import carries them
-        upsert(&s, "m1", "", Matcher::legacy("test", "warning"), &[]).await.unwrap();
+        upsert(&s, "m1", "", Matcher::legacy("test", "warning"), &[])
+            .await
+            .unwrap();
         let doc = s.export_json().await.unwrap();
         let s2 = ConfigStore::open_in_memory().await.unwrap();
         s2.import_json(&doc).await.unwrap();
         assert_eq!(list(&s2).await.unwrap().len(), 1);
         // limits come from system_config
-        s.save_system_config("notify.matcher_max_depth", "1").await.unwrap();
-        assert!(upsert(&s, "deep", "", Matcher::legacy("test", "warning"), &[]).await.is_err());
+        s.save_system_config("notify.matcher_max_depth", "1")
+            .await
+            .unwrap();
+        assert!(
+            upsert(&s, "deep", "", Matcher::legacy("test", "warning"), &[])
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -788,10 +936,15 @@ mod tests {
         let sql = include_str!("../migrations/0795_h_notify_matchers.sql");
         let convert: String = sql
             .split(';')
-            .filter(|st| st.contains("INSERT INTO notify_matchers") || st.contains("UPDATE event_hooks"))
+            .filter(|st| {
+                st.contains("INSERT INTO notify_matchers") || st.contains("UPDATE event_hooks")
+            })
             .map(|st| format!("{st};"))
             .collect();
-        sqlx::raw_sql(&convert).execute(s.pool().unwrap()).await.unwrap();
+        sqlx::raw_sql(&convert)
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
         let t = at(2026, 11, 25, 12, 0);
         for (name, kinds, min) in [
             ("a", "gateway_down,tunnel_up", "warning"),
@@ -799,7 +952,10 @@ mod tests {
             ("c", "test", "info"),
             ("d", "", "critical"),
         ] {
-            let m = get_tree(&s, &format!("auto-{name}")).await.unwrap().unwrap();
+            let m = get_tree(&s, &format!("auto-{name}"))
+                .await
+                .unwrap()
+                .unwrap();
             assert_eq!(m, Matcher::legacy(kinds, min), "{name}");
             for k in ["gateway_down", "tunnel_up", "test", "config_changed"] {
                 for sv in ["info", "warning", "critical"] {
