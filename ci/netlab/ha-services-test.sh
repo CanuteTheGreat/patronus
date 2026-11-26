@@ -363,6 +363,41 @@ wait_for "A preempts again" 15 a_has_vip
 wait_for "A is MASTER" 15 state_is MASTER
 ok "leaving maintenance mode: A (priority 100 > 50) takes the VIP back"
 kill "$FLOW" 2>/dev/null || true
+has "$(cat /tmp/api.out)" '"confirmed":true' "the hand-off was not confirmed"
+
+echo "=== 9b. confirmed hand-off: progress, the automatic path around an upgrade, refusal with an unhealthy peer"
+# the progress the HA page banner shows
+want 200 GET /api/ha/maintenance
+has "$(cat /tmp/api.out)" '"phase"' "no maintenance progress"
+# an upgrade on an HA node enters maintenance by itself (firmware staging fails on this image, which
+# is exactly the path that must give the addresses back) and the peer takes over meanwhile
+a_has_vip || fail "A should be MASTER before the automatic-maintenance step"
+code=$(api POST /api/system/firmware/install)
+[ "$code" != 409 ] || fail "firmware install was refused although the peer is healthy: $(cat /tmp/api.out)"
+has_maint_event() { N lan curl -sk -b /t/jar -o /tmp/ev.out 'https://192.168.50.2/api/events?kind=ha_maintenance' && grep -q 'maintenance on (firmware upgrade)' /tmp/ev.out && grep -q 'maintenance off (firmware upgrade)' /tmp/ev.out; }
+wait_for "enter + leave events of the automatic maintenance" 30 has_maint_event
+wait_for "A is MASTER again after the automatic maintenance" 20 state_is MASTER
+a_has_vip || fail "A did not get the VIP back after the automatic maintenance"
+want 200 GET /api/ha
+has "$(cat /tmp/api.out)" '"maintenance":false' "maintenance flag left on"
+ok "firmware upgrade on an HA node: peer healthy -> maintenance on (B took the VIPs), failed stage -> maintenance off, A MASTER again"
+# the peer goes silent: its keepalived and its state sync stop
+b_stop; conntrackd -C /t/hb/ct.conf -k 2>/dev/null || true; N hb conntrackd -C /t/hb/ct.conf -k 2>/dev/null || true
+wait_for "A is MASTER (B is gone)" 15 state_is MASTER
+code=$(api POST /api/ha/maintenance '{"enabled":true}')
+[ "$code" = 400 ] || fail "maintenance with a dead peer -> $code (want 400): $(cat /tmp/api.out)"
+has "$(cat /tmp/api.out)" "not healthy" "no reason given for the refusal"
+has "$(cat /etc/keepalived/keepalived.conf)" "priority 100" "the priority moved although maintenance was refused"
+code=$(api POST /api/system/firmware/install)
+[ "$code" = 409 ] || fail "firmware install with a dead peer -> $code (want 409): $(cat /tmp/api.out)"
+a_has_vip || fail "a refused maintenance must not move the VIP"
+ok "peer stopped: manual maintenance refused with the reason (400), upgrade refused (409), priority and VIP untouched"
+want 200 POST /api/ha/maintenance '{"enabled":true,"force":true}'
+has "$(cat /tmp/api.out)" '"confirmed":false' "a forced maintenance claims a confirmed hand-off"
+want 200 POST /api/ha/maintenance '{"enabled":false}'
+ok "force=true goes ahead without a peer (and leaving it works)"
+N hb conntrackd -C /t/hb/ct.conf -d || fail "B's conntrackd did not restart"
+b_start 50
 
 echo "=== 10. alias virtual IPs are plain extra addresses and survive 'patronus apply'"
 want 201 POST /api/ha/vips '{"name":"mgmt-alias","interface":"@lan","address":"192.168.50.77/24","mode":"alias"}'
