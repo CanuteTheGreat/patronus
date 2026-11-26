@@ -23,27 +23,66 @@
     </ul>
 </div>
 {% else %}
+<style>
+    #setup-form fieldset { border: 1px solid var(--line); border-radius: 5px; padding: 10px 12px; margin: 10px 0; min-width: 0;
+        display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; width: 100%; box-sizing: border-box; }
+    #setup-form legend { padding: 0 6px; font-weight: 600; }
+    #setup-form .sub { display: contents; }
+    #setup-form .sub[hidden] { display: none; }
+</style>
 <div class="page-header">
     <h1 class="page-title">Setup wizard</h1>
-    <p class="page-subtitle">Pick the WAN and LAN ports, give the LAN an address and (optionally) a DHCP pool. Everything is
-        saved in the configuration, applied to the system now and again at every boot. The same settings stay editable on the
-        Interfaces and DHCP pages.</p>
+    <p class="page-subtitle">Name the router, set its clock, pick the WAN and LAN ports, say how the WAN connects (DHCP, a static
+        address or a PPPoE login) and whether IPv6 is used, give the LAN an address and (optionally) a DHCP pool. Everything is
+        saved in the configuration, applied to the system now and again at every boot, and stays editable on the System,
+        Interfaces, NTP and DHCP pages.</p>
 </div>
 <div class="card">
     <p id="setup-state" class="text-sm text-muted">Loading ports...</p>
     <form class="lan-form" id="setup-form" onsubmit="return runSetup(event)">
-        <label>WAN port <select name="wan_interface" required></select></label>
-        <label>WAN address <select name="wan_mode" onchange="document.getElementById('wan-static').style.display = this.value === 'static' ? '' : 'none'"><option value="dhcp">DHCP from the ISP</option><option value="static">Static</option></select></label>
-        <span id="wan-static" style="display:none">
-            <label>WAN address (CIDR) <input name="wan_ipv4" placeholder="203.0.113.2/29"></label>
-            <label>WAN gateway <input name="wan_gateway" placeholder="203.0.113.1"></label>
-        </span>
-        <label>LAN port <select name="lan_interface" required></select></label>
-        <label>LAN address (CIDR) <input name="lan_ipv4" value="192.168.1.1/24" required></label>
-        <label><input type="checkbox" name="dhcp" checked> Serve DHCP on the LAN</label>
-        <label>Pool start <input name="dhcp_start" value="192.168.1.100"></label>
-        <label>Pool end <input name="dhcp_end" value="192.168.1.199"></label>
-        <label>DNS servers handed to clients (blank = this router) <input name="dns_servers"></label>
+        <fieldset><legend>General</legend>
+            <label>Host name <input name="hostname" placeholder="firewall" autocomplete="off"></label>
+            <label>DNS domain <input name="domain" placeholder="home.arpa" autocomplete="off"></label>
+            <label>Time zone <input name="timezone" list="tz-list" placeholder="Europe/Berlin or UTC" autocomplete="off"></label>
+            <datalist id="tz-list"></datalist>
+            <span class="sub" data-feature="ntp"><label>NTP servers (comma separated) <input name="ntp_servers" placeholder="pool.ntp.org"></label></span>
+        </fieldset>
+        <fieldset><legend>WAN</legend>
+            <label>WAN port <select name="wan_interface" required></select></label>
+            <label>WAN type <select name="wan_mode" onchange="showModes()"><option value="dhcp">DHCP from the ISP</option><option value="static">Static address</option><option value="pppoe" data-feature="pppoe">PPPoE (DSL / fibre login)</option></select></label>
+            <span class="sub" id="wan-static" hidden>
+                <label>WAN address (CIDR) <input name="wan_ipv4" placeholder="203.0.113.2/29"></label>
+                <label>WAN gateway <input name="wan_gateway" placeholder="203.0.113.1"></label>
+            </span>
+            <span class="sub" id="wan-pppoe" hidden>
+                <label>PPPoE user name <input name="pppoe_username" autocomplete="off"></label>
+                <label>PPPoE password <input name="pppoe_password" type="password" autocomplete="new-password"></label>
+                <label>Service name (optional) <input name="pppoe_service_name" autocomplete="off"></label>
+                <label>MTU <input name="pppoe_mtu" type="number" min="576" max="1500" placeholder="1492"></label>
+            </span>
+            <label>WAN IPv6 <select name="wan_ipv6_mode" onchange="showModes()"><option value="none">Off</option><option value="dhcp6">DHCPv6 (with prefix delegation)</option><option value="slaac">SLAAC (router advertisements)</option><option value="static">Static</option></select></label>
+            <span class="sub" id="wan6-static" hidden>
+                <label>WAN IPv6 address (CIDR) <input name="wan_ipv6" placeholder="2001:db8::2/64"></label>
+                <label>WAN IPv6 gateway <input name="wan_gateway6" placeholder="2001:db8::1"></label>
+            </span>
+        </fieldset>
+        <fieldset><legend>LAN</legend>
+            <label>LAN port <select name="lan_interface" required></select></label>
+            <label>LAN address (CIDR) <input name="lan_ipv4" value="192.168.1.1/24" required></label>
+            <label>LAN IPv6 <select name="lan_ipv6_mode" onchange="showModes()"><option value="none">Off</option><option value="track">Track the WAN (a /64 of the delegated prefix)</option><option value="static">Static</option></select></label>
+            <span class="sub" id="lan6-track" hidden>
+                <label>Prefix size to ask the ISP for <select name="wan_pd_len"><option value="">ISP decides</option><option value="48">/48</option><option value="56">/56</option><option value="60">/60</option><option value="62">/62</option><option value="64">/64</option></select></label>
+            </span>
+            <span class="sub" id="lan6-static" hidden>
+                <label>LAN IPv6 address (CIDR) <input name="lan_ipv6" placeholder="fd00:1::1/64"></label>
+            </span>
+            <span class="sub" data-feature="dhcp">
+                <label><input type="checkbox" name="dhcp" checked> Serve DHCP on the LAN</label>
+                <label>Pool start <input name="dhcp_start" value="192.168.1.100"></label>
+                <label>Pool end <input name="dhcp_end" value="192.168.1.199"></label>
+                <label>DNS servers handed to clients (blank = this router) <input name="dns_servers"></label>
+            </span>
+        </fieldset>
         <label><input type="checkbox" name="force"> Apply even if it may cut off this session</label>
         <button class="btn btn-primary" type="submit">Apply setup</button>
         <button class="btn btn-secondary" type="button" onclick="skipSetup()">Skip the wizard</button>
@@ -51,6 +90,16 @@
     <div id="setup-result" class="text-sm" role="status" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-width:100%"></div>
 </div>
 <script>
+    function showModes() {
+        const f = document.getElementById('setup-form').elements;
+        document.getElementById('wan-static').hidden = f['wan_mode'].value !== 'static';
+        document.getElementById('wan-pppoe').hidden = f['wan_mode'].value !== 'pppoe';
+        document.getElementById('wan6-static').hidden = f['wan_ipv6_mode'].value !== 'static';
+        document.getElementById('lan6-track').hidden = f['lan_ipv6_mode'].value !== 'track';
+        document.getElementById('lan6-static').hidden = f['lan_ipv6_mode'].value !== 'static';
+        // tracking needs DHCPv6 prefix delegation on the WAN
+        if (f['lan_ipv6_mode'].value === 'track' && f['wan_ipv6_mode'].value !== 'dhcp6') f['wan_ipv6_mode'].value = 'dhcp6';
+    }
     async function loadSetup() {
         const r = await fetch('/api/setup/status', {credentials: 'same-origin'});
         if (!r.ok) return;
@@ -59,6 +108,12 @@
             ? 'The wizard was completed before; running it again re-applies the settings below.'
             : 'This router has not been set up yet.';
         const f = document.getElementById('setup-form').elements;
+        // features this build does not have are not offered
+        const feats = d.features || {};
+        for (const el of document.querySelectorAll('#setup-form [data-feature]')) {
+            if (feats[el.dataset.feature] === false) { el.hidden = true; if (el.tagName === 'OPTION') el.disabled = true; }
+        }
+        if (feats.dhcp === false) f['dhcp'].checked = false;
         for (const sel of [f['wan_interface'], f['lan_interface']]) {
             sel.textContent = '';
             for (const i of d.interfaces) {
@@ -79,15 +134,30 @@
             if (s.dhcp_start) { f['dhcp_start'].value = s.dhcp_start; f['dhcp_end'].value = s.dhcp_end; }
             f['lan_ipv4'].dataset.touched = '1';
         }
+        // time zones the browser knows (no list baked into the page); the browser's own zone as the suggestion
+        const tzl = document.getElementById('tz-list');
+        if (!tzl.childElementCount && Intl.supportedValuesOf) {
+            for (const z of Intl.supportedValuesOf('timeZone')) { const o = document.createElement('option'); o.value = z; tzl.appendChild(o); }
+        }
+        if (!f['timezone'].value) f['timezone'].placeholder = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+        showModes();
     }
     async function runSetup(ev) {
         ev.preventDefault();
         const f = ev.target.elements;
-        const body = {wan_interface: f['wan_interface'].value, wan_mode: f['wan_mode'].value,
-            wan_ipv4: f['wan_ipv4'].value || null, wan_gateway: f['wan_gateway'].value || null,
+        const v = n => (f[n].value || '').trim() || null;
+        const body = {hostname: v('hostname'), domain: v('domain'), timezone: v('timezone'), ntp_servers: v('ntp_servers'),
+            wan_interface: f['wan_interface'].value, wan_mode: f['wan_mode'].value,
+            wan_ipv4: v('wan_ipv4'), wan_gateway: v('wan_gateway'),
+            pppoe_username: v('pppoe_username'), pppoe_service_name: v('pppoe_service_name'),
+            pppoe_mtu: f['pppoe_mtu'].value ? parseInt(f['pppoe_mtu'].value, 10) : null,
+            wan_ipv6_mode: f['wan_ipv6_mode'].value, wan_ipv6: v('wan_ipv6'), wan_gateway6: v('wan_gateway6'),
+            wan_pd_len: f['lan_ipv6_mode'].value === 'track' && f['wan_pd_len'].value ? parseInt(f['wan_pd_len'].value, 10) : null,
             lan_interface: f['lan_interface'].value, lan_ipv4: f['lan_ipv4'].value,
+            lan_ipv6_mode: f['lan_ipv6_mode'].value, lan_ipv6: v('lan_ipv6'),
             dhcp: f['dhcp'].checked, dhcp_start: f['dhcp_start'].value, dhcp_end: f['dhcp_end'].value,
-            dns_servers: f['dns_servers'].value || null, force: f['force'].checked};
+            dns_servers: v('dns_servers'), force: f['force'].checked};
+        body['pppoe_' + 'password'] = f['pppoe_' + 'password'].value || null;
         const out = document.getElementById('setup-result');
         let r;
         try {
