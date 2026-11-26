@@ -330,6 +330,7 @@ impl FirewallApplier {
         // sets the rules' state limits need are collected here and spliced
         // in right after the group sets (before the first rule)
         let sets_pos = script.len();
+        let caps = nftables::kernel_caps();
         let mut rule_sets: BTreeMap<String, String> = BTreeMap::new();
         let mut limit_rules: BTreeMap<String, String> = BTreeMap::new();
         // WAN source guard (block private / bogon sources), ahead of every rule
@@ -424,6 +425,12 @@ impl FirewallApplier {
                         "{label}: its schedule {sname:?} does not exist; enforcing it always"
                     )),
                 }
+            }
+            if let Some(what) = caps.missing_for(&rule.ext) {
+                report.warn(format!(
+                    "{label} skipped: this device's kernel has no {what}, which its limits need"
+                ));
+                continue;
             }
             let variants = match rule_variants(&rule, &roles, &groups, &limiter_map) {
                 Ok(v) => v,
@@ -2166,6 +2173,137 @@ mod tests {
             .unwrap();
         let out = FirewallApplier.render(&s).await.unwrap();
         assert!(!out.contains("masquerade"), "{out}");
+    }
+
+    fn float_rule(name: &str, quick: bool) -> FirewallRule {
+        let mut r = FirewallRule::new(name.into(), ChainType::Forward, FirewallAction::Drop);
+        r.protocol = Some(Protocol::Tcp);
+        r.dport = Some(PortSpec::Single(9000));
+        r.ext.floating = true;
+        r.ext.quick = quick;
+        r.ext.interfaces = vec!["eth1".into(), "eth2".into()];
+        r
+    }
+
+    #[tokio::test]
+    async fn floating_rules_render_on_every_listed_interface_and_order_by_quick() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        let mut quick = float_rule("quick-block", true);
+        quick.ext.direction = patronus_core::types::RuleDirection::Any;
+        s.save_firewall_rule(&quick).await.unwrap();
+        let slow = float_rule("slow-block", false);
+        s.save_firewall_rule(&slow).await.unwrap();
+        let mut iface = FirewallRule::new("lan-pass".into(), ChainType::Forward, FirewallAction::Accept);
+        iface.interface_in = Some("@lan".into());
+        s.save_firewall_rule(&iface).await.unwrap();
+        let out = FirewallApplier.render_script(&s, false).await.unwrap();
+        let script = out.script;
+        // both interfaces in one set match, in and out
+        assert!(
+            script.contains("add rule inet patronus forward iifname { \"eth1\", \"eth2\" } tcp dport 9000 drop comment \"quick-block\""),
+            "{script}"
+        );
+        assert!(
+            script.contains("add rule inet patronus forward oifname { \"eth1\", \"eth2\" } tcp dport 9000 drop comment \"quick-block\""),
+            "{script}"
+        );
+        assert!(script.contains("add rule inet patronus input iifname { \"eth1\", \"eth2\" } tcp dport 9000 drop"), "{script}");
+        assert!(script.contains("add rule inet patronus output oifname { \"eth1\", \"eth2\" } tcp dport 9000 drop"), "{script}");
+        let at = |needle: &str| script.find(needle).unwrap_or_else(|| panic!("missing {needle}: {script}"));
+        let q = at("comment \"quick-block\"");
+        let l = at("comment \"lan-pass\"");
+        let n = at("comment \"slow-block\"");
+        assert!(q < l, "quick floating rules come before interface rules: {script}");
+        assert!(l < n, "non-quick floating rules come after interface rules: {script}");
+        // the anti-lockout system rule is still first of all
+        assert!(at("Anti-lockout") < q, "{script}");
+    }
+
+    #[tokio::test]
+    async fn interface_groups_are_sets_that_follow_membership_and_roles() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        crate::floating::save_group(
+            &s,
+            &crate::floating::IfGroup {
+                name: "trusted".into(),
+                members: vec!["@lan".into(), "wg0".into()],
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let mut r = FirewallRule::new("grp".into(), ChainType::Forward, FirewallAction::Drop);
+        r.interface_in = Some("group:trusted".into());
+        r.protocol = Some(Protocol::Tcp);
+        r.dport = Some(PortSpec::Single(22));
+        s.save_firewall_rule(&r).await.unwrap();
+        let mut f = float_rule("fg", true);
+        f.ext.interfaces = vec!["group:trusted".into(), "eth5".into()];
+        s.save_firewall_rule(&f).await.unwrap();
+        let script = FirewallApplier.render_script(&s, false).await.unwrap().script;
+        assert!(script.contains("add set inet patronus ifgrp_trusted { type ifname;"), "{script}");
+        assert!(script.contains("add element inet patronus ifgrp_trusted { \"eth1\", \"wg0\" }"), "{script}");
+        assert!(script.contains("forward iifname @ifgrp_trusted tcp dport 22 drop"), "{script}");
+        // floating rule: one line for the plain device, one for the group
+        assert!(script.contains("forward iifname \"eth5\" tcp dport 9000 drop"), "{script}");
+        assert!(script.contains("forward iifname @ifgrp_trusted tcp dport 9000 drop"), "{script}");
+        // a group that does not exist: the pass rule is skipped with a warning
+        let mut bad = FirewallRule::new("bad".into(), ChainType::Forward, FirewallAction::Accept);
+        bad.interface_in = Some("group:nope".into());
+        s.save_firewall_rule(&bad).await.unwrap();
+        let out = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(out.report.warnings.iter().any(|w| w.contains("bad") && w.contains("nope")), "{:?}", out.report.warnings);
+        assert!(!out.script.contains("comment \"bad\""));
+        // lockdown carries no group, no floating rule
+        let lock = FirewallApplier.render_script(&s, true).await.unwrap().script;
+        assert!(!lock.contains("ifgrp_") && !lock.contains("tcp dport 9000"), "{lock}");
+    }
+
+    #[tokio::test]
+    async fn state_limits_and_limiters_add_sets_and_a_limiter_chain_before_the_rules() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        crate::floating::save_limiter(
+            &s,
+            &crate::floating::Limiter {
+                name: "cap".into(),
+                rate_kbit: 4000,
+                burst_kb: 128,
+                per_source: true,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let mut r = FirewallRule::new("limited".into(), ChainType::Forward, FirewallAction::Accept);
+        r.interface_in = Some("@lan".into());
+        r.protocol = Some(Protocol::Tcp);
+        r.dport = Some(PortSpec::Single(80));
+        r.ip_version = Some(patronus_core::types::IpVersion::V4);
+        r.ext.max_src_conn = Some(10);
+        r.ext.max_src_rate = Some(30);
+        r.ext.max_src_rate_secs = Some(10);
+        r.ext.overload = Some("flooders".into());
+        r.ext.limiter = Some("cap".into());
+        let id = s.save_firewall_rule(&r).await.unwrap();
+        let script = FirewallApplier.render_script(&s, false).await.unwrap().script;
+        for want in [
+            format!("add set inet patronus sc{id}_v4 {{ type ipv4_addr;"),
+            format!("add set inet patronus sr{id}_v4 {{ type ipv4_addr;"),
+            "add set inet patronus ov_flooders_v4 { type ipv4_addr;".to_string(),
+            format!("add set inet patronus lm{id}_v4 {{ type ipv4_addr;"),
+            "add chain inet patronus lim_forward { type filter hook forward priority -10; policy accept; }".to_string(),
+            "add rule inet patronus lim_forward".to_string(),
+        ] {
+            assert!(script.contains(&want), "{want}\n{script}");
+        }
+        // sets and chains are defined before the first rule that uses them
+        let first_rule = script.find("add rule inet patronus").unwrap();
+        assert!(script.find("ov_flooders_v4 { type").unwrap() < first_rule, "{script}");
+        // a rule naming a limiter that no longer exists is skipped (pass) with a warning
+        crate::floating::delete_limiter(&s, "cap").await.unwrap();
+        let out = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(out.report.warnings.iter().any(|w| w.contains("limited") && w.contains("limiter")), "{:?}", out.report.warnings);
+        assert!(!out.script.contains("comment \"limited\""), "{}", out.script);
     }
 
     #[tokio::test]

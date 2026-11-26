@@ -55,6 +55,7 @@
         <button class="tab-btn" data-tab="tab-onetoone">1:1 NAT</button>
         <button class="tab-btn" data-tab="tab-npt">NPTv6</button>
         <button class="tab-btn" data-tab="tab-aliases">Aliases</button>
+        <button class="tab-btn" data-tab="tab-groups">Groups &amp; limiters</button>
         <button class="tab-btn" data-tab="tab-schedules">Schedules</button>
         <button class="tab-btn" data-tab="tab-geoip">GeoIP</button>
         <button class="tab-btn" data-tab="tab-threat">Threat Intel</button>
@@ -80,7 +81,7 @@
             <thead><tr>
                 <th>#</th><th>Name</th><th>Chain</th><th>Interface</th><th>Action</th><th>Proto</th>
                 <th>Source</th><th>Destination</th><th>Port</th><th>IP</th><th>Log</th>
-                <th>Schedule</th><th>On</th><th>Order / Edit</th>
+                <th>Schedule</th><th>Options</th><th>On</th><th>Order / Edit</th>
             </tr></thead>
             <tbody>
             {% for rule in filter_rules %}
@@ -97,6 +98,7 @@
                 <td>{{ rule.ip_version }}</td>
                 <td>{% if rule.log %}yes{% endif %}</td>
                 <td>{{ rule.schedule }}{% if !rule.gateway.is_empty() %}<br><span class="badge info" title="Policy routing: matching traffic leaves through this gateway">via {{ rule.gateway }}</span>{% endif %}</td>
+                <td>{% if !rule.ext_summary.is_empty() %}<span class="rule-ext">{{ rule.ext_summary }}</span>{% endif %}{% if let Some(c) = rule.ext.category %} <span class="badge info" title="Category">{{ c }}</span>{% endif %}</td>
                 <td>{% if rule.enabled %}<span class="badge success">On</span>{% else %}<span class="badge danger">Off</span>{% endif %}</td>
                 <td>
                     {% if rule.origin != "system" %}
@@ -117,6 +119,29 @@
             <fieldset>
                 <legend id="rule-form-title">Add rule</legend>
                 <input type="hidden" name="id">
+                <div class="row">
+                    <label title="An interface rule matches traffic on one interface (or interface group). A floating rule names several interfaces and a direction.">Scope
+                        <select name="scope" onchange="scopeChanged()">
+                            <option value="interface">Interface rule (one interface or group)</option>
+                            <option value="floating">Floating rule (several interfaces, either direction)</option>
+                        </select></label>
+                </div>
+                <div class="row" id="rule-floating" style="display:none">
+                    <label>Direction
+                        <select name="direction">
+                            <option value="in">in: arriving on these interfaces</option>
+                            <option value="out">out: leaving through these interfaces</option>
+                            <option value="any">any: either way</option>
+                        </select></label>
+                    <label>Interfaces (none selected = every interface)
+                        <select name="interfaces" multiple size="5">
+                            {% for i in interfaces %}{% if i.value != "any" %}<option value="{{ i.value }}">{{ i.label }}</option>{% endif %}{% endfor %}
+                        </select></label>
+                    <label class="check"><input type="checkbox" name="quick" checked> Quick</label>
+                    <p class="hint" id="quick-hint">Quick: evaluated before the interface rules, the first match wins.
+                        Not quick: evaluated after the interface rules, so an interface rule that matches takes precedence.
+                        Floating rules are placed by this setting, not by their position in the list.</p>
+                </div>
                 <div class="row">
                     <label>Name <input name="name" required maxlength="64"></label>
                     <label>Action
@@ -166,6 +191,26 @@
                             {% for g in gateways %}<option value="{{ g }}">{{ g }}</option>{% endfor %}
                         </select></label>
                 </div>
+                <details id="rule-limits">
+                    <summary>State limits, limiter and category (pass rules)</summary>
+                    <p class="hint">Limits apply to pass rules only. Connections over a limit are dropped. A source that exceeds
+                        the new-connection rate is added to the overload table, which then blocks it on this rule's interfaces
+                        until the table's timeout ends or you release it on the Groups &amp; limiters tab.</p>
+                    <p class="hint" id="caps-note"></p>
+                    <div class="row">
+                        <label title="Most connections this rule may have open, all sources together">Max states <input name="max_states" type="number" min="1" placeholder="no limit"></label>
+                        <label title="Most simultaneous connections from one source address">Max connections per source <input name="max_src_conn" type="number" min="1" placeholder="no limit"></label>
+                        <label title="New connections one source may open ...">Max new connections per source <input name="max_src_rate" type="number" min="1" placeholder="no limit"></label>
+                        <label title="... within this many seconds">per (seconds) <input name="max_src_rate_secs" type="number" min="1" placeholder="10"></label>
+                        <label title="Table that collects the offending sources; letters, digits and _">Overload table <input name="overload" maxlength="31" placeholder="none" pattern="[A-Za-z][A-Za-z0-9_]*"></label>
+                        <label title="How long a source stays in the overload table">Overload timeout (seconds) <input name="overload_secs" type="number" min="1" placeholder="3600"></label>
+                    </div>
+                    <div class="row">
+                        <label title="A rate cap from the Groups &amp; limiters tab">Limiter
+                            <select name="limiter"><option value="">none</option></select></label>
+                        <label>Category <input name="category" maxlength="40" list="category-list" placeholder="e.g. guests"></label>
+                    </div>
+                </details>
                 <div class="row">
                     <label>Description <input name="description" maxlength="120" size="40"></label>
                     <label class="check"><input type="checkbox" name="log"> Log matches</label>
@@ -402,10 +447,58 @@
                 <button type="button" class="btn btn-secondary" onclick="resetForm('alias-form', 'Add alias')">Clear</button>
             </fieldset>
         </form>
+        <datalist id="category-list"></datalist>
         <datalist id="host-alias-list">{% for a in host_aliases %}<option value="${{ a.name }}"></option>{% endfor %}</datalist>
         <datalist id="port-alias-list">{% for a in port_aliases %}<option value="${{ a.name }}"></option>{% endfor %}</datalist>
     </div>
 
+    <!-- ===================== GROUPS, LIMITERS, OVERLOAD ===================== -->
+    <div class="tab" id="tab-groups">
+        <p class="hint">An <b>interface group</b> is a named list of interfaces. Choose it as the interface of a rule
+            (<code>group:name</code>) or inside a floating rule; adding an interface to the group changes what the rule
+            matches without editing the rule. A <b>limiter</b> caps the data rate of the traffic a rule matches, for each
+            source address or for all of it together; assign it in the rule's options.</p>
+        <h3>Interface groups</h3>
+        <table id="groups-table"><thead><tr><th>Name</th><th>Members</th><th>Used by rules</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody><tr><td colspan="5" class="hint">loading...</td></tr></tbody></table>
+        <form id="group-form" onsubmit="return saveGroup(event)">
+            <fieldset><legend id="group-form-title">Add interface group</legend>
+                <div class="row">
+                    <label>Name <input name="name" required maxlength="31" pattern="[A-Za-z][A-Za-z0-9_]*" title="a letter, then letters, digits or _"></label>
+                    <label>Members (device names or @roles, comma separated) <input name="members" size="40" list="group-member-list" placeholder="eth1, @lan, wg0"></label>
+                    <label>Description <input name="description" maxlength="80"></label>
+                </div>
+                <datalist id="group-member-list">{% for i in interfaces %}{% if i.value != "any" %}<option value="{{ i.value }}">{{ i.label }}</option>{% endif %}{% endfor %}</datalist>
+                <button type="submit" class="btn btn-primary">Save group</button>
+                <button type="button" class="btn btn-secondary" onclick="resetForm('group-form', 'Add interface group'); this.form.elements['name'].readOnly = false">Clear</button>
+            </fieldset>
+        </form>
+        <h3>Limiters</h3>
+        <table id="limiters-table"><thead><tr><th>Name</th><th>Rate (kbit/s)</th><th>Burst (kB)</th><th>Applies</th><th>Used by rules</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody><tr><td colspan="6" class="hint">loading...</td></tr></tbody></table>
+        <form id="limiter-form" onsubmit="return saveLimiter(event)">
+            <fieldset><legend id="limiter-form-title">Add limiter</legend>
+                <div class="row">
+                    <label>Name <input name="name" required maxlength="31" pattern="[A-Za-z][A-Za-z0-9_]*"></label>
+                    <label>Rate (kbit/s) <input name="rate_kbit" type="number" min="1" required></label>
+                    <label title="Bucket depth; at least 70 so a full-size packet burst fits">Burst (kB) <input name="burst_kb" type="number" min="70" value="128"></label>
+                    <label>Applies
+                        <select name="per_source">
+                            <option value="1">to each source address on its own</option>
+                            <option value="0">to all matching traffic together</option>
+                        </select></label>
+                    <label>Description <input name="description" maxlength="80"></label>
+                </div>
+                <button type="submit" class="btn btn-primary">Save limiter</button>
+                <button type="button" class="btn btn-secondary" onclick="resetForm('limiter-form', 'Add limiter'); this.form.elements['name'].readOnly = false">Clear</button>
+            </fieldset>
+        </form>
+        <h3>Overload tables</h3>
+        <p class="hint">Sources that exceeded a rule's new-connection rate. Release one, or all of a table, to let them through again.</p>
+        <table id="overload-table"><thead><tr><th>Table</th><th>Fed by rules</th><th>Blocked sources</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody><tr><td colspan="4" class="hint">loading...</td></tr></tbody></table>
+        <h3>Categories</h3>
+        <p class="hint" id="categories-summary">loading...</p>
+    </div>
+
+    <!-- ============================ SCHEDULES ============================ -->
     <!-- ========================== SCHEDULES ========================== -->
     <div class="tab" id="tab-schedules">
         <p class="hint">A rule with a schedule is enforced only during the schedule's window (local
@@ -560,6 +653,11 @@
         </form>
         <p class="hint">Summary counts are for the currently displayed matching log lines, not all traffic.</p>
         <div id="log-summary" aria-live="polite"></div>
+        <div class="row" id="log-tops">
+            <table id="log-top-src" style="display:none"><caption>Busiest sources</caption><thead><tr><th>Source</th><th>Lines</th><th>Blocked</th><th>Passed</th><th><span class="sr-only">Action</span></th></tr></thead><tbody></tbody></table>
+            <table id="log-top-port" style="display:none"><caption>Busiest destination ports</caption><thead><tr><th>Port</th><th>Lines</th><th>Blocked</th><th>Passed</th><th></th></tr></thead><tbody></tbody></table>
+            <table id="log-top-rule" style="display:none"><caption>Rules that matched most</caption><thead><tr><th>Rule</th><th>Lines</th><th>Blocked</th><th>Passed</th><th></th></tr></thead><tbody></tbody></table>
+        </div>
         <table id="log-table"><thead><tr><th>Time</th><th>Rule</th><th>Action</th><th>Chain</th><th>In</th><th>Out</th><th>Proto</th><th>Source</th><th>Destination</th><th>Len</th><th>Actions</th></tr></thead><tbody></tbody></table>
         <p id="log-empty" class="empty" style="display:none">No log lines match.</p>
     </div>
@@ -646,7 +744,7 @@ function resetForm(id, title) {
     f.querySelectorAll('input[type=hidden]').forEach(i => i.value = '');
     f.querySelectorAll('input[name=name]').forEach(i => i.readOnly = false);
     if (title) { const l = f.querySelector('legend'); if (l) l.textContent = title; }
-    if (id === 'rule-form') chainChanged();
+    if (id === 'rule-form') { chainChanged(); scopeChanged(); }
 }
 
 function del(path, what) {
@@ -663,9 +761,19 @@ function delNamed(prefix, btn, what) {
 // ---- rules ----
 function chainChanged() {
     const f = document.getElementById('rule-form');
-    document.getElementById('rule-iface-out').style.display = f.elements['chain'].value === 'forward' ? '' : 'none';
+    document.getElementById('rule-iface-out').style.display = (f.elements['scope'].value !== 'floating' && f.elements['chain'].value === 'forward') ? '' : 'none';
 }
 chainChanged();
+
+function scopeChanged() {
+    const f = document.getElementById('rule-form');
+    const floating = f.elements['scope'].value === 'floating';
+    document.getElementById('rule-floating').style.display = floating ? '' : 'none';
+    // a floating rule is not tied to one interface or chain
+    ['interface', 'chain'].forEach(n => { f.elements[n].disabled = floating; });
+    document.getElementById('rule-iface-out').style.display = (!floating && f.elements['chain'].value === 'forward') ? '' : 'none';
+}
+function numOrNull(v) { v = String(v).trim(); return v === '' ? null : parseInt(v, 10); }
 
 function moveRule(id, direction) { run(api('POST', '/firewall/rules/' + id + '/move', { direction })); }
 
@@ -680,7 +788,18 @@ async function editRule(id) {
         f.elements['gateway'].value = r.gateway || '';
         f.elements['description'].value = r.description; f.elements['log'].checked = r.log; f.elements['enabled'].checked = r.enabled;
         f.elements['before'].value = '';
+        const x = r.ext || {};
+        f.elements['scope'].value = x.floating ? 'floating' : 'interface';
+        f.elements['direction'].value = x.direction || 'in';
+        f.elements['quick'].checked = x.quick !== false;
+        Array.from(f.elements['interfaces'].options).forEach(o => { o.selected = (x.interfaces || []).includes(o.value); });
+        ['max_states', 'max_src_conn', 'max_src_rate', 'max_src_rate_secs', 'overload_secs'].forEach(k => { f.elements[k].value = x[k] || ''; });
+        f.elements['overload'].value = x.overload || '';
+        f.elements['limiter'].value = x.limiter || '';
+        f.elements['category'].value = x.category || '';
+        document.getElementById('rule-limits').open = !!(x.max_states || x.max_src_conn || x.max_src_rate || x.limiter || x.category);
         document.getElementById('rule-form-title').textContent = 'Edit rule #' + r.id;
+        scopeChanged();
         chainChanged();
         showTab('tab-rules'); f.scrollIntoView();
     } catch (e) { flash(e.message, false); }
@@ -690,15 +809,28 @@ function saveRule(ev) {
     ev.preventDefault();
     const f = ev.target;
     const body = {
-        name: f.elements['name'].value, action: f.elements['action'].value, chain: f.elements['chain'].value,
-        interface: f.elements['interface'].value,
+        name: f.elements['name'].value, action: f.elements['action'].value, chain: f.elements['chain'].value || 'forward',
+        interface: f.elements['interface'].value || 'any',
         interface_out: f.elements['chain'].value === 'forward' ? f.elements['interface_out'].value : null,
         ip_version: f.elements['ip_version'].value, protocol: f.elements['protocol'].value,
         source: f.elements['source'].value, destination: f.elements['destination'].value, port: f.elements['port'].value,
         schedule: f.elements['schedule'].value || null, description: f.elements['description'].value,
         gateway: f.elements['gateway'].value || null,
         log: f.elements['log'].checked, enabled: f.elements['enabled'].checked,
+        floating: f.elements['scope'].value === 'floating',
+        quick: f.elements['quick'].checked,
+        direction: f.elements['direction'].value,
+        interfaces: Array.from(f.elements['interfaces'].selectedOptions).map(o => o.value),
+        max_states: numOrNull(f.elements['max_states'].value),
+        max_src_conn: numOrNull(f.elements['max_src_conn'].value),
+        max_src_rate: numOrNull(f.elements['max_src_rate'].value),
+        max_src_rate_secs: numOrNull(f.elements['max_src_rate_secs'].value),
+        overload: f.elements['overload'].value.trim() || null,
+        overload_secs: numOrNull(f.elements['overload_secs'].value),
+        limiter: f.elements['limiter'].value || null,
+        category: f.elements['category'].value.trim() || null,
     };
+    if (body.floating) { body.chain = 'forward'; body.interface = 'any'; body.interface_out = null; }
     if (f.elements['id'].value) return run(api('PUT', '/firewall/rules/' + f.elements['id'].value, body));
     if (f.elements['before'].value) body.before = parseInt(f.elements['before'].value, 10);
     return run(api('POST', '/firewall/rules', body));
@@ -915,6 +1047,117 @@ function saveCustomFeed(ev) {
         refresh_secs: Math.round(parseFloat(f.elements['refresh_hours'].value || '24') * 3600), max_entries: parseInt(f.elements['max_entries'].value || '100000', 10) }));
 }
 
+// ---- interface groups, limiters, overload tables, categories ----
+async function loadGroups() {
+    try {
+        const [groups, limiters, overload, cats, rules] = await Promise.all([
+            api('GET', '/firewall/interface-groups'), api('GET', '/firewall/limiters'),
+            api('GET', '/firewall/overload'), api('GET', '/firewall/categories'), api('GET', '/firewall/rules')]);
+        const users = (pred) => rules.filter(pred).map(r => '#' + r.id).join(', ');
+        const fill = (id, rows, cols) => {
+            const tb = document.querySelector('#' + id + ' tbody'); tb.innerHTML = '';
+            if (!rows.length) { const td = tb.insertRow().insertCell(); td.colSpan = cols; td.className = 'empty'; td.textContent = 'None yet.'; return null; }
+            return tb;
+        };
+        const gtb = fill('groups-table', groups, 5);
+        if (gtb) groups.forEach(g => {
+            const tr = gtb.insertRow(); tr.dataset.group = g.name;
+            tr.insertCell().textContent = g.name; tr.insertCell().textContent = g.members.join(', ') || '(empty)';
+            tr.insertCell().textContent = users(r => (r.ext.interfaces || []).includes('group:' + g.name) || r.interface === 'group:' + g.name || r.interface_out === 'group:' + g.name) || '-';
+            tr.insertCell().textContent = g.description || '';
+            const a = tr.insertCell();
+            a.appendChild(rowButton('Edit', 'btn btn-primary btn-sm', () => editGroup(g)));
+            a.appendChild(rowButton('Delete', 'btn btn-danger btn-sm', () => del('/firewall/interface-groups/' + encodeURIComponent(g.name), 'interface group')));
+        });
+        const ltb = fill('limiters-table', limiters, 6);
+        if (ltb) limiters.forEach(l => {
+            const tr = ltb.insertRow(); tr.dataset.limiter = l.name;
+            tr.insertCell().textContent = l.name; tr.insertCell().textContent = l.rate_kbit; tr.insertCell().textContent = l.burst_kb;
+            tr.insertCell().textContent = l.per_source ? 'each source on its own' : 'all matching traffic together';
+            tr.insertCell().textContent = users(r => r.ext.limiter === l.name) || '-';
+            const a = tr.insertCell();
+            a.appendChild(rowButton('Edit', 'btn btn-primary btn-sm', () => editLimiter(l)));
+            a.appendChild(rowButton('Delete', 'btn btn-danger btn-sm', () => del('/firewall/limiters/' + encodeURIComponent(l.name), 'limiter')));
+        });
+        const otb = fill('overload-table', overload, 4);
+        if (otb) overload.forEach(t => {
+            const tr = otb.insertRow(); tr.dataset.overload = t.name;
+            tr.insertCell().textContent = t.name; tr.insertCell().textContent = t.rules.map(i => '#' + i).join(', ');
+            const src = tr.insertCell();
+            if (!t.entries.length) src.textContent = 'none blocked now';
+            t.entries.forEach(e => {
+                const b = rowButton('Release ' + e.address + (e.expires_secs ? ' (' + e.expires_secs + ' s left)' : ''), 'btn btn-secondary btn-sm',
+                    () => run(api('DELETE', '/firewall/overload/' + encodeURIComponent(t.name) + '/' + encodeURIComponent(e.address))));
+                src.appendChild(b);
+            });
+            const a = tr.insertCell();
+            a.appendChild(rowButton('Release all', 'btn btn-danger btn-sm', () => run(api('DELETE', '/firewall/overload/' + encodeURIComponent(t.name)))));
+        });
+        document.getElementById('categories-summary').textContent = cats.length
+            ? cats.map(c => c.name + ' (' + c.rules + ' rule' + (c.rules === 1 ? '' : 's') + ')').join(', ')
+            : 'No rule has a category yet. Set one in a rule\'s options to group rules.';
+        const dl = document.getElementById('category-list'); dl.innerHTML = '';
+        cats.forEach(c => { const o = document.createElement('option'); o.value = c.name; dl.appendChild(o); });
+        const lsel = document.getElementById('rule-form').elements['limiter'], cur = lsel.value;
+        while (lsel.options.length > 1) lsel.remove(1);
+        limiters.forEach(l => { const o = document.createElement('option'); o.value = l.name; o.textContent = l.name + ' (' + l.rate_kbit + ' kbit/s)'; lsel.appendChild(o); });
+        lsel.value = cur;
+        const isel = document.getElementById('rule-form').elements['interfaces'];
+        Array.from(isel.options).filter(o => o.value.startsWith('group:')).forEach(o => o.remove());
+        groups.forEach(g => { const o = document.createElement('option'); o.value = 'group:' + g.name; o.textContent = 'group ' + g.name; isel.appendChild(o); });
+        const ssel = document.getElementById('rule-form').elements['interface'];
+        Array.from(ssel.options).filter(o => o.value.startsWith('group:')).forEach(o => o.remove());
+        groups.forEach(g => { const o = document.createElement('option'); o.value = 'group:' + g.name; o.textContent = 'group ' + g.name; ssel.appendChild(o); });
+    } catch (e) { flash(e.message, false); }
+}
+async function loadCaps() {
+    try {
+        const c = await api('GET', '/firewall/capabilities'), f = document.getElementById('rule-form');
+        const off = (names, why) => names.forEach(n => {
+            const el = f.elements[n]; el.disabled = true; el.title = why;
+            el.closest('label').title = why;
+        });
+        if (!c.connlimit) off(['max_states', 'max_src_conn'], 'This device\'s kernel has no connection counting (nft_connlimit).');
+        if (!c.limit || !c.dynset) off(['max_src_rate', 'max_src_rate_secs', 'overload', 'overload_secs', 'limiter'], 'This device\'s kernel has no rate limiting (nft_limit / dynamic sets).');
+        const missing = [!c.connlimit && 'connection counting', (!c.limit || !c.dynset) && 'rate limiting'].filter(Boolean);
+        if (missing.length) document.getElementById('caps-note').textContent = 'Not available on this device: ' + missing.join(', ') + ' (its kernel does not include it).';
+    } catch (e) { }
+}
+function rowButton(label, cls, fn) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = cls; b.textContent = label;
+    b.addEventListener('click', fn); return b;
+}
+function editGroup(g) {
+    const f = document.getElementById('group-form');
+    f.elements['name'].value = g.name; f.elements['name'].readOnly = true;
+    f.elements['members'].value = g.members.join(', '); f.elements['description'].value = g.description || '';
+    document.getElementById('group-form-title').textContent = 'Edit interface group ' + g.name; f.scrollIntoView();
+}
+function saveGroup(ev) {
+    ev.preventDefault(); const f = ev.target;
+    const members = f.elements['members'].value.split(',').map(x => x.trim()).filter(Boolean);
+    const body = { members, description: f.elements['description'].value.trim() || null };
+    const name = f.elements['name'].value.trim();
+    if (f.elements['name'].readOnly) return run(api('PUT', '/firewall/interface-groups/' + encodeURIComponent(name), body));
+    return run(api('POST', '/firewall/interface-groups', Object.assign({ name }, body)));
+}
+function editLimiter(l) {
+    const f = document.getElementById('limiter-form');
+    f.elements['name'].value = l.name; f.elements['name'].readOnly = true; f.elements['rate_kbit'].value = l.rate_kbit;
+    f.elements['burst_kb'].value = l.burst_kb; f.elements['per_source'].value = l.per_source ? '1' : '0';
+    f.elements['description'].value = l.description || '';
+    document.getElementById('limiter-form-title').textContent = 'Edit limiter ' + l.name; f.scrollIntoView();
+}
+function saveLimiter(ev) {
+    ev.preventDefault(); const f = ev.target;
+    return run(api('PUT', '/firewall/limiters/' + encodeURIComponent(f.elements['name'].value.trim()), {
+        name: f.elements['name'].value.trim(), rate_kbit: parseInt(f.elements['rate_kbit'].value, 10),
+        burst_kb: parseInt(f.elements['burst_kb'].value, 10) || 128, per_source: f.elements['per_source'].value === '1',
+        description: f.elements['description'].value.trim() || null }));
+}
+loadGroups();
+loadCaps();
+
 // ---- log viewer ----
 let logLast = 0, logTimer = null;
 function logQuery(extra) {
@@ -925,7 +1168,7 @@ function logQuery(extra) {
     return p.toString();
 }
 function logRow(e) {
-    const tr = document.createElement('tr'); tr.dataset.id = e.id; tr.dataset.action = e.action || 'unknown';
+    const tr = document.createElement('tr'); tr.dataset.id = e.id; tr.dataset.action = e.action || 'unknown'; tr._entry = e;
     const ep = (a, p) => a + (p ? ':' + p : '');
     [new Date(e.ts * 1000).toLocaleString(), e.rule, e.action, e.chain, e.iface_in, e.iface_out, e.proto, ep(e.src, e.sport), ep(e.dst, e.dport), e.length || ''].forEach(v => tr.insertCell().textContent = v);
     const actions = tr.insertCell();
@@ -937,9 +1180,37 @@ function logRow(e) {
     return tr;
 }
 function summarizeLog() {
+    const rows = Array.from(document.querySelectorAll('#log-table tbody tr'));
     const counts = new Map();
-    document.querySelectorAll('#log-table tbody tr').forEach(row => counts.set(row.dataset.action, (counts.get(row.dataset.action) || 0) + 1));
-    document.getElementById('log-summary').textContent = Array.from(counts, ([action, count]) => action + ': ' + count).join(' · ');
+    rows.forEach(row => counts.set(row.dataset.action, (counts.get(row.dataset.action) || 0) + 1));
+    document.getElementById('log-summary').textContent = Array.from(counts, ([action, count]) => action + ': ' + count).join(' \u00b7 ');
+    // summary view: busiest sources, destination ports and rules of the displayed lines
+    const tally = (keyFn) => {
+        const m = new Map();
+        rows.forEach(r => {
+            const e = r._entry; const k = keyFn(e); if (!k) return;
+            const t = m.get(k) || { n: 0, blocked: 0, passed: 0, sample: e };
+            t.n++; if (e.action === 'accept') t.passed++; else t.blocked++;
+            m.set(k, t);
+        });
+        return Array.from(m, ([k, t]) => Object.assign({ key: k }, t)).sort((a, b) => b.n - a.n).slice(0, 5);
+    };
+    const fillTop = (id, items, withAction) => {
+        const tb = document.querySelector('#' + id + ' tbody'); tb.innerHTML = '';
+        items.forEach(t => {
+            const tr = tb.insertRow();
+            tr.insertCell().textContent = t.key; tr.insertCell().textContent = t.n;
+            tr.insertCell().textContent = t.blocked; tr.insertCell().textContent = t.passed;
+            const a = tr.insertCell();
+            if (withAction) {
+                a.appendChild(rowButton('Block this source', 'btn btn-secondary btn-sm', () => ruleFromLog(t.sample, 'drop')));
+            }
+        });
+        document.getElementById(id).style.display = items.length ? '' : 'none';
+    };
+    fillTop('log-top-src', tally(e => e.src), true);
+    fillTop('log-top-port', tally(e => e.dport ? (e.proto || '').toLowerCase() + '/' + e.dport : ''), false);
+    fillTop('log-top-rule', tally(e => e.rule ? String(e.rule) : ''), false);
 }
 function ruleFromLog(e, action) {
     const f = document.getElementById('rule-form');
@@ -963,7 +1234,8 @@ function ruleFromLog(e, action) {
     const before = f.elements['before']; if (before.options.length > 1) before.selectedIndex = 1;
     document.getElementById('rule-form-title').textContent = 'Review rule from log';
     chainChanged(); showTab('tab-rules'); f.scrollIntoView();
-    flash('Review the proposed rule and its position, then save it. No rule has been added yet.', true);
+    flash('Review the proposed rule and its position, then save it. No rule has been added yet.' +
+        (action === 'accept' && e.sport ? ' This rule does not restrict the source port (' + e.sport + '): it passes that traffic from every source port.' : ''), true);
 }
 async function logSearch(ev) {
     if (ev) ev.preventDefault();
