@@ -91,6 +91,9 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 askama.workspace = true
 askama_axum.workspace = true
+# UI/API message catalogs (src/i18n.rs): Fluent, pure Rust, MIT/Apache-2.0
+fluent-bundle = "0.16"
+unic-langid = "0.9"
 
 # TLS for the dashboard (self-signed cert on first run; see src/tls.rs)
 axum-server = { version = "0.7" }

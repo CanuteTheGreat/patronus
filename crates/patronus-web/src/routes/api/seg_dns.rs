@@ -14,6 +14,9 @@
 //! - `GET    /api/segmentation/dns/status`
 //! - page `/segmentation/dns`
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use crate::state::AppState;
 use askama::Template;
 use axum::{

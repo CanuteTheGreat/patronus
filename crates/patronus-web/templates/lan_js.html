@@ -20,7 +20,7 @@
         if (!r.ok) {
             let msg = r.status + '';
             try { msg = (await r.json()).error || msg; } catch (_) {}
-            alert('Not applied: ' + msg);
+            alert(tr('js-not-applied') + ' ' + msg);
             return false;
         }
         location.reload();

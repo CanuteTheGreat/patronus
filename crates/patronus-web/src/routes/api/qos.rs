@@ -2,6 +2,9 @@
 //! One root qdisc per interface (CAKE, fq_codel or a rate limit), applied
 //! with `tc` through `patronus applyd` and re-applied at boot.
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use crate::state::AppState;
 #[cfg(feature = "qos")]
 use axum::response::{Html, IntoResponse};

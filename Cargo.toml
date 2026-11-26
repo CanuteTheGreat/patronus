@@ -4,6 +4,7 @@ members = [
     "crates/patronus-core",
     "crates/patronus-installer",
     "crates/patronus-web",
+    "crates/patronus-openapi",
     "crates/patronus-firewall",
     "crates/patronus-network",
     "crates/patronus-config",

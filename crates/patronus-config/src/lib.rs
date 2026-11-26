@@ -15,6 +15,7 @@ pub mod seg;
 pub mod seg_wifi;
 pub mod seg_wifi_chan;
 pub mod store;
+pub mod uilang;
 pub mod webui;
 
 pub use applier::{Applier, ApplierOutcome, ApplierRegistry, ApplyReport, ApplyRunReport, Phase};
