@@ -163,6 +163,112 @@ pub struct FirewallRule {
     /// route.
     #[serde(default)]
     pub gateway: Option<String>,
+    /// Floating-rule, state-limit, limiter and category options.
+    #[serde(default)]
+    pub ext: RuleExt,
+}
+
+/// Direction a floating rule matches its interfaces in.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleDirection {
+    /// Traffic arriving on the interfaces (`iifname`).
+    #[default]
+    In,
+    /// Traffic leaving through the interfaces (`oifname`).
+    Out,
+    /// Either (rendered once per direction).
+    Any,
+}
+
+impl std::fmt::Display for RuleDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            RuleDirection::In => "in",
+            RuleDirection::Out => "out",
+            RuleDirection::Any => "any",
+        })
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Options beyond the plain single-interface rule (pfSense/OPNsense parity:
+/// floating rules, state limits, limiters, categories). Stored as one JSON
+/// column; every field is optional so old rules load unchanged.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuleExt {
+    /// Floating rule: not tied to one interface; `interfaces` + `direction`
+    /// select what it matches.
+    #[serde(default)]
+    pub floating: bool,
+    /// Floating only. Quick = evaluated before the interface rules (first
+    /// match wins). Not quick = evaluated after them, so an interface rule
+    /// that matches takes precedence.
+    #[serde(default = "default_true")]
+    pub quick: bool,
+    #[serde(default)]
+    pub direction: RuleDirection,
+    /// Floating only: device names, `@role` tokens or `group:NAME`
+    /// references; empty = every interface.
+    #[serde(default)]
+    pub interfaces: Vec<String>,
+    /// Most connections this rule may have open (all sources together).
+    #[serde(default)]
+    pub max_states: Option<u32>,
+    /// Most simultaneous connections per source address.
+    #[serde(default)]
+    pub max_src_conn: Option<u32>,
+    /// New connections per source: `max_src_rate` per `max_src_rate_secs`.
+    #[serde(default)]
+    pub max_src_rate: Option<u32>,
+    #[serde(default)]
+    pub max_src_rate_secs: Option<u32>,
+    /// Sources exceeding `max_src_rate` land in this overload table and are
+    /// dropped for `overload_secs`.
+    #[serde(default)]
+    pub overload: Option<String>,
+    #[serde(default)]
+    pub overload_secs: Option<u32>,
+    /// Name of a limiter (rate cap) from the shaping/limiter list.
+    #[serde(default)]
+    pub limiter: Option<String>,
+    /// Free-form grouping label.
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
+impl Default for RuleExt {
+    fn default() -> Self {
+        Self {
+            floating: false,
+            quick: true,
+            direction: RuleDirection::In,
+            interfaces: Vec::new(),
+            max_states: None,
+            max_src_conn: None,
+            max_src_rate: None,
+            max_src_rate_secs: None,
+            overload: None,
+            overload_secs: None,
+            limiter: None,
+            category: None,
+        }
+    }
+}
+
+impl RuleExt {
+    /// Whether any per-source state option is set (needs per-family sets).
+    pub fn per_source(&self) -> bool {
+        self.max_src_conn.is_some() || self.max_src_rate.is_some() || self.limiter.is_some()
+    }
+
+    /// Nothing set: the rule is a plain one.
+    pub fn is_plain(&self) -> bool {
+        *self == RuleExt::default()
+    }
 }
 
 impl FirewallRule {
@@ -185,6 +291,7 @@ impl FirewallRule {
             schedule: None,
             ip_version: None,
             gateway: None,
+            ext: RuleExt::default(),
         }
     }
 }
