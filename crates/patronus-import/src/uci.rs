@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 
-#[path = "import_uci_ext.rs"]
+#[path = "uci_ext.rs"]
 mod ext;
 pub use ext::*;
 
@@ -239,7 +239,8 @@ pub fn load_dir(root: &Path) -> Result<Files> {
 }
 
 /// A scratch directory removed on drop.
-struct Scratch(PathBuf);
+/// A scratch directory removed on drop (the `--ssh` copy of a router's configuration).
+pub struct Scratch(pub PathBuf);
 
 impl Drop for Scratch {
     fn drop(&mut self) {
@@ -1739,56 +1740,6 @@ pub async fn apply(
 // ---------------------------------------------------------------------------
 // entry point
 // ---------------------------------------------------------------------------
-
-pub async fn run(
-    db: Option<PathBuf>,
-    input: Option<PathBuf>,
-    ssh: Option<String>,
-    dry_run: bool,
-    maps: Vec<String>,
-    ddns_disabled: bool,
-) -> Result<()> {
-    let maps = parse_maps(&maps)?;
-    // `--ssh root@router[:port]`: the configuration travels over ssh into a 0700 scratch dir, removed after
-    let scratch = ssh.as_ref().map(|_| {
-        let d = std::env::temp_dir().join(format!("patronus-import-ssh-{}", std::process::id()));
-        Scratch(d)
-    });
-    let input = match (&ssh, input) {
-        (Some(t), _) => {
-            let d = &scratch.as_ref().expect("scratch").0;
-            std::fs::create_dir_all(d)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700))?;
-            }
-            fetch_over_ssh(t, d)?
-        }
-        (None, Some(i)) => i,
-        (None, None) => bail!("give a tarball/directory or --ssh root@router[:port]"),
-    };
-    let (files, mut extras) = load_input_full(&input)?;
-    // the running odhcp6c names the IAID the old router really sends
-    if let Some(live) = ssh.as_deref().and_then(fetch_live_odhcp6c) {
-        extras.0.insert(LIVE_ODHCP6C.to_string(), live);
-    }
-    let mut plan = build_plan_with(&files, &extras, &maps);
-    if ddns_disabled {
-        disable_ddns(&mut plan);
-    }
-    print!("{}", render(&plan, dry_run));
-    if dry_run {
-        return Ok(());
-    }
-    let store = super::apply::open_store(db.as_deref()).await?;
-    println!("\nstore:");
-    for l in apply(&store, &plan).await? {
-        println!("  {l}");
-    }
-    println!("\nreview with `patronus apply --dry-run`, then `patronus apply`");
-    Ok(())
-}
 
 /// `--ddns-disabled`: every dynamic-DNS client is imported switched off, so a rehearsal
 /// box never publishes its (test) addresses under the live router's names.

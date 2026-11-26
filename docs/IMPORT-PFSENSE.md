@@ -9,6 +9,17 @@ works too; the root element tells the two apart). Without `--yes` (or with `--pl
 prints the plan and writes nothing. With `--yes` it writes the config store; then review with
 `patronus apply --dry-run` and run `patronus apply`.
 
+## From the web UI
+
+System > Import (`/import`, also linked from the first-run setup wizard) does the same without a shell: pick
+pfSense/OPNsense (`config.xml`) or OpenWrt (the `sysupgrade -b` / LuCI "Generate archive" `.tar.gz`), choose the
+file, optionally give port names as `OLD=NEW` pairs, press Preview (the plan, nothing written), then Import and
+apply (admins). The import keeps the current configuration as a revision first and applies the result to the whole
+system at once; if writing or applying any part fails, the previous configuration is put back and re-applied and
+the page says which part refused it. API: `POST /api/system/import/{pfsense|openwrt}/plan` and `.../apply`, the
+file as the request body, `?maps=em0=eth0,em1=eth1`. The CLI and the page share one importer (crate
+`patronus-import`); the web feature `import` follows USE=uci-import.
+
 Secrets (PPPoE and WireGuard keys, IPsec pre-shared keys) are written to the store but never
 printed: the report shows `(set)`.
 

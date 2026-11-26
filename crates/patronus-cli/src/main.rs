@@ -902,7 +902,7 @@ async fn main() -> anyhow::Result<()> {
                     yes,
                 },
         } => {
-            commands::import_pfsense::run(cli.db, file, map, yes).await?;
+            commands::import::pfsense(cli.db, file, map, yes).await?;
         }
 
         #[cfg(feature = "uci-import")]
@@ -913,7 +913,7 @@ async fn main() -> anyhow::Result<()> {
             map,
             ddns_disabled,
         } => {
-            commands::import_uci::run(cli.db, input, ssh, dry_run, map, ddns_disabled).await?;
+            commands::import::uci(cli.db, input, ssh, dry_run, map, ddns_disabled).await?;
         }
 
         Commands::Ztp { bootstrap, force } => {

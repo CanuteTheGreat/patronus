@@ -12,9 +12,9 @@ path = "src/main.rs"
 default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "uci-import"]
 
 # `patronus import-uci` (OpenWrt UCI) and `patronus import pfsense` (pfSense /
-# OPNsense config.xml): config importers. The XML one needs roxmltree; the
-# wifi-ap / dhcp-server parts are cfg-gated inside them.
-uci-import = ["dep:roxmltree"]
+# OPNsense config.xml): config importers, in the patronus-import crate (shared with
+# the web UI import page); the wifi-ap / dhcp-server parts are cfg-gated inside them.
+uci-import = ["dep:patronus-import", "patronus-web?/import"]
 
 # Core features
 # Embedded tier: `patronus-web` is a link to this binary (multi-call; one copy
@@ -35,17 +35,17 @@ iptables = ["patronus-firewall/iptables"]
 # Network services
 # LAN services (lane D): appliers in patronus apply/applyd, and the web
 # UI's DHCP / DNS / NTP pages. USE=dhcp / dns,unbound,dnsmasq / ntp.
-dhcp-server = ["patronus-network/dhcp", "patronus-web?/dhcp"]
-dns-server = ["patronus-network/dns", "patronus-web?/dns"]
-ntp-server = ["patronus-network/ntp", "patronus-web?/ntp"]
-multiwan = ["patronus-network/multiwan"]
+dhcp-server = ["patronus-network/dhcp", "patronus-web?/dhcp", "patronus-import?/dhcp-server"]
+dns-server = ["patronus-network/dns", "patronus-web?/dns", "patronus-import?/dns-server"]
+ntp-server = ["patronus-network/ntp", "patronus-web?/ntp", "patronus-import?/ntp-server"]
+multiwan = ["patronus-network/multiwan", "patronus-import?/multiwan"]
 
 # VPN
 # Lane F: WireGuard tunnels / IPsec (strongSwan swanctl) appliers in
 # patronus apply/applyd and the web UI's VPN forms. USE=wireguard / ipsec.
-vpn-wireguard = ["patronus-network/wireguard", "patronus-web?/wireguard"]
+vpn-wireguard = ["patronus-network/wireguard", "patronus-web?/wireguard", "patronus-import?/vpn-wireguard"]
 vpn-openvpn = ["patronus-network/openvpn", "patronus-web?/openvpn"]
-vpn-ipsec = ["patronus-network/ipsec", "patronus-web?/ipsec"]
+vpn-ipsec = ["patronus-network/ipsec", "patronus-web?/ipsec", "patronus-import?/vpn-ipsec"]
 # Lane G: keepalived VRRP virtual IPs + conntrackd state sync (USE=ha).
 ha = ["patronus-network/ha", "patronus-web?/ha"]
 # Lane H: TOTP two-factor login for web accounts (USE=totp).
@@ -74,8 +74,8 @@ guest = ["patronus-network/guest", "patronus-web?/guest"]
 ldap = ["patronus-web?/ldap"]
 plugins = ["patronus-network/plugins", "patronus-web?/plugins"]
 segmentation = ["patronus-network/segmentation", "patronus-web?/segmentation"]
-wifi-ap = ["patronus-network/wifi-ap", "patronus-web?/wifi-ap", "segmentation"]
-wifi-client = ["patronus-network/wifi-client", "patronus-web?/wifi-client"]
+wifi-ap = ["patronus-network/wifi-ap", "patronus-web?/wifi-ap", "segmentation", "patronus-import?/wifi-ap"]
+wifi-client = ["patronus-network/wifi-client", "patronus-web?/wifi-client", "patronus-import?/wifi-client"]
 vrf = ["patronus-network/vrf", "patronus-web?/vrf"]
 web-proxy = ["patronus-network/web-proxy", "patronus-web?/web-proxy"]
 intrusion-detection = ["patronus-network/intrusion-detection", "patronus-web?/intrusion-detection"]
@@ -95,12 +95,10 @@ patronus-network = { path = "../patronus-network" }
 patronus-config = { path = "../patronus-config" }
 patronus-web = { path = "../patronus-web", optional = true, default-features = false }
 patronus-gitops = { path = "../patronus-gitops", optional = true }
-roxmltree = { version = "0.20", optional = true }
+patronus-import = { path = "../patronus-import", optional = true, default-features = false }
 patronus-ai = { path = "../patronus-ai", optional = true }
 patronus-cni = { path = "../patronus-cni", optional = true }
 reqwest = { workspace = true, optional = true }
-# OpenWrt's odhcp6c derives its DHCPv6 IAID from md5(device name): import-uci recomputes it
-md-5 = "0.10"
 
 # SD-WAN modules
 patronus-sdwan = { path = "../patronus-sdwan" }
