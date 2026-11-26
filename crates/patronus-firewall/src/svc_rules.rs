@@ -255,6 +255,56 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- Tailscale / Headscale client: the tailnet interface is closed unless a setting opens it
+    let ts = settings(store, "tailscale").await?;
+    if on(&ts, "enabled") {
+        let dev = ts
+            .get("interface")
+            .map(String::as_str)
+            .filter(|d| safe_dev(d))
+            .unwrap_or("tailscale0")
+            .to_string();
+        if on(&ts, "open_port") {
+            let port: u16 = ts
+                .get("port")
+                .and_then(|p| p.parse().ok())
+                .filter(|p| *p > 0)
+                .unwrap_or(41641);
+            out.filter.push(format!(
+                "add rule {t} input udp dport {port} accept comment \"Tailscale direct connections\""
+            ));
+        }
+        if on(&ts, "allow_input") {
+            out.filter.push(format!(
+                "add rule {t} input iifname \"{dev}\" accept comment \"Tailscale: tailnet to this router\""
+            ));
+        }
+        if on(&ts, "allow_lan") {
+            for l in devices(store, "@lan").await {
+                out.filter.push(format!(
+                    "add rule {t} forward iifname \"{dev}\" oifname \"{l}\" accept comment \"Tailscale: tailnet to LAN\""
+                ));
+                out.filter.push(format!(
+                    "add rule {t} forward iifname \"{l}\" oifname \"{dev}\" ct state established,related accept comment \"Tailscale: LAN replies\""
+                ));
+            }
+        }
+        if on(&ts, "advertise_exit_node") {
+            let range = ts
+                .get("tailnet_range")
+                .and_then(|r| safe_net(r, false))
+                .unwrap_or_else(|| "100.64.0.0/10".into());
+            for w in devices(store, "@wan").await {
+                out.filter.push(format!(
+                    "add rule {t} forward iifname \"{dev}\" oifname \"{w}\" accept comment \"Tailscale: exit node\""
+                ));
+                out.nat_exempt.push(format!(
+                    "add rule {t} postrouting ip saddr {range} oifname \"{w}\" masquerade comment \"Tailscale exit node\""
+                ));
+            }
+        }
+    }
+
     // --- NAT64
     let n = settings(store, "nat64").await?;
     if on(&n, "enabled") {
@@ -837,5 +887,37 @@ mod tests {
         assert_eq!(safe_net("10.0.0.0/8", true), None);
         assert_eq!(safe_net("x; drop", false), None);
         assert!(!safe_dev("eth0\" accept #"));
+    }
+
+    #[tokio::test]
+    async fn the_tailnet_interface_is_closed_until_a_setting_opens_it() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        put(&s, "tailscale.enabled", "1").await;
+        let none = svc_rules(&s).await.unwrap();
+        assert!(
+            none.filter
+                .iter()
+                .all(|r| !r.contains("tailscale0") && !r.contains("Tailscale")),
+            "a joined node opens nothing by itself: {:?}",
+            none.filter
+        );
+        put(&s, "tailscale.open_port", "1").await;
+        put(&s, "tailscale.allow_input", "1").await;
+        put(&s, "tailscale.interface", "ts9").await;
+        put(&s, "tailscale.advertise_exit_node", "1").await;
+        let r = svc_rules(&s).await.unwrap();
+        let f = r.filter.join("\n");
+        assert!(
+            f.contains("input udp dport 41641 accept comment \"Tailscale direct connections\""),
+            "{f}"
+        );
+        assert!(f.contains("input iifname \"ts9\" accept"), "{f}");
+        put(&s, "tailscale.enabled", "0").await;
+        assert!(svc_rules(&s)
+            .await
+            .unwrap()
+            .filter
+            .iter()
+            .all(|r| !r.contains("ts9")));
     }
 }

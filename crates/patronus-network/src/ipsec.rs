@@ -31,6 +31,12 @@ pub const SWANCTL_CONF: &str = "/etc/swanctl/conf.d/patronus.conf";
 pub const SWANCTL_BIN: &str = "/usr/sbin/swanctl";
 /// Prefix of every connection name Patronus loads into charon.
 pub const CONN_PREFIX: &str = "patronus-";
+/// charon drop-in written while a route-based tunnel exists: its wildcard
+/// selectors (0.0.0.0/0) must not become routes towards the peer; the
+/// XFRM interface and the routing table (static, OSPF) decide instead.
+pub const CHARON_ROUTES_CONF: &str = "/etc/strongswan.d/patronus-routes.conf";
+/// Pending connect / disconnect requests of the status page.
+pub const REQUEST_ACTIONS: &[&str] = &["connect", "disconnect"];
 
 pub const DEFAULT_IKE: &str = "aes256gcm16-prfsha384-ecp384,aes256-sha256-modp2048";
 pub const DEFAULT_ESP: &str = "aes256gcm16-ecp384,aes256-sha256-modp2048";
@@ -53,13 +59,45 @@ pub struct IpsecTunnel {
     pub start_action: String,
     pub dpd_delay: u32,
     pub description: Option<String>,
+    /// `policy` (traffic selectors, the default) or `route` (an XFRM
+    /// interface carries the traffic; routes/OSPF decide what enters it).
+    pub mode: String,
+    /// XFRM interface id shared by the SA and the `xfrm<id>` interface
+    /// (route mode; allocated on save when not given).
+    pub if_id: Option<u32>,
+    /// Address (CIDR) of this router on the XFRM interface.
+    pub tunnel_address: Option<String>,
+    pub mtu: Option<u32>,
+    /// Device the XFRM interface is attached to (empty = `DEFAULT_XFRM_DEV`).
+    pub xfrm_dev: Option<String>,
 }
+
+impl IpsecTunnel {
+    pub fn is_route(&self) -> bool {
+        self.mode == "route"
+    }
+    /// Kernel name of the tunnel's XFRM interface (route mode).
+    pub fn xfrm_name(&self) -> Option<String> {
+        self.if_id
+            .filter(|_| self.is_route())
+            .map(|i| format!("{XFRM_PREFIX}{i}"))
+    }
+}
+
+/// Prefix of the XFRM interfaces Patronus creates (`xfrm<if_id>`); an
+/// interface with this prefix that no route-mode tunnel owns is removed.
+pub const XFRM_PREFIX: &str = "xfrm";
+/// Device an XFRM interface hangs off when the tunnel names none (any
+/// device works, the SA is bound by `if_id`; `lo` always exists).
+pub const DEFAULT_XFRM_DEV: &str = "lo";
+pub const WILDCARD_TS: &str = "0.0.0.0/0, ::/0";
 
 pub async fn list_tunnels(store: &ConfigStore) -> Result<Vec<IpsecTunnel>> {
     let rows = sqlx::query(
         "SELECT id, name, enabled, local_address, remote_address, local_id, remote_id, psk,
                 local_ts, remote_ts, ike_proposals, esp_proposals, start_action, dpd_delay,
-                description FROM ipsec_tunnels ORDER BY name",
+                description, mode, if_id, tunnel_address, mtu, xfrm_dev
+                FROM ipsec_tunnels ORDER BY name",
     )
     .fetch_all(store.pool()?)
     .await
@@ -82,6 +120,11 @@ pub async fn list_tunnels(store: &ConfigStore) -> Result<Vec<IpsecTunnel>> {
             start_action: r.get(12),
             dpd_delay: r.get::<i64, _>(13) as u32,
             description: r.get(14),
+            mode: r.get(15),
+            if_id: r.get::<Option<i64>, _>(16).map(|v| v as u32),
+            tunnel_address: r.get(17),
+            mtu: r.get::<Option<i64>, _>(18).map(|v| v as u32),
+            xfrm_dev: r.get(19),
         })
         .collect())
 }
@@ -117,6 +160,19 @@ pub struct TunnelInput {
     pub dpd_delay: Option<u32>,
     #[serde(default)]
     pub description: Option<String>,
+    /// `policy` or `route`.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Route mode: XFRM interface id (empty = allocate the next free one).
+    #[serde(default)]
+    pub if_id: Option<u32>,
+    /// Route mode: this router's address on the tunnel, CIDR (empty = none).
+    #[serde(default)]
+    pub tunnel_address: Option<String>,
+    #[serde(default)]
+    pub mtu: Option<u32>,
+    #[serde(default)]
+    pub xfrm_dev: Option<String>,
 }
 
 fn opt(s: &Option<String>) -> Option<&str> {
@@ -194,6 +250,102 @@ fn check_proposals(what: &str, s: &str) -> Result<String> {
     Ok(v.join(","))
 }
 
+/// Content of [`CHARON_ROUTES_CONF`].
+pub fn render_charon_routes(on: bool) -> String {
+    if !on {
+        return lan::header("#", "strongSwan route installation");
+    }
+    let mut c = lan::header("#", "strongSwan route installation");
+    // `charon` (starter) and `charon-systemd` read their own section
+    c.push_str(
+        "# route-based IPsec: traffic is steered by routes into the XFRM interfaces\n\
+         charon {\n    install_routes = no\n}\ncharon-systemd {\n    install_routes = no\n}\n",
+    );
+    c
+}
+
+/// Install (`on`) or remove [`CHARON_ROUTES_CONF`]; whether it changed.
+fn sync_charon_routes(env: &LanEnv, on: bool) -> Result<bool> {
+    if !on {
+        if lan::is_managed(env, CHARON_ROUTES_CONF) {
+            std::fs::remove_file(env.path(CHARON_ROUTES_CONF))
+                .map_err(|e| Error::Config(format!("remove {CHARON_ROUTES_CONF}: {e}")))?;
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+    lan::install(
+        env,
+        &ManagedFile {
+            path: CHARON_ROUTES_CONF,
+            content: render_charon_routes(true),
+            mode: 0o644,
+            group: None,
+            check: None,
+        },
+    )
+}
+
+/// Queue a connect / disconnect of the tunnel `name` for the next apply
+/// (the unprivileged web UI cannot talk to charon; applyd can).
+pub async fn request_action(store: &ConfigStore, name: &str, action: &str) -> Result<()> {
+    if !REQUEST_ACTIONS.contains(&action) {
+        return Err(invalid(format!("action {action:?}: connect or disconnect")));
+    }
+    let t = list_tunnels(store)
+        .await?
+        .into_iter()
+        .find(|t| t.name == name)
+        .ok_or_else(|| Error::Config(format!("no IPsec tunnel {name}")))?;
+    if !t.enabled {
+        return Err(invalid(format!("tunnel {name} is disabled")));
+    }
+    if action == "connect" && t.remote_address == "%any" {
+        return Err(invalid(format!(
+            "tunnel {name} only responds (remote gateway %any): the peer connects"
+        )));
+    }
+    sqlx::query("INSERT INTO ipsec_requests (tunnel, action, requested_at) VALUES (?, ?, ?)")
+        .bind(name)
+        .bind(action)
+        .bind(now())
+        .execute(store.pool()?)
+        .await
+        .map_err(db_err("queue IPsec request"))?;
+    Ok(())
+}
+
+/// Address with prefix for the XFRM interface (`169.254.10.1/30`).
+fn check_ifaddr(s: &str) -> Result<String> {
+    let s = s.trim();
+    let ok = s.split_once('/').is_some_and(|(a, p)| {
+        a.parse::<std::net::IpAddr>().is_ok_and(|ip| {
+            p.parse::<u8>()
+                .is_ok_and(|p| p <= if ip.is_ipv4() { 32 } else { 128 })
+        })
+    });
+    if !ok {
+        return Err(invalid(format!(
+            "tunnel address {s:?}: an address with prefix, e.g. 169.254.10.1/30"
+        )));
+    }
+    Ok(s.to_string())
+}
+
+/// A kernel device name (`eth0`, `br-lan.10`).
+fn check_dev(s: &str) -> Result<String> {
+    let s = s.trim();
+    if s.is_empty()
+        || s.len() > 15
+        || !s
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    {
+        return Err(invalid(format!("device {s:?}: a kernel interface name")));
+    }
+    Ok(s.to_string())
+}
+
 /// Create (`id` = None) or edit a tunnel. Returns (id, generated psk).
 pub async fn save_tunnel(
     store: &ConfigStore,
@@ -261,15 +413,73 @@ pub async fn save_tunnel(
             p
         }
     };
+    let mode = match (opt(&t.mode), &cur) {
+        (Some(m @ ("policy" | "route")), _) => m.to_string(),
+        (Some(m), _) => return Err(invalid(format!("mode {m:?}: policy or route"))),
+        (None, Some(c)) => c.mode.clone(),
+        (None, None) => "policy".into(),
+    };
+    let route = mode == "route";
+    // a route-based tunnel carries everything its XFRM interface is given:
+    // wildcard selectors unless the user narrows them
     let local_ts = match (&t.local_ts, &cur) {
+        (Some(v), _) if route && v.trim().is_empty() => WILDCARD_TS.into(),
         (Some(v), _) => check_networks("local networks", v, false)?,
         (None, Some(c)) => c.local_ts.clone(),
+        (None, None) if route => WILDCARD_TS.into(),
         (None, None) => return Err(invalid("local networks: required")),
     };
     let remote_ts = match (&t.remote_ts, &cur) {
+        (Some(v), _) if route && v.trim().is_empty() => WILDCARD_TS.into(),
         (Some(v), _) => check_networks("remote networks", v, false)?,
         (None, Some(c)) => c.remote_ts.clone(),
+        (None, None) if route => WILDCARD_TS.into(),
         (None, None) => return Err(invalid("remote networks: required")),
+    };
+    let if_id = if !route {
+        None
+    } else {
+        let wanted = t.if_id.or(cur.as_ref().and_then(|c| c.if_id));
+        match wanted {
+            Some(0) => return Err(invalid("interface id: 1 or more")),
+            Some(i) if i > 0x7fff_ffff => return Err(invalid("interface id: too large")),
+            Some(i) => {
+                if all
+                    .iter()
+                    .any(|x| x.if_id == Some(i) && Some(x.id) != id && x.is_route())
+                {
+                    return Err(invalid(format!(
+                        "interface id {i} is used by another tunnel"
+                    )));
+                }
+                Some(i)
+            }
+            None => (1u32..).find(|i| !all.iter().any(|x| x.if_id == Some(*i) && x.is_route())),
+        }
+    };
+    let tunnel_address = match (&t.tunnel_address, &cur) {
+        _ if !route => None,
+        (Some(a), _) if a.trim().is_empty() => None,
+        (Some(a), _) => Some(check_ifaddr(a)?),
+        (None, Some(c)) => c.tunnel_address.clone(),
+        (None, None) => None,
+    };
+    let mtu = match (t.mtu, &cur) {
+        _ if !route => None,
+        (Some(0), _) => None,
+        (Some(m), _) if !(576..=9000).contains(&m) => {
+            return Err(invalid("MTU: 576-9000 (0 = default)"))
+        }
+        (Some(m), _) => Some(m),
+        (None, Some(c)) => c.mtu,
+        (None, None) => None,
+    };
+    let xfrm_dev = match (&t.xfrm_dev, &cur) {
+        _ if !route => None,
+        (Some(d), _) if d.trim().is_empty() => None,
+        (Some(d), _) => Some(check_dev(d)?),
+        (None, Some(c)) => c.xfrm_dev.clone(),
+        (None, None) => None,
     };
     let ike_proposals = match (opt(&t.ike_proposals), &cur) {
         (Some(v), _) => check_proposals("IKE proposals", v)?,
@@ -310,11 +520,13 @@ pub async fn save_tunnel(
     let sql = if id.is_some() {
         "UPDATE ipsec_tunnels SET name=?, enabled=?, local_address=?, remote_address=?, local_id=?,
             remote_id=?, psk=?, local_ts=?, remote_ts=?, ike_proposals=?, esp_proposals=?,
-            start_action=?, dpd_delay=?, description=?, updated_at=? WHERE id=?"
+            start_action=?, dpd_delay=?, description=?, mode=?, if_id=?, tunnel_address=?,
+            mtu=?, xfrm_dev=?, updated_at=? WHERE id=?"
     } else {
         "INSERT INTO ipsec_tunnels (name, enabled, local_address, remote_address, local_id,
             remote_id, psk, local_ts, remote_ts, ike_proposals, esp_proposals, start_action,
-            dpd_delay, description, updated_at, id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            dpd_delay, description, mode, if_id, tunnel_address, mtu, xfrm_dev, updated_at, id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
     };
     let r = sqlx::query(sql)
         .bind(&name)
@@ -331,6 +543,11 @@ pub async fn save_tunnel(
         .bind(&start_action)
         .bind(dpd_delay as i64)
         .bind(&description)
+        .bind(&mode)
+        .bind(if_id.map(|v| v as i64))
+        .bind(&tunnel_address)
+        .bind(mtu.map(|v| v as i64))
+        .bind(&xfrm_dev)
         .bind(now())
         .bind(id)
         .execute(store.pool()?)
@@ -392,12 +609,18 @@ pub fn render_with(
         c.push_str(&format!(
             "        }}\n        children {{\n            {name} {{\n                local_ts = {lts}\n                \
              remote_ts = {rts}\n                esp_proposals = {esp}\n                start_action = {sa}\n                \
-             dpd_action = {dpd_action}\n                close_action = {close_action}\n            }}\n        }}\n    }}\n",
+             dpd_action = {dpd_action}\n                close_action = {close_action}\n{ifid}            }}\n        }}\n    }}\n",
             name = t.name,
             lts = split_list(&t.local_ts).join(","),
             rts = split_list(&t.remote_ts).join(","),
             esp = t.esp_proposals,
             sa = t.start_action,
+            ifid = match t.if_id.filter(|_| t.is_route()) {
+                Some(i) => format!(
+                    "                if_id_in = {i}\n                if_id_out = {i}\n"
+                ),
+                None => String::new(),
+            },
         ));
     }
     c.push_str(&rw.connections);
@@ -594,6 +817,8 @@ impl Swanctl for SystemSwanctl {
 pub struct IpsecApplier {
     env: LanEnv,
     swanctl: std::sync::Arc<dyn Swanctl>,
+    /// `ip` (XFRM interfaces, kernel policies); a recorder in tests.
+    cmd: std::sync::Arc<dyn crate::linkstate::Cmd>,
 }
 
 impl Default for IpsecApplier {
@@ -604,7 +829,16 @@ impl Default for IpsecApplier {
 
 impl IpsecApplier {
     pub fn new(env: LanEnv, swanctl: std::sync::Arc<dyn Swanctl>) -> Self {
-        Self { env, swanctl }
+        Self {
+            env,
+            swanctl,
+            cmd: std::sync::Arc::new(crate::linkstate::SystemCmd),
+        }
+    }
+
+    pub fn with_cmd(mut self, cmd: std::sync::Arc<dyn crate::linkstate::Cmd>) -> Self {
+        self.cmd = cmd;
+        self
     }
 
     /// charon answers on its VICI socket. (The distro service's own
@@ -622,6 +856,51 @@ impl IpsecApplier {
             std::thread::sleep(std::time::Duration::from_millis(250));
         }
         self.charon_up()
+    }
+
+    /// Carry out the queued connect / disconnect requests (then forget
+    /// them; a request older than an hour was never meant for now).
+    async fn run_requests(&self, store: &ConfigStore, rep: &mut ApplyReport) -> Result<()> {
+        let pool = store.pool()?;
+        let rows =
+            sqlx::query("SELECT id, tunnel, action, requested_at FROM ipsec_requests ORDER BY id")
+                .fetch_all(pool)
+                .await
+                .map_err(db_err("read IPsec requests"))?;
+        let cutoff = now() - 3600;
+        for r in rows {
+            let (id, tunnel, action, at): (i64, String, String, i64) =
+                (r.get(0), r.get(1), r.get(2), r.get(3));
+            let ike = format!("{CONN_PREFIX}{tunnel}");
+            if at >= cutoff {
+                let me = self.swanctl.clone();
+                let (t2, a2, i2) = (tunnel.clone(), action.clone(), ike.clone());
+                let res = tokio::task::spawn_blocking(move || match a2.as_str() {
+                    "connect" => me.run(&[
+                        "--initiate",
+                        "--child",
+                        &t2,
+                        "--ike",
+                        &i2,
+                        "--timeout",
+                        "20",
+                    ]),
+                    _ => me.run(&["--terminate", "--ike", &i2]),
+                })
+                .await
+                .map_err(|e| Error::Service(format!("swanctl task: {e}")))?;
+                match res {
+                    Ok(_) => rep.applied(format!("IPsec tunnel {tunnel}: {action} done")),
+                    Err(e) => rep.warn(format!("IPsec tunnel {tunnel}: {action} failed: {e}")),
+                }
+            }
+            sqlx::query("DELETE FROM ipsec_requests WHERE id = ?")
+                .bind(id)
+                .execute(pool)
+                .await
+                .map_err(db_err("clear IPsec request"))?;
+        }
+        Ok(())
     }
 
     /// `swanctl --load-all`, retried while charon's VICI socket comes up
@@ -729,6 +1008,34 @@ impl Applier for IpsecApplier {
         if changed || files_changed {
             rep.applied(format!("wrote {SWANCTL_CONF}"));
         }
+        // route-based tunnels: the XFRM interfaces exist before charon installs
+        // the SAs that name their if_id; a wildcard selector must not make
+        // charon install a default route towards the peer (charon.install_routes)
+        let route_tunnels: Vec<&IpsecTunnel> =
+            on.iter().copied().filter(|t| t.is_route()).collect();
+        let settings_changed = sync_charon_routes(&self.env, !route_tunnels.is_empty())?;
+        let want: Vec<crate::ipsec_xfrm::XfrmWant> = route_tunnels
+            .iter()
+            .filter_map(|t| {
+                Some(crate::ipsec_xfrm::XfrmWant {
+                    name: t.xfrm_name()?,
+                    if_id: t.if_id?,
+                    dev: t
+                        .xfrm_dev
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_XFRM_DEV.to_string()),
+                    addr: t.tunnel_address.clone(),
+                    mtu: t.mtu,
+                })
+            })
+            .collect();
+        if self.env.root == std::path::Path::new("/") || !want.is_empty() {
+            for n in
+                crate::ipsec_xfrm::sync_interfaces(self.cmd.as_ref(), XFRM_PREFIX, &want).await?
+            {
+                rep.applied(n);
+            }
+        }
         let svc = service_name(&self.env);
         let up = self.charon_up();
         let have = !on.is_empty() || !rw.is_empty();
@@ -736,7 +1043,14 @@ impl Applier for IpsecApplier {
             // start charon if needed; never restart a running one (that
             // would drop every SA): new/changed/deleted connections are
             // (un)loaded with swanctl --load-all
-            if !up {
+            if up && settings_changed {
+                // charon reads install_routes only at start
+                self.env.services.restart(svc)?;
+                self.wait_up(10);
+                rep.applied(format!(
+                    "{svc} restarted (route installation setting changed)"
+                ));
+            } else if !up {
                 if let Err(e) = self.env.services.restart(svc) {
                     if !self.wait_up(10) {
                         return Err(e);
@@ -752,6 +1066,7 @@ impl Applier for IpsecApplier {
                 on.len(),
                 rw.connections.matches("version = 2").count()
             ));
+            self.run_requests(store, &mut rep).await?;
         } else if up {
             // our last tunnel is gone: unload it; stop charon unless it
             // still carries connections Patronus does not manage
@@ -781,23 +1096,37 @@ impl Applier for IpsecApplier {
         ))
     }
 
-    /// `{"installed", "running", "sas": <swanctl --list-sas text>, "error"}`
+    /// `{"installed", "running", "sas": <swanctl --list-sas text>, "error",
+    /// "policies": [kernel SPs], "interfaces": [XFRM interfaces]}`
     async fn status(&self, _store: &ConfigStore) -> Result<Value> {
         let installed = self.env.has_binary(SWANCTL_BIN);
         if !installed {
             return Ok(json!({"installed": false, "running": false, "sas": ""}));
         }
         let me = self.clone();
-        Ok(
-            tokio::task::spawn_blocking(move || match me.swanctl.run(&["--list-sas"]) {
-                Ok(out) => json!({"installed": true, "running": true, "sas": out}),
-                Err(e) => {
-                    json!({"installed": true, "running": false, "sas": "", "error": e.to_string()})
-                }
-            })
+        let mut st = tokio::task::spawn_blocking(move || match me.swanctl.run(&["--list-sas"]) {
+            Ok(out) => json!({"installed": true, "running": true, "sas": out}),
+            Err(e) => {
+                json!({"installed": true, "running": false, "sas": "", "error": e.to_string()})
+            }
+        })
+        .await
+        .unwrap_or(Value::Null);
+        // kernel side: security policies and the XFRM interfaces (best effort)
+        if st["running"] == true {
+            let pol = self
+                .cmd
+                .run("ip", &crate::linkstate::argv(&["xfrm", "policy"]))
+                .await
+                .map(|t| crate::ipsec_xfrm::parse_policies(&t))
+                .unwrap_or_default();
+            st["policies"] = json!(pol);
+        }
+        let ifs = crate::ipsec_xfrm::list_interfaces(self.cmd.as_ref())
             .await
-            .unwrap_or(Value::Null),
-        )
+            .unwrap_or_default();
+        st["interfaces"] = json!(ifs);
+        Ok(st)
     }
 }
 
@@ -1043,5 +1372,169 @@ mod tests {
         let e = a.apply(&s).await.unwrap_err().to_string();
         assert!(e.contains("net-vpn/strongswan"), "{e}");
         assert_eq!(a.status(&s).await.unwrap()["installed"], false);
+    }
+
+    /// `ip` stand-in: no XFRM interface exists yet; records every call.
+    #[derive(Default)]
+    struct FakeIp {
+        calls: Mutex<Vec<String>>,
+    }
+    #[async_trait::async_trait]
+    impl crate::linkstate::Cmd for FakeIp {
+        async fn run(&self, prog: &str, args: &[String]) -> Result<String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("{prog} {}", args.join(" ")));
+            Ok(if args.first().map(String::as_str) == Some("-j") {
+                "[]".into()
+            } else {
+                String::new()
+            })
+        }
+    }
+
+    fn route_input(name: &str) -> TunnelInput {
+        TunnelInput {
+            name: Some(name.into()),
+            local_address: Some("203.0.113.2".into()),
+            remote_address: Some("198.51.100.2".into()),
+            psk: Some("correct-horse-battery-staple".into()),
+            mode: Some("route".into()),
+            tunnel_address: Some("169.254.10.1/30".into()),
+            mtu: Some(1400),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_route_based_tunnel_gets_an_xfrm_interface_and_if_ids() {
+        let t = testutil::env(&[SWANCTL_BIN]);
+        let s = testutil::store().await;
+        let sw = std::sync::Arc::new(FakeSwanctl {
+            services: Some(t.services.clone()),
+            ..Default::default()
+        });
+        let ip = std::sync::Arc::new(FakeIp::default());
+        let a = IpsecApplier::new(t.env.clone(), sw.clone()).with_cmd(ip.clone());
+        let (id, _) = save_tunnel(&s, None, &route_input("hub")).await.unwrap();
+        let all = list_tunnels(&s).await.unwrap();
+        assert_eq!(all[0].if_id, Some(1), "the first free interface id");
+        assert_eq!(all[0].xfrm_name().as_deref(), Some("xfrm1"));
+        assert_eq!(
+            all[0].local_ts, WILDCARD_TS,
+            "route mode defaults to wildcard selectors"
+        );
+        // a second tunnel gets the next id; a taken id is refused
+        let (_, _) = save_tunnel(&s, None, &route_input("spoke")).await.unwrap();
+        let mut dup = route_input("third");
+        dup.if_id = Some(1);
+        assert!(save_tunnel(&s, None, &dup).await.is_err());
+        delete_tunnel(&s, id + 1).await.unwrap();
+
+        a.apply(&s).await.unwrap();
+        let c = read(&t, SWANCTL_CONF);
+        assert!(
+            c.contains("if_id_in = 1") && c.contains("if_id_out = 1"),
+            "{c}"
+        );
+        assert!(c.contains("local_ts = 0.0.0.0/0,::/0"), "{c}");
+        let calls = ip.calls.lock().unwrap().clone();
+        assert!(
+            calls.contains(&"ip link add xfrm1 type xfrm dev lo if_id 1".to_string()),
+            "{calls:?}"
+        );
+        assert!(calls.contains(&"ip addr replace 169.254.10.1/30 dev xfrm1".to_string()));
+        assert!(calls.contains(&"ip link set dev xfrm1 mtu 1400".to_string()));
+        assert!(
+            read(&t, CHARON_ROUTES_CONF).contains("install_routes = no"),
+            "wildcard selectors must not install routes"
+        );
+        // policy-mode tunnels never carry an if_id
+        assert!(!render(
+            &[&IpsecTunnel {
+                mode: "policy".into(),
+                ..all[0].clone()
+            }],
+            false
+        )
+        .contains("if_id_in"));
+
+        // back to policy mode: no interface wanted, the drop-in goes away
+        save_tunnel(
+            &s,
+            Some(id),
+            &TunnelInput {
+                mode: Some("policy".into()),
+                local_ts: Some("192.168.50.0/24".into()),
+                remote_ts: Some("10.2.0.0/16".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        a.apply(&s).await.unwrap();
+        assert!(!t.env.path(CHARON_ROUTES_CONF).exists());
+        assert!(!read(&t, SWANCTL_CONF).contains("if_id_in"));
+    }
+
+    #[tokio::test]
+    async fn bad_route_settings_are_refused() {
+        let s = testutil::store().await;
+        for (f, v) in [
+            ("mode", "vti"),
+            ("addr", "10.0.0.1"),
+            ("mtu", "100"),
+            ("dev", "bad dev"),
+            ("id", "0"),
+        ] {
+            let mut i = route_input("r");
+            match f {
+                "mode" => i.mode = Some(v.into()),
+                "addr" => i.tunnel_address = Some(v.into()),
+                "mtu" => i.mtu = Some(v.parse().unwrap()),
+                "dev" => i.xfrm_dev = Some(v.into()),
+                _ => i.if_id = Some(v.parse().unwrap()),
+            }
+            assert!(save_tunnel(&s, None, &i).await.is_err(), "{f}={v}");
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_and_disconnect_requests_reach_swanctl_once() {
+        let t = testutil::env(&[SWANCTL_BIN]);
+        let s = testutil::store().await;
+        let sw = std::sync::Arc::new(FakeSwanctl {
+            services: Some(t.services.clone()),
+            ..Default::default()
+        });
+        let a = IpsecApplier::new(t.env.clone(), sw.clone())
+            .with_cmd(std::sync::Arc::new(FakeIp::default()));
+        save_tunnel(&s, None, &input("site-b")).await.unwrap();
+        assert!(request_action(&s, "nope", "connect").await.is_err());
+        assert!(request_action(&s, "site-b", "reboot").await.is_err());
+        request_action(&s, "site-b", "disconnect").await.unwrap();
+        request_action(&s, "site-b", "connect").await.unwrap();
+        a.apply(&s).await.unwrap();
+        let calls = sw.calls.lock().unwrap().clone();
+        let term = calls
+            .iter()
+            .position(|c| c == "--terminate --ike patronus-site-b");
+        let init = calls
+            .iter()
+            .position(|c| c.starts_with("--initiate --child site-b --ike patronus-site-b"));
+        assert!(term.is_some() && init.is_some() && term < init, "{calls:?}");
+        // handled requests are gone: the next apply does not repeat them
+        let n = calls.len();
+        a.apply(&s).await.unwrap();
+        let again = sw
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .skip(n)
+            .filter(|c| c.starts_with("--initiate") || c.starts_with("--terminate"))
+            .count();
+        assert_eq!(again, 0);
     }
 }
