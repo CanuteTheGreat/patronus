@@ -100,6 +100,8 @@ def main():
                                 continue
                         for sel in pg.get("click", []):
                             page.click(sel)
+                        for sel, val in pg.get("select", {}).items():
+                            page.select_option(sel, val)
                         page.wait_for_timeout(lg.get("settle_ms", 700))
                         if "/login" in page.url and pg.get("auth", True):
                             failures.append({"where": label, "rule": "page-not-reached", "impact": "critical", "detail": f"redirected to {page.url}"})
