@@ -184,6 +184,18 @@ pub fn write_atomic(path: &Path, content: &str, mode: u32) -> Result<bool> {
     Ok(true)
 }
 
+/// The program a command line really becomes: `env NAME=value ... prog args` execs `prog`, so the process
+/// the supervisor watches is `prog`, never `env` (NUT daemons need NUT_CONFPATH/NUT_STATEPATH this way).
+pub(crate) fn identity<'a, I: IntoIterator<Item = &'a str>>(argv: I) -> Option<&'a str> {
+    let mut it = argv.into_iter();
+    let first = it.next()?;
+    if first.rsplit('/').next() != Some("env") {
+        return Some(first);
+    }
+    it.find(|t| !t.starts_with('-') && !t.contains('='))
+        .or(Some(first))
+}
+
 fn pid_alive(pid: i32, argv0: Option<&str>) -> bool {
     // /proc/<pid>/comm, not cmdline: daemons like dhcpcd rewrite their
     // argv ("dhcpcd: rtr-wan [ip4]"), the kernel's comm stays the binary.
@@ -275,7 +287,7 @@ impl Supervisor {
         let env = std::fs::read_to_string(self.paths.env_file(service, inst)).ok()?;
         env.lines()
             .find_map(|l| l.strip_prefix("PATRONUS_CMD=\""))
-            .and_then(|c| c.split_whitespace().next())
+            .and_then(|c| identity(c.split_whitespace()))
             .map(str::to_string)
     }
 
@@ -426,7 +438,7 @@ impl Supervisor {
         )?;
         // fail fast if it dies immediately (bad option, missing plugin)
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        if !pid_alive(pid, spec.argv.first().map(String::as_str)) {
+        if !pid_alive(pid, identity(spec.argv.iter().map(String::as_str))) {
             let tail = std::fs::read_to_string(&log).unwrap_or_default();
             let tail: Vec<&str> = tail.lines().rev().take(5).collect();
             return Err(Error::Network(format!(
@@ -507,6 +519,19 @@ pub fn which(prog: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn env_wrapped_commands_are_identified_by_the_program_they_run() {
+        let id = |v: &[&str]| identity(v.iter().copied());
+        assert_eq!(
+            id(&["/usr/bin/env", "A=1", "B=2", "/usr/sbin/upsd", "-F"]),
+            Some("/usr/sbin/upsd")
+        );
+        assert_eq!(id(&["env", "-i", "A=1", "prog"]), Some("prog"));
+        assert_eq!(id(&["/usr/sbin/dhcpcd", "-B"]), Some("/usr/sbin/dhcpcd"));
+        assert_eq!(id(&["/usr/bin/env", "A=1"]), Some("/usr/bin/env"));
+        assert_eq!(id(&[]), None);
+    }
 
     #[test]
     fn instance_lock_is_exclusive_per_instance() {
