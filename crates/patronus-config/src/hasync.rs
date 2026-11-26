@@ -322,7 +322,7 @@ mod tests {
         let (_d, s) = store().await;
         put(
             &s,
-            "INSERT INTO interfaces (name, role) VALUES ('enp3s0', 'lan')",
+            "INSERT INTO interfaces (name, role, updated_at) VALUES ('enp3s0', 'lan', 1)",
         )
         .await;
         put(
@@ -358,7 +358,7 @@ mod tests {
         let (_d, s) = store().await;
         put(
             &s,
-            "INSERT INTO interfaces (name, role) VALUES ('enp3s0', 'lan'), ('enp4s0', 'wan')",
+            "INSERT INTO interfaces (name, role, updated_at) VALUES ('enp3s0', 'lan', 1), ('enp4s0', 'wan')",
         )
         .await;
         let ins = "INSERT INTO nat_rules (name, nat_type, protocol, interface_in, interface_out, enabled, created_at, updated_at) VALUES ";
