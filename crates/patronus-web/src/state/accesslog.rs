@@ -488,7 +488,8 @@ async fn writer(
         }
         if last_days_prune.elapsed() >= Duration::from_secs(60) {
             last_days_prune = std::time::Instant::now();
-            let cutoff = chrono::Utc::now().timestamp_millis() - settings.retention_days * 86_400_000;
+            let cutoff =
+                chrono::Utc::now().timestamp_millis() - settings.retention_days * 86_400_000;
             if let Err(e) = prune_age(&store, cutoff).await {
                 tracing::warn!("access log: age prune: {e}");
             }
@@ -517,7 +518,12 @@ async fn detect(
     for e in batch {
         let ts = e.timestamp_ms / 1000;
         if is_failed_login(e)
-            && logins.observe(ts, s.login_burst, s.login_window_secs, s.event_cooldown_secs)
+            && logins.observe(
+                ts,
+                s.login_burst,
+                s.login_window_secs,
+                s.event_cooldown_secs,
+            )
         {
             let ev = telemetry::new_event(
                 "login_failures",
@@ -533,7 +539,12 @@ async fn detect(
             let _ = telemetry::record(store, &ev).await;
         }
         if e.status >= 500
-            && errors.observe(ts, s.error_burst, s.error_window_secs, s.event_cooldown_secs)
+            && errors.observe(
+                ts,
+                s.error_burst,
+                s.error_window_secs,
+                s.event_cooldown_secs,
+            )
         {
             let ev = telemetry::new_event(
                 "server_errors",
@@ -599,7 +610,9 @@ pub async fn prune_age(store: &ConfigStore, cutoff_ms: i64) -> anyhow::Result<()
 
 pub async fn clear(store: &ConfigStore) -> anyhow::Result<()> {
     let pool = store.pool().map_err(|x| anyhow::anyhow!("{x}"))?;
-    sqlx::query("DELETE FROM web_access_log").execute(pool).await?;
+    sqlx::query("DELETE FROM web_access_log")
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -697,7 +710,8 @@ fn apply<'a>(
             qb.push(")");
         } else {
             qb.push(" AND (principal_name LIKE ").push_bind(like(u));
-            qb.push(" ESCAPE '\\' OR attempted_user LIKE ").push_bind(like(u));
+            qb.push(" ESCAPE '\\' OR attempted_user LIKE ")
+                .push_bind(like(u));
             qb.push(" ESCAPE '\\')");
         }
     }
@@ -740,9 +754,12 @@ fn apply<'a>(
     if let Some(q) = nz(&f.q) {
         let l = like(q);
         qb.push(" AND (client LIKE ").push_bind(l.clone());
-        qb.push(" ESCAPE '\\' OR principal_name LIKE ").push_bind(l.clone());
-        qb.push(" ESCAPE '\\' OR attempted_user LIKE ").push_bind(l.clone());
-        qb.push(" ESCAPE '\\' OR path_group LIKE ").push_bind(l.clone());
+        qb.push(" ESCAPE '\\' OR principal_name LIKE ")
+            .push_bind(l.clone());
+        qb.push(" ESCAPE '\\' OR attempted_user LIKE ")
+            .push_bind(l.clone());
+        qb.push(" ESCAPE '\\' OR path_group LIKE ")
+            .push_bind(l.clone());
         qb.push(" ESCAPE '\\' OR method LIKE ").push_bind(l);
         qb.push(" ESCAPE '\\')");
     }
@@ -891,9 +908,7 @@ pub async fn stats(store: &ConfigStore, f: &Filter, top_n: i64) -> anyhow::Resul
     let size = bucket_ms((until - since).max(1));
     let first = since - since.rem_euclid(size);
 
-    let mut bq = QueryBuilder::<Sqlite>::new(
-        "SELECT (timestamp_ms / ",
-    );
+    let mut bq = QueryBuilder::<Sqlite>::new("SELECT (timestamp_ms / ");
     bq.push_bind(size);
     bq.push(") * ");
     bq.push_bind(size);
@@ -906,7 +921,10 @@ pub async fn stats(store: &ConfigStore, f: &Filter, top_n: i64) -> anyhow::Resul
     let mut have = std::collections::BTreeMap::new();
     for r in bq.build().fetch_all(pool).await? {
         let t: i64 = r.get(0);
-        have.insert(t, (r.get::<i64, _>(1), r.get::<i64, _>(2), r.get::<i64, _>(3)));
+        have.insert(
+            t,
+            (r.get::<i64, _>(1), r.get::<i64, _>(2), r.get::<i64, _>(3)),
+        );
     }
     let mut buckets = Vec::new();
     let mut t = first;
@@ -932,7 +950,8 @@ pub async fn stats(store: &ConfigStore, f: &Filter, top_n: i64) -> anyhow::Resul
             "SELECT {expr} AS v, COUNT(*) AS c FROM web_access_log WHERE 1=1"
         ));
         apply(&mut q, f, now, false).map_err(|m| anyhow::anyhow!("Invalid request: {m}"))?;
-        q.push(" GROUP BY v ORDER BY c DESC, v ASC LIMIT ").push_bind(n);
+        q.push(" GROUP BY v ORDER BY c DESC, v ASC LIMIT ")
+            .push_bind(n);
         Ok(q.build()
             .fetch_all(pool)
             .await?
@@ -1002,7 +1021,13 @@ pub fn rows_csv(rows: &[LogRow]) -> String {
             r.duration_ms.to_string(),
             r.bytes.map(|b| b.to_string()).unwrap_or_default(),
         ];
-        o.push_str(&cells.iter().map(|c| csv_cell(c)).collect::<Vec<_>>().join(","));
+        o.push_str(
+            &cells
+                .iter()
+                .map(|c| csv_cell(c))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
         o.push_str("\r\n");
     }
     o
@@ -1044,9 +1069,8 @@ pub async fn audit_search(
     let now = chrono::Utc::now().timestamp_millis();
     let limit = f.limit.unwrap_or(500).clamp(1, MAX_LIMIT);
     let build = |select: &str, with_page: bool| -> Result<QueryBuilder<'_, Sqlite>, String> {
-        let mut qb = QueryBuilder::<Sqlite>::new(format!(
-            "SELECT {select} FROM audit_log WHERE 1=1"
-        ));
+        let mut qb =
+            QueryBuilder::<Sqlite>::new(format!("SELECT {select} FROM audit_log WHERE 1=1"));
         if let Some(s) = nz(&f.since) {
             let t = parse_time(s, now).ok_or_else(|| format!("since: cannot read {s:?}"))?;
             qb.push(" AND timestamp >= ").push_bind(t / 1000);
@@ -1071,8 +1095,10 @@ pub async fn audit_search(
             let l = like(q);
             qb.push(" AND (user LIKE ").push_bind(l.clone());
             qb.push(" ESCAPE '\\' OR action LIKE ").push_bind(l.clone());
-            qb.push(" ESCAPE '\\' OR entity_type LIKE ").push_bind(l.clone());
-            qb.push(" ESCAPE '\\' OR entity_id LIKE ").push_bind(l.clone());
+            qb.push(" ESCAPE '\\' OR entity_type LIKE ")
+                .push_bind(l.clone());
+            qb.push(" ESCAPE '\\' OR entity_id LIKE ")
+                .push_bind(l.clone());
             qb.push(" ESCAPE '\\' OR details LIKE ").push_bind(l);
             qb.push(" ESCAPE '\\')");
         }
@@ -1124,7 +1150,13 @@ pub fn audit_csv(rows: &[AuditRow]) -> String {
             r.entity_id.clone().unwrap_or_default(),
             r.details.clone().unwrap_or_default(),
         ];
-        o.push_str(&cells.iter().map(|c| csv_cell(c)).collect::<Vec<_>>().join(","));
+        o.push_str(
+            &cells
+                .iter()
+                .map(|c| csv_cell(c))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
         o.push_str("\r\n");
     }
     o
@@ -1156,7 +1188,10 @@ mod tests {
 
     #[test]
     fn path_group_never_keeps_raw_paths() {
-        assert_eq!(path_group(Some("/api/firewall/rules/:id")), "/api/firewall/rules/:id");
+        assert_eq!(
+            path_group(Some("/api/firewall/rules/:id")),
+            "/api/firewall/rules/:id"
+        );
         assert_eq!(path_group(None), PATH_UNMATCHED);
         assert_eq!(path_group(Some("")), PATH_UNMATCHED);
         assert_eq!(
@@ -1247,7 +1282,10 @@ mod tests {
     #[tokio::test]
     async fn settings_round_trip_and_validate() {
         let (s, _d) = store().await;
-        assert_eq!(load_settings(&s).await.retention_rows, Settings::from_env().retention_rows);
+        assert_eq!(
+            load_settings(&s).await.retention_rows,
+            Settings::from_env().retention_rows
+        );
         save_settings(
             &s,
             SettingsInput {
@@ -1261,15 +1299,17 @@ mod tests {
         let l = load_settings(&s).await;
         assert_eq!(l.retention_rows, 500);
         assert!(!l.enabled);
-        assert!(save_settings(
-            &s,
-            SettingsInput {
-                retention_days: Some(0),
-                ..Default::default()
-            }
-        )
-        .await
-        .is_err());
+        assert!(
+            save_settings(
+                &s,
+                SettingsInput {
+                    retention_days: Some(0),
+                    ..Default::default()
+                }
+            )
+            .await
+            .is_err()
+        );
         assert_eq!(load_settings(&s).await.retention_rows, 500);
     }
 
@@ -1324,9 +1364,15 @@ mod tests {
     #[tokio::test]
     async fn disabled_writes_nothing() {
         let (s, _d) = store().await;
-        save_settings(&s, SettingsInput { enabled: Some(false), ..Default::default() })
-            .await
-            .unwrap();
+        save_settings(
+            &s,
+            SettingsInput {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         let h = spawn(s.clone()).await;
         h.record(entry(1, 200, "/a"));
         h.flush().await;
@@ -1357,35 +1403,185 @@ mod tests {
             search(s, &f).await.unwrap()
         }
         assert_eq!(q(&s, Filter::default()).await.1, 4);
-        assert_eq!(q(&s, Filter { status: Some("4xx".into()), ..Default::default() }).await.1, 2);
-        assert_eq!(q(&s, Filter { status: Some("401".into()), ..Default::default() }).await.1, 1);
-        assert_eq!(q(&s, Filter { method: Some("post".into()), ..Default::default() }).await.1, 1);
-        assert_eq!(q(&s, Filter { user: Some("mall".into()), ..Default::default() }).await.1, 1);
         assert_eq!(
-            q(&s, Filter { user: Some("mall".into()), user_exact: true, ..Default::default() }).await.1,
+            q(
+                &s,
+                Filter {
+                    status: Some("4xx".into()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .1,
+            2
+        );
+        assert_eq!(
+            q(
+                &s,
+                Filter {
+                    status: Some("401".into()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .1,
+            1
+        );
+        assert_eq!(
+            q(
+                &s,
+                Filter {
+                    method: Some("post".into()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .1,
+            1
+        );
+        assert_eq!(
+            q(
+                &s,
+                Filter {
+                    user: Some("mall".into()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .1,
+            1
+        );
+        assert_eq!(
+            q(
+                &s,
+                Filter {
+                    user: Some("mall".into()),
+                    user_exact: true,
+                    ..Default::default()
+                }
+            )
+            .await
+            .1,
             0
         );
-        assert_eq!(q(&s, Filter { api_key: Some("7".into()), ..Default::default() }).await.1, 1);
-        assert_eq!(q(&s, Filter { api_key: Some("ci".into()), ..Default::default() }).await.1, 1);
-        assert_eq!(q(&s, Filter { path: Some("firewall".into()), ..Default::default() }).await.1, 2);
-        assert_eq!(q(&s, Filter { client: Some("192.0.2".into()), ..Default::default() }).await.1, 1);
-        assert_eq!(q(&s, Filter { q: Some("mallory".into()), ..Default::default() }).await.1, 1);
+        assert_eq!(
+            q(
+                &s,
+                Filter {
+                    api_key: Some("7".into()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .1,
+            1
+        );
+        assert_eq!(
+            q(
+                &s,
+                Filter {
+                    api_key: Some("ci".into()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .1,
+            1
+        );
+        assert_eq!(
+            q(
+                &s,
+                Filter {
+                    path: Some("firewall".into()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .1,
+            2
+        );
+        assert_eq!(
+            q(
+                &s,
+                Filter {
+                    client: Some("192.0.2".into()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .1,
+            1
+        );
+        assert_eq!(
+            q(
+                &s,
+                Filter {
+                    q: Some("mallory".into()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .1,
+            1
+        );
         // wildcard characters in a filter are literal
-        assert_eq!(q(&s, Filter { q: Some("%".into()), ..Default::default() }).await.1, 0);
+        assert_eq!(
+            q(
+                &s,
+                Filter {
+                    q: Some("%".into()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .1,
+            0
+        );
         let (rows, _) = q(&s, Filter::default()).await;
         assert!(rows[0].id > rows[3].id, "newest first");
         let first = rows[3].id;
-        let (live, _) = q(&s, Filter { after_id: Some(first), ..Default::default() }).await;
+        let (live, _) = q(
+            &s,
+            Filter {
+                after_id: Some(first),
+                ..Default::default()
+            },
+        )
+        .await;
         assert_eq!(live.len(), 3);
         assert!(live[0].id < live[2].id, "cursor reads oldest first");
-        let (page, _) = q(&s, Filter { before_id: Some(rows[1].id), limit: Some(1), ..Default::default() }).await;
+        let (page, _) = q(
+            &s,
+            Filter {
+                before_id: Some(rows[1].id),
+                limit: Some(1),
+                ..Default::default()
+            },
+        )
+        .await;
         assert_eq!(page[0].id, rows[2].id);
-        assert!(search(&s, &Filter { status: Some("abc".into()), ..Default::default() })
+        assert!(
+            search(
+                &s,
+                &Filter {
+                    status: Some("abc".into()),
+                    ..Default::default()
+                }
+            )
             .await
-            .is_err());
-        assert!(search(&s, &Filter { since: Some("never".into()), ..Default::default() })
+            .is_err()
+        );
+        assert!(
+            search(
+                &s,
+                &Filter {
+                    since: Some("never".into()),
+                    ..Default::default()
+                }
+            )
             .await
-            .is_err());
+            .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1406,17 +1602,45 @@ mod tests {
         }
         insert_batch(&s, &rows).await.unwrap();
         let st = stats(&s, &Filter::default(), 10).await.unwrap();
-        assert_eq!((st.requests, st.client_errors, st.server_errors), (15, 3, 2));
+        assert_eq!(
+            (st.requests, st.client_errors, st.server_errors),
+            (15, 3, 2)
+        );
         let sum: i64 = st.buckets.iter().map(|b| b.requests).sum();
         assert_eq!(sum, 15);
-        assert_eq!(st.top_client[0], Top { value: "10.0.0.5".into(), count: 13 });
-        assert_eq!(st.top_path_group[0], Top { value: "/a".into(), count: 10 });
+        assert_eq!(
+            st.top_client[0],
+            Top {
+                value: "10.0.0.5".into(),
+                count: 13
+            }
+        );
+        assert_eq!(
+            st.top_path_group[0],
+            Top {
+                value: "/a".into(),
+                count: 10
+            }
+        );
         assert_eq!(st.top_status[0].value, "200");
-        assert_eq!(st.top_principal[0], Top { value: "admin".into(), count: 15 });
+        assert_eq!(
+            st.top_principal[0],
+            Top {
+                value: "admin".into(),
+                count: 15
+            }
+        );
         // filtered statistics only count the filtered rows
-        let st = stats(&s, &Filter { status: Some("5xx".into()), ..Default::default() }, 10)
-            .await
-            .unwrap();
+        let st = stats(
+            &s,
+            &Filter {
+                status: Some("5xx".into()),
+                ..Default::default()
+            },
+            10,
+        )
+        .await
+        .unwrap();
         assert_eq!(st.requests, 2);
         assert_eq!(st.top_client[0].value, "10.9.9.9");
         // an empty log still answers
@@ -1461,9 +1685,15 @@ mod tests {
     #[tokio::test]
     async fn audit_log_search_and_csv() {
         let (s, _d) = store().await;
-        s.audit("ron", "update", "firewall_rule", Some("3"), &serde_json::json!({"a":1}))
-            .await
-            .unwrap();
+        s.audit(
+            "ron",
+            "update",
+            "firewall_rule",
+            Some("3"),
+            &serde_json::json!({"a":1}),
+        )
+        .await
+        .unwrap();
         s.audit("=evil", "delete", "nat_rule", None, &serde_json::json!({}))
             .await
             .unwrap();
@@ -1472,7 +1702,10 @@ mod tests {
         assert_eq!(rows[0].user, "=evil");
         let (rows, total) = audit_search(
             &s,
-            &AuditFilter { entity: Some("firewall".into()), ..Default::default() },
+            &AuditFilter {
+                entity: Some("firewall".into()),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
