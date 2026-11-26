@@ -139,6 +139,20 @@ pub const CATALOG: &[Component] = &[
         binary: "wpa_supplicant",
     },
     Component {
+        id: "zabbix-agent2",
+        feature: "zabbix-agent",
+        title: "Zabbix agent 2",
+        atom: "net-analyzer/zabbix[agent2]",
+        binary: "zabbix_agent2",
+    },
+    Component {
+        id: "telegraf",
+        feature: "telegraf",
+        title: "Telegraf metrics agent",
+        atom: "app-metrics/telegraf-bin",
+        binary: "telegraf",
+    },
+    Component {
         id: "hostapd",
         feature: "wifi-ap",
         title: "hostapd (Wi-Fi access point)",

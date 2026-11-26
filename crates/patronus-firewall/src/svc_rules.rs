@@ -248,6 +248,40 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- monitoring agents (Zabbix agent 2, Telegraf's Prometheus client):
+    // their port on the configured interface only (the LAN by default), never
+    // the WAN. Both are off unless switched on.
+    for (slug, label, def_port, only_when) in [
+        ("zabbix", "Zabbix agent", 10050_i64, None),
+        (
+            "telegraf",
+            "Telegraf scrape",
+            9273_i64,
+            Some(("output", "prometheus_client")),
+        ),
+    ] {
+        let m = settings(store, slug).await?;
+        if !on(&m, "enabled") {
+            continue;
+        }
+        if let Some((k, v)) = only_when {
+            if m.get(k).map(String::as_str).unwrap_or(v) != v {
+                continue;
+            }
+        }
+        let port = m
+            .get("listen_port")
+            .and_then(|p| p.trim().parse::<i64>().ok())
+            .filter(|p| (1..=65535).contains(p))
+            .unwrap_or(def_port);
+        let spec = m.get("listen_iface").map(String::as_str).unwrap_or("@lan");
+        for d in devices(store, spec).await {
+            out.filter.push(format!(
+                "add rule {t} input iifname \"{d}\" tcp dport {port} accept comment \"{label}\""
+            ));
+        }
+    }
+
     // --- mDNS repeater: avahi-daemon receives 224.0.0.251 / ff02::fb on
     // every reflected interface (the table may not exist on old stores)
     let mdns = settings(store, "mdns").await?;

@@ -31,6 +31,8 @@
 		<flag name="smart">S.M.A.R.T. disk health: poll every disk with smartctl (smartmontools), keep the history, schedule short/long self-tests, alert on failing disks (Disk health page, `patronus smart`)</flag>
 		<flag name="igmp">IGMP proxy for multicast forwarding (igmpproxy)</flag>
 		<flag name="ups">UPS monitoring and clean shutdown through NUT (sys-power/nut): USB, SNMP and serial UPSes, history, power events, optional sharing with LAN hosts</flag>
+		<flag name="zabbix-agent">Optional Zabbix agent 2 (7.x) page: monitors the router from a Zabbix server, LAN only, no remote commands</flag>
+		<flag name="telegraf">Optional Telegraf page: Prometheus client on the LAN or InfluxDB push, typed inputs</flag>
 		<flag name="uci-import">patronus import-uci: one-step migration from an OpenWrt router configuration (sysupgrade backup or the running router over ssh)</flag>
 		<flag name="wifi-client">Wi-Fi client (station) uplink: use a wireless network as WAN or backup WAN through wpa_supplicant</flag>
 		<flag name="mdns">mDNS repeater: Bonjour/AirPlay/printer discovery across LAN segments (avahi-daemon reflector)</flag>

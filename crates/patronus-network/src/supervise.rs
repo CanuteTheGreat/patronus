@@ -189,11 +189,21 @@ pub fn write_atomic(path: &Path, content: &str, mode: u32) -> Result<bool> {
 pub(crate) fn identity<'a, I: IntoIterator<Item = &'a str>>(argv: I) -> Option<&'a str> {
     let mut it = argv.into_iter();
     let first = it.next()?;
-    if first.rsplit('/').next() != Some("env") {
-        return Some(first);
+    match first.rsplit('/').next() {
+        // `setpriv ... -- prog args` (an agent under its own unprivileged account) becomes prog
+        Some("setpriv") => {
+            let rest: Vec<&str> = it.collect();
+            match rest.iter().position(|a| *a == "--").and_then(|i| rest.get(i + 1)) {
+                Some(p) => identity(rest[rest.iter().position(|a| *a == "--").unwrap() + 1..].iter().copied())
+                    .or(Some(p)),
+                None => Some(first),
+            }
+        }
+        Some("env") => it
+            .find(|t| !t.starts_with('-') && !t.contains('='))
+            .or(Some(first)),
+        _ => Some(first),
     }
-    it.find(|t| !t.starts_with('-') && !t.contains('='))
-        .or(Some(first))
 }
 
 /// Every process below `pid` (children, grandchildren), read from /proc.
@@ -607,6 +617,23 @@ mod tests {
         assert_eq!(id(&["/usr/sbin/dhcpcd", "-B"]), Some("/usr/sbin/dhcpcd"));
         assert_eq!(id(&["/usr/bin/env", "A=1"]), Some("/usr/bin/env"));
         assert_eq!(id(&[]), None);
+    }
+
+    #[test]
+    fn a_setpriv_wrapper_is_looked_through() {
+        let w = [
+            "/usr/bin/setpriv",
+            "--reuid=zabbix",
+            "--regid=zabbix",
+            "--init-groups",
+            "--",
+            "/usr/sbin/zabbix_agent2",
+            "-f",
+        ];
+        assert_eq!(identity(w.iter().copied()).unwrap(), "/usr/sbin/zabbix_agent2");
+        assert_eq!(identity(["/usr/bin/igmpproxy", "-n"]), Some("/usr/bin/igmpproxy"));
+        assert_eq!(identity(["setpriv"]), Some("setpriv"), "no -- : nothing to look through");
+        assert_eq!(identity([]), None);
     }
 
     #[test]

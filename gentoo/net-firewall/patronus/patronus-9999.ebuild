@@ -34,6 +34,7 @@ IUSE="
 	+captive-portal
 	intrusion-detection suricata snort
 	syslog igmp ups mdns nat64 l2tp upnp vrf web-proxy dynamic-routing sdwan
+	zabbix-agent telegraf
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp +plugins
@@ -107,6 +108,8 @@ RDEPEND="
 	igmp? ( net-misc/igmpproxy )
 	smart? ( sys-apps/smartmontools )
 	ups? ( sys-power/nut[usb,snmp,serial] )
+	zabbix-agent? ( net-analyzer/zabbix[agent2] sys-apps/util-linux )
+	telegraf? ( app-metrics/telegraf-bin sys-apps/util-linux )
 	mdns? ( net-dns/avahi )
 	net-analyzer/tcpdump
 	net-analyzer/traceroute
@@ -251,6 +254,8 @@ src_configure() {
 		$(usex igmp "igmp" "")
 		$(usex smart "smart" "")
 		$(usex ups "ups" "")
+		$(usex zabbix-agent "zabbix-agent" "")
+		$(usex telegraf "telegraf" "")
 		$(usex mdns "mdns" "")
 		$(usex nat64 "nat64" "")
 		$(usex l2tp "l2tp" "")
@@ -401,6 +406,8 @@ src_install() {
 		use igmp && webfeatures+=( igmp )
 		use smart && webfeatures+=( smart )
 		use ups && webfeatures+=( ups )
+		use zabbix-agent && webfeatures+=( zabbix-agent )
+		use telegraf && webfeatures+=( telegraf )
 		use mdns && webfeatures+=( mdns )
 		use nat64 && webfeatures+=( nat64 )
 		use l2tp && webfeatures+=( l2tp )
@@ -518,6 +525,12 @@ src_install() {
 	# Create necessary directories
 	keepdir /var/lib/patronus
 	keepdir /var/log/patronus
+	# snapshot of the metrics the optional monitoring agents read (USE=zabbix-agent telegraf): written by the web UI
+	if use zabbix-agent || use telegraf; then
+		keepdir /var/lib/patronus-monagent
+		fowners patronus:patronus /var/lib/patronus-monagent
+		fperms 0755 /var/lib/patronus-monagent
+	fi
 	keepdir /etc/patronus/rules.d
 	keepdir /etc/patronus/openvpn
 	keepdir /etc/patronus/ipsec

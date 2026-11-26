@@ -206,6 +206,18 @@ enum Commands {
         action: PolicyCommands,
     },
 
+    /// Answer one Zabbix item from the metrics snapshot (called by the Zabbix
+    /// agent's UserParameter; USE=zabbix-agent). Prints the value, exit 1 and a
+    /// message on stderr when it cannot answer.
+    #[cfg(feature = "zabbix-agent")]
+    #[command(name = "zabbix-item")]
+    ZabbixItem {
+        /// item key, for example gateway.up or firewall.rules
+        key: String,
+        /// gateway or service name for the keys that take one
+        arg: Option<String>,
+    },
+
     /// Guest network: an isolated VLAN/Wi-Fi network for visitors (USE=guest)
     #[cfg(feature = "guest")]
     Guest {
@@ -784,6 +796,11 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Policy { action } => {
             policy::handle_policy_command(action, cli.config).await?;
+        }
+
+        #[cfg(feature = "zabbix-agent")]
+        Commands::ZabbixItem { key, arg } => {
+            commands::monagent::zabbix_item(key, arg.unwrap_or_default());
         }
 
         #[cfg(feature = "guest")]

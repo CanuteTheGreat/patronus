@@ -20,6 +20,8 @@ pub mod import_uci;
 pub mod init;
 pub mod ipdb;
 pub mod metrics;
+#[cfg(feature = "zabbix-agent")]
+pub mod monagent;
 #[cfg(feature = "plugins")]
 pub mod plugin;
 pub mod policy;
