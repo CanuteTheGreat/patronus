@@ -14,16 +14,16 @@
 #![allow(clippy::result_large_err)]
 
 use crate::auth::AdminUser;
-use crate::state::AppState;
 use crate::state::accesslog::{self, AuditFilter, Filter, SettingsInput};
+use crate::state::AppState;
 use askama::Template;
 use axum::response::Html;
 use axum::{
-    Json, Router,
     extract::{Query, State},
-    http::{StatusCode, header},
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
+    Json, Router,
 };
 use serde_json::json;
 
