@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 pub mod apikeys;
 pub mod auth;
 pub mod backup_remote;
+pub mod dashboard;
 pub mod geo_centroid;
 #[cfg(feature = "ldap")]
 pub mod ldap;

@@ -56,6 +56,8 @@ cp ci/netlab/lib.sh "$OUT/"
 cp -r ci/netlab/fixtures "$OUT/"
 # lane T UI scenario drives this Playwright script
 cp ci/guest-page-e2e.py "$OUT/"
+# lane U UI scenario (dashboard widgets, activity page, port test) drives this Playwright script (+ the vendored axe-core)
+cp ci/dashboard-page-e2e.py ci/a11y/vendor/axe.min.js "$OUT/"
 # lane J XDP data plane: the shipped BPF program source
 cp crates/patronus-ebpf/src/xdp_firewall.bpf.c "$OUT/"
 OLD_ENV=

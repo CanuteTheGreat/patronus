@@ -66,6 +66,53 @@ NL_CURL_MAX=20 diag '{"tool":"dns","name":"www.example.test","server":"198.51.10
 [ "$NL_CODE" = 504 ] || nl_fail "dead server: $NL_CODE $(cat "$NL_OUT")"
 nl_ok "a server that never answers: 504 with the reason"
 
+echo "=== 3b. TCP port test (open / closed / filtered)"
+cat > "$NL_T/nl-listen.py" <<'PY'
+import socket, sys
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind((sys.argv[1], int(sys.argv[2]))); s.listen(16)
+while True:
+    c, _ = s.accept(); c.close()
+PY
+nl_bg INET python3 "$NL_T/nl-listen.py" 0.0.0.0 9100
+INET nft add table ip nlt
+INET nft add chain ip nlt in '{ type filter hook input priority 0; }'
+INET nft add rule ip nlt in tcp dport 9102 drop
+tcp() { diag "{\"tool\":\"tcp\",\"host\":\"$NL_WWW\",\"port\":$1$2}"; }
+state=""
+for _ in $(seq 1 20); do
+  tcp 9100 ",\"timeout\":3"
+  [ "$NL_CODE" = 200 ] || nl_fail "tcp test: $NL_CODE $(cat "$NL_OUT")"
+  state=$(j 'd["state"]'); [ "$state" = open ] && break; sleep 0.5
+done
+[ "$state" = open ] || nl_fail "listener on $NL_WWW:9100 not reported open: $(cat "$NL_OUT")"
+[ "$(j 'd["resolved"]')" = "$NL_WWW" ] || nl_fail "resolved address: $(cat "$NL_OUT")"
+nl_ok "a listening port is open (resolved $NL_WWW, $(j 'd["ms"]') ms)"
+tcp 9101 ",\"timeout\":3"
+[ "$NL_CODE" = 200 ] && [ "$(j 'd["state"]')" = closed ] || nl_fail "refused port not reported closed: $(cat "$NL_OUT")"
+nl_ok "a port nobody listens on is closed (connection refused)"
+tcp 9102 ",\"timeout\":2"
+[ "$NL_CODE" = 200 ] && [ "$(j 'd["state"]')" = filtered ] || nl_fail "dropped port not reported filtered: $(cat "$NL_OUT")"
+[ "$(j 'd["ms"]')" -ge 1900 ] || nl_fail "filtered answered before the timeout: $(cat "$NL_OUT")"
+nl_ok "a port a firewall drops is filtered after the 2 s timeout"
+tcp 9100 ",\"interface\":\"$NL_WAN_IF\",\"family\":\"4\""
+[ "$NL_CODE" = 200 ] && [ "$(j 'd["state"]')" = open ] || nl_fail "tcp test through a source interface: $(cat "$NL_OUT")"
+nl_ok "the test can be pinned to a source interface and IPv4"
+for body in '{"tool":"tcp","host":"x; id","port":80}' '{"tool":"tcp","host":"-x","port":80}' \
+            '{"tool":"tcp","host":"198.51.100.10","port":0}' '{"tool":"tcp","host":"198.51.100.10","port":70000}' \
+            '{"tool":"tcp","host":"198.51.100.10"}' '{"tool":"tcp","host":"198.51.100.10","port":80,"timeout":99}' \
+            '{"tool":"tcp","host":"198.51.100.10","port":80,"source":"x"}' '{"tool":"tcp","host":"198.51.100.10","port":80,"interface":"-i"}'; do
+  diag "$body"
+  [ "$NL_CODE" = 400 ] || nl_fail "hostile tcp request not refused ($NL_CODE): $body"
+done
+nl_ok "8 malformed port tests refused with 400"
+nl_api PUT /v1/dashboard/settings '{"tcp_tests_per_minute":1}'
+[ "$NL_CODE" = 200 ] || nl_fail "set the port-test rate: $NL_CODE $(cat "$NL_OUT")"
+tcp 9101 ",\"timeout\":2"
+[ "$NL_CODE" = 429 ] || nl_fail "rate limit not applied ($NL_CODE): $(cat "$NL_OUT")"
+nl_ok "past the configured rate (1 per minute) the answer is 429"
+nl_api PUT /v1/dashboard/settings '{"tcp_tests_per_minute":30}'
+
 echo "=== 4. tables"
 C ping -c1 -W2 "$NL_RTR_LAN" >/dev/null
 MAC=$(C cat /sys/class/net/lan0/address)

@@ -1,0 +1,10 @@
+<div class="stat-card{% if internet_gw.is_empty() %} warning{% endif %}" id="internet-card">
+        <h2>Internet</h2>
+        {% if internet_gw.is_empty() %}
+        <div class="value" id="internet-status">No default route</div>
+        <div class="label">This box has no IPv4 route to the internet; set the WAN in <a href="/interfaces">Interfaces</a>.</div>
+        {% else %}
+        <div class="value" id="internet-status">Route up</div>
+        <div class="label">Default route via <span class="mono">{{ internet_gw }}</span> on <strong>{{ internet_dev }}</strong> (<a href="/network">routes</a>)</div>
+        {% endif %}
+    </div>

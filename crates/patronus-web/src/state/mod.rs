@@ -14,6 +14,7 @@
 //! configuration. No subsystem may show fixture rows: an empty system shows
 //! an empty list (see tests/no_fixtures.rs).
 
+pub mod activity;
 pub mod firewall;
 pub mod fwfeeds;
 pub mod fwlog;

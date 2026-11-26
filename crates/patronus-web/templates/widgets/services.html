@@ -1,0 +1,13 @@
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Services</h2></div>
+    {% if services.is_empty() %}
+    <p class="empty">None of the services Patronus manages are installed on this system (or the init system is not systemd/OpenRC).</p>
+    {% else %}
+    <p class="text-sm">
+        {% for s in services %}
+        {{ s.name }}: {% if s.is_running %}<span class="ok">running</span>{% else %}<span class="text-muted">{{ s.status|lower }}</span>{% endif %}{% if !loop.last %} &middot; {% endif %}
+        {% endfor %}
+        &middot; <a href="/system">details</a>
+    </p>
+    {% endif %}
+</div>

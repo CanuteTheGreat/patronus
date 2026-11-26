@@ -442,8 +442,20 @@ async fn every_template_link_resolves_to_a_page() {
     let a = app().await;
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let mut links = std::collections::BTreeSet::new();
-    for e in std::fs::read_dir(&root).unwrap().flatten() {
-        let text = std::fs::read_to_string(e.path()).unwrap();
+    // templates/ and its subdirectories (widgets/ holds the dashboard cards)
+    let mut files = Vec::new();
+    let mut dirs = vec![root.clone()];
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(&d).unwrap().flatten() {
+            if e.path().is_dir() {
+                dirs.push(e.path());
+            } else {
+                files.push(e.path());
+            }
+        }
+    }
+    for f in files {
+        let text = std::fs::read_to_string(&f).unwrap();
         for chunk in text.split("<a ").skip(1) {
             let tag = chunk.split('>').next().unwrap_or("");
             if let Some(rest) = tag.split("href=\"").nth(1) {

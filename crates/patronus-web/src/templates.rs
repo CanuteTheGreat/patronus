@@ -29,6 +29,23 @@ pub struct DashboardTemplate {
     pub iface_rows: Vec<DashIface>,
     /// Live throughput per non-loopback interface (rate over a short sample window).
     pub traffic: Vec<DashTraffic>,
+    /// The widgets to draw, in the viewer's order (`crate::dashboard`).
+    pub widgets: Vec<crate::dashboard::DashWidget>,
+    /// Widgets switched off for the viewer: the "add" list of the customize mode.
+    pub hidden_widgets: Vec<crate::dashboard::DashWidget>,
+    /// `dashboard.refresh_seconds` (0 = the page never re-reads itself).
+    pub refresh_seconds: u32,
+    /// The resolved layout as JSON, read by the customize mode script.
+    pub layout_json: String,
+    /// The viewer saved their own layout (the "Reset to default" button shows).
+    pub customized: bool,
+}
+
+/// System activity page template (static shell; data from the API).
+#[derive(Template)]
+#[template(path = "activity.html")]
+pub struct ActivityTemplate {
+    pub page: &'static str,
 }
 
 /// One row of the dashboard's Traffic tile.
@@ -793,6 +810,14 @@ mod tests {
             internet_gw: String::new(),
             dhcp_leases: None,
             iface_rows: vec![],
+            widgets: crate::dashboard::all_on(crate::dashboard::Viewer {
+                role: crate::auth::UserRole::Admin,
+                access_point: false,
+            }),
+            hidden_widgets: vec![],
+            layout_json: "{\"widgets\":[]}".to_string(),
+            refresh_seconds: 0,
+            customized: false,
             traffic: vec![],
         }
         .render()
@@ -817,6 +842,14 @@ mod tests {
             internet_gw: "10.0.2.2".into(),
             dhcp_leases: Some(3),
             iface_rows: vec![],
+            widgets: crate::dashboard::all_on(crate::dashboard::Viewer {
+                role: crate::auth::UserRole::Admin,
+                access_point: false,
+            }),
+            hidden_widgets: vec![],
+            layout_json: "{\"widgets\":[]}".to_string(),
+            refresh_seconds: 0,
+            customized: false,
             traffic: vec![],
         }
         .render()
@@ -845,6 +878,14 @@ mod tests {
             internet_gw: String::new(),
             dhcp_leases: Some(7),
             iface_rows: vec![],
+            widgets: crate::dashboard::all_on(crate::dashboard::Viewer {
+                role: crate::auth::UserRole::Admin,
+                access_point: false,
+            }),
+            hidden_widgets: vec![],
+            layout_json: "{\"widgets\":[]}".to_string(),
+            refresh_seconds: 0,
+            customized: false,
             traffic: vec![],
         };
         let shown = t.render().unwrap();
@@ -885,6 +926,14 @@ mod tests {
                     addrs: "none".into(),
                 },
             ],
+            widgets: crate::dashboard::all_on(crate::dashboard::Viewer {
+                role: crate::auth::UserRole::Admin,
+                access_point: false,
+            }),
+            hidden_widgets: vec![],
+            layout_json: "{\"widgets\":[]}".to_string(),
+            refresh_seconds: 0,
+            customized: false,
             traffic: vec![DashTraffic {
                 name: "enp0s1".into(),
                 rx: "1.5 KB/s".into(),

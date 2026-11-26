@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}System activity - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    .act-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .act-table th button { background: none; border: 0; color: inherit; font: inherit; font-weight: 600; cursor: pointer; padding: 0.2rem 0.1rem; }
+    .act-table th button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .act-table td.num, .act-table th.num { text-align: right; }
+    .act-table td.cmd { max-width: 34em; overflow-wrap: anywhere; font-size: 0.8rem; }
+    .act-scroll { overflow-x: auto; }
+    .act-controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin-bottom: 0.75rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">System activity</h1>
+    <p class="page-subtitle">The busiest processes, load, CPU and memory, and what each Patronus daemon uses.
+        Read from <span class="mono">/proc</span> a few seconds apart; passwords and tokens on command lines are hidden.</p>
+</div>
+
+<div class="act-summary" id="act-summary" aria-live="off">
+    <div class="stat-card"><h2>CPU</h2><div class="value" id="act-cpu">-</div><div class="label" id="act-cpus">Loading...</div></div>
+    <div class="stat-card"><h2>Load average</h2><div class="value" id="act-load">-</div><div class="label">1 / 5 / 15 minutes</div></div>
+    <div class="stat-card"><h2>Memory</h2><div class="value" id="act-mem">-</div><div class="label" id="act-mem-detail"></div></div>
+    <div class="stat-card"><h2>Processes</h2><div class="value" id="act-count">-</div><div class="label" id="act-age"></div></div>
+</div>
+
+<div class="card" id="act-daemons-card">
+    <div class="card-header"><h2 class="card-title">Daemons</h2></div>
+    <div class="act-scroll">
+    <table class="lan act-table" id="act-daemons">
+        <thead><tr><th scope="col">Service</th><th scope="col">What it does</th><th scope="col" class="num">Processes</th><th scope="col" class="num">CPU</th><th scope="col" class="num">Memory</th><th scope="col" class="num">Threads</th></tr></thead>
+        <tbody><tr><td colspan="6" class="text-muted">Collecting the first samples...</td></tr></tbody>
+    </table>
+    </div>
+</div>
+
+<div class="card" id="act-processes-card">
+    <div class="card-header"><h2 class="card-title">Processes</h2></div>
+    <div class="act-controls">
+        <label>Show <select id="act-limit"><option>10</option><option selected>25</option><option>50</option><option>100</option><option>500</option></select> processes</label>
+        <label>Only daemon <select id="act-daemon"><option value="">(all processes)</option></select></label>
+        <span class="text-sm" id="act-status" role="status" aria-live="polite"></span>
+    </div>
+    <div class="act-scroll">
+    <table class="lan act-table" id="act-procs">
+        <thead><tr>
+            <th scope="col" class="num" aria-sort="none"><button type="button" data-sort="pid">PID</button></th>
+            <th scope="col" aria-sort="none"><button type="button" data-sort="user">User</button></th>
+            <th scope="col" aria-sort="none"><button type="button" data-sort="name">Process</button></th>
+            <th scope="col" class="num" aria-sort="descending"><button type="button" data-sort="cpu">CPU</button></th>
+            <th scope="col" class="num" aria-sort="none"><button type="button" data-sort="memory">Memory</button></th>
+            <th scope="col" class="num" aria-sort="none"><button type="button" data-sort="threads">Threads</button></th>
+            <th scope="col">State</th>
+            <th scope="col">Command</th>
+        </tr></thead>
+        <tbody><tr><td colspan="8" class="text-muted">Collecting the first samples...</td></tr></tbody>
+    </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+    var sort = 'cpu', order = 'desc', timer = null, haveDaemons = {};
+    function el(id) { return document.getElementById(id); }
+    function fmt(b) { return b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GiB' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MiB' : Math.round(b / 1024) + ' KiB'; }
+    function td(tr, text, cls) { var c = document.createElement('td'); c.textContent = text; if (cls) c.className = cls; tr.appendChild(c); return c; }
+    function empty(tb, cols, text) { tb.innerHTML = ''; var tr = document.createElement('tr'), c = td(tr, text, 'text-muted'); c.colSpan = cols; tb.appendChild(tr); }
+    function render(j) {
+        if (!j.ready) { el('act-cpus').textContent = 'Collecting the first samples...'; return false; }
+        el('act-cpu').textContent = j.cpu_percent.toFixed(1) + '%';
+        el('act-cpus').textContent = j.cpus + (j.cpus === 1 ? ' CPU' : ' CPUs') + ', measured over ' + j.interval_secs.toFixed(1) + ' s';
+        el('act-load').textContent = j.load.one.toFixed(2);
+        el('act-load').nextElementSibling.textContent = j.load.one.toFixed(2) + ' / ' + j.load.five.toFixed(2) + ' / ' + j.load.fifteen.toFixed(2) + ' (1 / 5 / 15 minutes)';
+        var used = j.memory.total - j.memory.available;
+        el('act-mem').textContent = j.memory.total ? Math.round(used * 100 / j.memory.total) + '%' : '-';
+        el('act-mem-detail').textContent = fmt(used) + ' used of ' + fmt(j.memory.total) +
+            (j.memory.swap_total ? ' \u00b7 swap ' + fmt(j.memory.swap_total - j.memory.swap_free) + ' of ' + fmt(j.memory.swap_total) : '');
+        el('act-count').textContent = String(j.process_count);
+        el('act-age').textContent = 'updated ' + j.age_secs + ' s ago, every ' + j.sample_every_secs + ' s';
+        var db = el('act-daemons').querySelector('tbody');
+        if (!j.daemons.length) empty(db, 6, 'None of the services Patronus manages are running.');
+        else {
+            db.innerHTML = '';
+            j.daemons.forEach(function (d) {
+                var tr = document.createElement('tr');
+                td(tr, d.name, 'mono'); td(tr, d.description); td(tr, String(d.processes), 'num'); td(tr, d.cpu_percent.toFixed(1) + '%', 'num');
+                td(tr, fmt(d.rss_bytes), 'num'); td(tr, String(d.threads), 'num');
+                db.appendChild(tr);
+            });
+        }
+        var sel = el('act-daemon');
+        j.daemons.forEach(function (d) {
+            if (!haveDaemons[d.name]) { haveDaemons[d.name] = true; var o = document.createElement('option'); o.value = d.name; o.textContent = d.name; sel.appendChild(o); }
+        });
+        var pb = el('act-procs').querySelector('tbody');
+        if (!j.processes.length) empty(pb, 8, 'No process matches.');
+        else {
+            pb.innerHTML = '';
+            j.processes.forEach(function (p) {
+                var tr = document.createElement('tr');
+                td(tr, String(p.pid), 'num'); td(tr, p.user); td(tr, p.name, 'mono'); td(tr, p.cpu_percent.toFixed(1) + '%', 'num');
+                td(tr, fmt(p.rss_bytes), 'num'); td(tr, String(p.threads), 'num'); td(tr, p.state); td(tr, p.command, 'cmd mono');
+                pb.appendChild(tr);
+            });
+        }
+        el('act-status').textContent = 'Showing ' + j.processes.length + ' of ' + j.matched + ', sorted by ' + j.sort + ' (' + (j.order === 'desc' ? 'high to low' : 'low to high') + ').';
+        return true;
+    }
+    function load() {
+        var q = '?sort=' + sort + '&order=' + order + '&limit=' + el('act-limit').value + (el('act-daemon').value ? '&daemon=' + encodeURIComponent(el('act-daemon').value) : '');
+        fetch('/api/v1/system/activity' + q, { credentials: 'same-origin' })
+            .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; }); })
+            .then(function (j) {
+                var ok = render(j);
+                clearTimeout(timer);
+                timer = setTimeout(load, ok ? Math.max(2000, (j.sample_every_secs || 3) * 1000) : 1000);
+            })
+            .catch(function (e) { el('act-status').textContent = 'Could not read the activity: ' + e.message; clearTimeout(timer); timer = setTimeout(load, 5000); });
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('#act-procs th button'), function (b) {
+        b.addEventListener('click', function () {
+            var k = b.dataset.sort;
+            if (sort === k) order = order === 'desc' ? 'asc' : 'desc'; else { sort = k; order = (k === 'name' || k === 'user' || k === 'pid') ? 'asc' : 'desc'; }
+            Array.prototype.forEach.call(document.querySelectorAll('#act-procs th'), function (th) { th.setAttribute('aria-sort', 'none'); });
+            b.parentNode.setAttribute('aria-sort', order === 'desc' ? 'descending' : 'ascending');
+            load();
+        });
+    });
+    el('act-limit').addEventListener('change', load);
+    el('act-daemon').addEventListener('change', load);
+    load();
+})();
+</script>
+{% endblock %}

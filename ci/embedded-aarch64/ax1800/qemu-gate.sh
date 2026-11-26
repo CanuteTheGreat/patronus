@@ -123,6 +123,17 @@ ap_pages() { c=$(wapi https://127.0.0.1:$WEBP/dhcp); grep -q 'This unit is an ac
   c=$(wapi -X PUT -d '{"enabled":true}' https://127.0.0.1:$WEBP/api/svc/guest); [ "$c" = 409 ] || { echo "guest network change on an AP: HTTP $c"; return 1; }
   c=$(wapi https://127.0.0.1:$WEBP/wifi); [ "$c" = 200 ] && grep -q 'id="wifi-networks"' "$W/api.json" || { echo "/wifi page: $c"; return 1; }; }
 WIFI_SET='{"country":"US","chan24":"6","chan5":"36","width5":80,"wifi6":true,"networks":[{"ssid":"CI Gate Net","key":"ci-gate-wifi-pass","security":"wpa2+3","enabled":true},{"ssid":"CI Gate IoT","key":"ci-gate-iot-pass","bands":"24","isolate":true,"enabled":true}]}'
+# Dashboard widgets + system activity on the access-point image: both APIs answer 200 (/proc only, no top/ps), the
+# activity answer has real processes (patronus-web itself) and no secret, a layout round-trips, an unknown id is 400.
+dash_activity() { login || return 1
+  c=""; for _ in $(seq 1 15); do c=$(wapi https://127.0.0.1:$WEBP/api/v1/system/activity?limit=500); grep -q '"ready":true' "$W/api.json" && break; sleep 1; done
+  [ "$c" = 200 ] && grep -q '"ready":true' "$W/api.json" && grep -q patronus-web "$W/api.json" || { echo "activity: HTTP $c $(head -c 300 "$W/api.json")"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/api/v1/dashboard/layout); [ "$c" = 200 ] && grep -q '"registry"' "$W/api.json" || { echo "layout GET: $c"; return 1; }
+  c=$(wapi -X PUT -d '{"widgets":[{"id":"system","on":true},{"id":"internet","on":false}]}' https://127.0.0.1:$WEBP/api/v1/dashboard/layout)
+  [ "$c" = 200 ] && grep -q '"customized":true' "$W/api.json" || { echo "layout PUT: $c $(head -c 300 "$W/api.json")"; return 1; }
+  c=$(wapi -X PUT -d '{"widgets":[{"id":"nope","on":true}]}' https://127.0.0.1:$WEBP/api/v1/dashboard/layout); [ "$c" = 400 ] || { echo "unknown widget id: HTTP $c"; return 1; }
+  c=$(wapi -X DELETE https://127.0.0.1:$WEBP/api/v1/dashboard/layout); [ "$c" = 200 ] || { echo "layout DELETE: $c"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/activity); [ "$c" = 200 ] && grep -q 'id="act-procs"' "$W/api.json" || { echo "/activity page: $c"; return 1; }; }
 wifi_set() { c=$(wapi -X PUT -d "$WIFI_SET" https://127.0.0.1:$WEBP/api/wifi); r=$(cat "$W/api.json")
   [ "$c" = 200 ] || { echo "PUT /api/wifi: $c $r"; return 1; }
   c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=$(cat "$W/api.json")
@@ -545,6 +556,7 @@ if has_feature syslog; then
 else echo "SKIP: Syslog (not in FEATURES=$FEATURES)" | tee -a "$RES/results.txt"; fi
 check "features: role ap, Wi-Fi backend, \"not available\" list with reasons" features_ap
 check "AP role: router-only pages explain the main router, their APIs refuse changes (409); Wi-Fi page served" ap_pages
+check "dashboard widgets + system activity: both APIs answer 200 on the booted image, a layout round-trips, an unknown widget id is 400" dash_activity
 check "Wi-Fi channel plan: automatic channel (ACS) by default on both radios, width/DFS/channel lists/survey rounds settable, bad values 400" wifi_chanplan
 check "Wi-Fi page API: networks + radios written to the access-point file (0600), no key in GET, bad channel 400, admin reveal" wifi_set
 check "Wi-Fi restart path: hostapd started into its own transient scope (systemd)" wifi_scope
