@@ -9,7 +9,7 @@
 # passes. A rule Suricata rejects leaves the old rules running; reboot and
 # disable are checked.
 #
-# Rule-set manager (C87): a local HTTP "rule source" serves a test rule set (no internet in CI);
+# Rule-set manager (C120): a local HTTP "rule source" serves a test rule set (no internet in CI);
 # the product's own task downloads it, a policy turns its rule into a drop (really dropped inline),
 # a category / classtype / SID policy beats the ruleset one, an alert-only policy only logs, a
 # suppress made from an alert stops the alert, a broken download is refused (suricata -T) while
