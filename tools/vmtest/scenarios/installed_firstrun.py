@@ -32,17 +32,20 @@ WAN_NET, WAN_GW = "10.0.2.15/24", "10.0.2.2"
 LAN_IP, POOL = "10.77.0.1", ("10.77.0.100", "10.77.0.199")
 CLIENT_MAC, RESERVED = "52:54:00:02:00:01", "10.77.0.50"
 UNUSED_LAN = "10.88.0.1/24"          # what a half-applied failing wizard would leave on the LAN port
-# the virtual ISP (Alpine node on hub "isp"): IPv4 transit, RA + DHCPv6 with prefix delegation (kea), PPPoE access concentrator
+# the virtual ISP (Alpine "standard" image: its linux-lts kernel has the pppoe module, linux-virt does not) on hub "isp": IPv4 transit, RA + DHCPv6 with prefix delegation (kea), PPPoE access concentrator
+ALPINE_STD = ("https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-standard-3.24.4-x86_64.iso",
+              "92e3e4e4c6b8e265a889278de2a633c0f1456ca52820952666ecb395c3d23582")
 FW_ISP_MAC, ISP_MAC = "52:54:00:01:00:04", "52:54:00:03:00:01"
 ISP_V4, ISP_WAN_V4 = "203.0.113.1", "203.0.113.2/24"
 ISP_V6_NET, PD_POOL, PD_POOL_LEN, PD_LEN = "2001:db8:ffff::", "2001:db8:1000::", 40, 56
 PD_POOL_PREFIX = "2001:db8:10"        # every delegated /56 starts with it, and so does the LAN's /64 out of it
 PPP_USER, PPP_SECRET = "wizard-user", "wizard-s3cret"
 ALPINE_REPO = "https://dl-cdn.alpinelinux.org/alpine/v3.24/main"
-# the live Alpine image starts with every NIC down and no pppoe kernel module (modloop of linux-virt): bring eth0 up for DHCP, and run the
-# access concentrator in user mode (no -k); the firewall's side is the real kernel PPPoE client
+# the live Alpine image starts with every NIC down: bring eth0 up for DHCP. rp-pppoe 4's pppoe-server is kernel-mode PPPoE (pppoe module)
+# Alpine's rp-pppoe execs "pppd" by its bare name (execv, no PATH search) with a plugin built for an older pppd: start it from
+# /usr/sbin in the foreground (a daemon chdirs to /) and hand it pppd's own pppoe.so (-g)
 ISP_SETUP = (f"ip link set eth0 up && timeout 60 udhcpc -i eth0 -q -n -t 10 >/dev/null 2>&1 && echo {ALPINE_REPO} > /etc/apk/repositories && "
-             "timeout 180 apk update -q && timeout 300 apk add -q radvd kea-dhcp6 rp-pppoe ppp-daemon ppp-pppoe >/dev/null && modprobe ppp_generic; "
+             "timeout 180 apk update -q && timeout 300 apk add -q radvd kea-dhcp6 rp-pppoe ppp-daemon ppp-pppoe >/dev/null && modprobe pppoe && "
              f"sysctl -qw net.ipv6.conf.eth1.accept_dad=0 && ip link set eth1 up && ip addr add {ISP_V4}/24 dev eth1 && ip -6 addr add {ISP_V6_NET}1/64 dev eth1 && "
              "sysctl -qw net.ipv6.conf.all.forwarding=1 net.ipv4.ip_forward=1")
 _RADVD = ("interface eth1 { AdvSendAdvert on; AdvManagedFlag on; AdvOtherConfigFlag on; MinRtrAdvInterval 3; MaxRtrAdvInterval 6; "
@@ -58,7 +61,7 @@ ISP_V6_START = (f"printf '%s\\n' '{_RADVD}' > /tmp/radvd.conf && printf '%s\\n' 
 ISP_V6_STOP = "kill $(cat /tmp/radvd.pid) 2>/dev/null; pkill kea-dhcp6; ip -6 route flush proto static 2>/dev/null; true"
 ISP_PPPOE_START = (f"printf 'require-pap\\nlcp-echo-interval 10\\nlcp-echo-failure 3\\nms-dns {ISP_V4}\\n' > /etc/ppp/pppoe-server-options && "
                    f"printf '\"{PPP_USER}\" * \"{PPP_SECRET}\" *\\n' > /etc/ppp/pap-secrets && chmod 600 /etc/ppp/pap-secrets && "
-                   "pppoe-server -I eth1 -L 100.64.0.1 -R 100.64.0.10 -N 4 && sleep 1 && pgrep pppoe-server >/dev/null")
+                   "(cd /usr/sbin && pppoe-server -F -k -g $(ls /usr/lib/pppd/*/pppoe.so | head -1) -I eth1 -L 100.64.0.1 -R 100.64.0.10 -N 4 > /tmp/pppoe-server.log 2>&1 &) && sleep 1 && pgrep pppoe-server >/dev/null")
 ISP_PPPOE_STOP = "pkill pppoe-server; pkill pppd; true"
 
 # runs inside the guest: log in once (cookie jar), then METHOD PATH [JSON] -> "HTTP <code>\n<body>"
@@ -114,7 +117,7 @@ def define(args):
                   nics=[Nic("user", forwards={}), Nic("lan", mac="52:54:00:01:00:01"), Nic("isp", mac=FW_ISP_MAC)])
     cli = NodeSpec(name="cli", mem=512, cpus=1, iso=args.get("client_iso") or cache.fetch(*ALPINE), disks=[Disk("1G")],
                    nics=[Nic("user", forwards={}), Nic("lan", mac=CLIENT_MAC)])
-    isp = NodeSpec(name="isp", mem=768, cpus=1, iso=args.get("client_iso") or cache.fetch(*ALPINE), disks=[Disk("1G")],
+    isp = NodeSpec(name="isp", mem=1024, cpus=1, iso=args.get("isp_iso") or cache.fetch(*ALPINE_STD), disks=[Disk("1G")],
                    nics=[Nic("user", forwards={}), Nic("isp", mac=ISP_MAC)])
 
     def run(m):
