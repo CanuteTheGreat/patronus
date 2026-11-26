@@ -239,7 +239,7 @@
     <p class="empty">No IPsec SAs (`swanctl --list-sas` is empty).</p>
     {% else %}
     <table class="lan" id="ipsec-sas">
-        <thead><tr><th>Name</th><th>State</th><th>Local subnets</th><th>Remote subnets</th><th>Remote gateway</th></tr></thead>
+        <thead><tr><th>Name</th><th>State</th><th>Local subnets</th><th>Remote subnets</th><th>Remote gateway</th><th>Received bytes</th><th>Sent bytes</th></tr></thead>
         <tbody>
         {% for t in ipsec_tunnels %}
         <tr>
@@ -248,6 +248,8 @@
             <td>{{ t.local_subnet }}</td>
             <td>{{ t.remote_subnet }}</td>
             <td>{{ t.remote_gateway }}</td>
+            <td>{% match t.bytes_in %}{% when Some with (n) %}{{ n }}{% when None %}<span class="text-muted">unavailable</span>{% endmatch %}</td>
+            <td>{% match t.bytes_out %}{% when Some with (n) %}{{ n }}{% when None %}<span class="text-muted">unavailable</span>{% endmatch %}</td>
         </tr>
         {% endfor %}
         </tbody>
