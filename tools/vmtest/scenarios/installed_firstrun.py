@@ -279,14 +279,14 @@ def define(args):
         except Exception:
             print("### fw: " + fw.execute("ip addr; tail -40 /var/log/messages 2>/dev/null; ls /etc/ppp/peers; " + fw.init.status_all() + " | grep -i ppp", 60)[1][-2500:], flush=True)
             m.check("pppoe-session-up", False, "pppoe0 got no address from the access concentrator in 120 s")
-        roles = fw.succeed("patronus interfaces roles")
+        roles = fw.succeed("patronus interfaces roles 2>/dev/null")
         m.check("wan-role-moved-to-the-ppp-device", "WAN    pppoe0" in roles and isp_if not in roles, roles.strip())
         m.check("pppoe-mtu", "mtu 1492" in fw.execute("ip link show dev pppoe0")[1], fw.execute("ip link show dev pppoe0")[1].strip()[:160])
         m.check("masquerade-on-the-ppp-device", 'oifname "pppoe0"' in fw.succeed("nft list ruleset"), "nftables")
 
         m.phase("8. OPT interface on the spare port (patronus interfaces assign; the console-file path is proven in installed_pfsense_import)")
         out = fw.succeed(f"patronus interfaces assign --wan pppoe0 --lan {LAN} --opt {WAN} 2>&1", timeout=120)
-        roles = fw.succeed("patronus interfaces roles")
+        roles = fw.succeed("patronus interfaces roles 2>/dev/null")
         m.check("opt1-role-on-the-spare-port", f"OPT1   {WAN}" in roles and f"LAN    {LAN}" in roles and "WAN    pppoe0" in roles,
                 roles.strip() + " | " + out.strip()[-200:])
         m.check("assign-kept-a-revision", "interface assignment" in fw.succeed("patronus config revisions"), "config revisions")
