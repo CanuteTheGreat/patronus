@@ -1,0 +1,59 @@
+2026-11-26 06:44:50 Note: --cipher is not set. OpenVPN versions before 2.5 defaulted to BF-CBC as fallback when cipher negotiation failed in this case. If you need this fallback please add '--data-ciphers-fallback BF-CBC' to your configuration and/or add BF-CBC to --data-ciphers.
+2026-11-26 06:44:50 Note: Kernel support for ovpn-dco missing, disabling data channel offload.
+2026-11-26 06:44:50 OpenVPN 2.6.19 aarch64-unknown-linux-gnu [SSL (OpenSSL)] [LZO] [LZ4] [EPOLL] [PKCS11] [MH/PKTINFO] [AEAD] [DCO]
+2026-11-26 06:44:50 library versions: OpenSSL 3.0.13 30 Jan 2024, LZO 2.10
+2026-11-26 06:44:50 DCO version: N/A
+2026-11-26 06:44:50 net_route_v4_best_gw query: dst 0.0.0.0
+2026-11-26 06:44:50 net_route_v4_best_gw result: via 10.77.0.1 dev eth0
+2026-11-26 06:44:50 NOTE: the current --script-security setting may allow this configuration to call user-defined scripts
+2026-11-26 06:44:50 TUN/TAP device tun0 opened
+2026-11-26 06:44:50 net_iface_mtu_set: mtu 1500 for tun0
+2026-11-26 06:44:50 net_iface_up: set tun0 up
+2026-11-26 06:44:50 net_addr_v4_add: 10.8.0.1/24 dev tun0
+2026-11-26 06:44:50 Could not determine IPv4/IPv6 protocol. Using AF_INET
+2026-11-26 06:44:50 Socket Buffers: R=[212992->212992] S=[212992->212992]
+2026-11-26 06:44:50 UDPv4 link local (bound): [AF_INET][undef]:1194
+2026-11-26 06:44:50 UDPv4 link remote: [AF_UNSPEC]
+2026-11-26 06:44:50 MULTI: multi_init called, r=256 v=256
+2026-11-26 06:44:50 IFCONFIG POOL IPv4: base=10.8.0.2 size=253
+2026-11-26 06:44:50 Initialization Sequence Completed
+2026-11-26 06:44:54 10.77.0.3:48076 VERIFY ERROR: depth=0, error=unable to get local issuer certificate: CN=bad, serial=268065665691351661647946898135522916347725573858
+2026-11-26 06:44:54 10.77.0.3:48076 Sent fatal SSL alert: unknown CA
+2026-11-26 06:44:54 10.77.0.3:48076 OpenSSL: error:0A000086:SSL routines::certificate verify failed:
+2026-11-26 06:44:54 10.77.0.3:48076 TLS_ERROR: BIO read tls_read_plaintext error
+2026-11-26 06:44:54 10.77.0.3:48076 TLS Error: TLS object -> incoming plaintext read error
+2026-11-26 06:44:54 10.77.0.3:48076 TLS Error: TLS handshake failed
+2026-11-26 06:44:54 10.77.0.3:48076 SIGUSR1[soft,tls-error] received, client-instance restarting
+2026-11-26 06:45:14 10.77.0.3:46816 VERIFY OK: depth=1, CN=ca
+2026-11-26 06:45:14 10.77.0.3:46816 VERIFY KU OK
+2026-11-26 06:45:14 10.77.0.3:46816 Validating certificate extended key usage
+2026-11-26 06:45:14 10.77.0.3:46816 ++ Certificate has EKU (str) TLS Web Client Authentication, expects TLS Web Client Authentication
+2026-11-26 06:45:14 10.77.0.3:46816 VERIFY EKU OK
+2026-11-26 06:45:14 10.77.0.3:46816 VERIFY OK: depth=0, CN=client
+2026-11-26 06:45:14 10.77.0.3:46816 peer info: IV_VER=2.6.19
+2026-11-26 06:45:14 10.77.0.3:46816 peer info: IV_PLAT=linux
+2026-11-26 06:45:14 10.77.0.3:46816 peer info: IV_TCPNL=1
+2026-11-26 06:45:14 10.77.0.3:46816 peer info: IV_MTU=1600
+2026-11-26 06:45:14 10.77.0.3:46816 peer info: IV_CIPHERS=AES-256-GCM
+2026-11-26 06:45:14 10.77.0.3:46816 peer info: IV_PROTO=990
+2026-11-26 06:45:14 10.77.0.3:46816 peer info: IV_LZO_STUB=1
+2026-11-26 06:45:14 10.77.0.3:46816 peer info: IV_COMP_STUB=1
+2026-11-26 06:45:14 10.77.0.3:46816 peer info: IV_COMP_STUBv2=1
+2026-11-26 06:45:14 10.77.0.3:46816 TLS Auth Error: Auth Username/Password verification failed for peer
+2026-11-26 06:45:14 10.77.0.3:46816 TLS: move_session: dest=TM_ACTIVE src=TM_INITIAL reinit_src=1
+2026-11-26 06:45:14 10.77.0.3:46816 TLS: tls_multi_process: initial untrusted session promoted to semi-trusted
+2026-11-26 06:45:14 10.77.0.3:46816 Delayed exit in 5 seconds
+2026-11-26 06:45:14 10.77.0.3:46816 SENT CONTROL [UNDEF]: 'AUTH_FAILED' (status=1)
+2026-11-26 06:45:14 10.77.0.3:46816 SENT CONTROL [client]: 'AUTH_FAILED' (status=1)
+2026-11-26 06:45:14 10.77.0.3:46816 Control Channel: TLSv1.3, cipher TLSv1.3 TLS_AES_256_GCM_SHA384, peer certificate: 2048 bits RSA, signature: RSA-SHA256, peer temporary key: 253 bits X25519
+2026-11-26 06:45:14 10.77.0.3:46816 [client] Peer Connection Initiated with [AF_INET]10.77.0.3:46816
+2026-11-26 06:45:14 tls-crypt unwrap error: packet authentication failed
+2026-11-26 06:45:14 TLS Error: tls-crypt unwrapping failed from [AF_INET]10.77.0.3:38841
+2026-11-26 06:45:16 tls-crypt unwrap error: packet authentication failed
+2026-11-26 06:45:16 TLS Error: tls-crypt unwrapping failed from [AF_INET]10.77.0.3:38841
+2026-11-26 06:45:16 read UDPv4 [ECONNREFUSED]: Connection refused (fd=4,code=111)
+2026-11-26 06:45:19 10.77.0.3:46816 SIGTERM[soft,delayed-exit] received, client-instance exiting
+2026-11-26 06:45:20 tls-crypt unwrap error: packet authentication failed
+2026-11-26 06:45:20 TLS Error: tls-crypt unwrapping failed from [AF_INET]10.77.0.3:38841
+2026-11-26 06:45:28 tls-crypt unwrap error: packet authentication failed
+2026-11-26 06:45:28 TLS Error: tls-crypt unwrapping failed from [AF_INET]10.77.0.3:38841
