@@ -132,14 +132,13 @@ def define(args):
         m.check("refused-assign-changed-nothing", _roles(fw) == roles, "roles unchanged")
 
         m.phase("1. CLI plan: printed, nothing written")
-        before = fw.succeed("patronus config export | sha256sum").split()[0]
+        fw.succeed("patronus config export > /root/export-before.json")
         revs_before = fw.succeed("patronus config revisions | wc -l").strip()
         plan = fw.succeed(f"patronus import pfsense {CFG} --plan --map em0={wan} --map em1={lan} --map em2={opt}", timeout=120)
         m.check("cli-plan-names-the-rules", "LAN web out" in plan and "IoT not to LAN" in plan, plan[-600:])
         m.check("cli-plan-names-the-vlan-on-the-mapped-port", f"{opt}.{VLAN_TAG}" in plan, plan[-600:])
         m.check("cli-plan-lists-what-does-not-map", "captiveportal" in plan.lower(), plan[-600:])
-        m.check("cli-plan-wrote-nothing", fw.succeed("patronus config export | sha256sum").split()[0] == before
-                and fw.succeed("patronus config revisions | wc -l").strip() == revs_before, "config export unchanged")
+        _nothing_imported(m, fw, revs_before, "cli-plan")
 
         m.phase("2. web plan (System > Import), no port names given: the old ports follow this box's WAN / LAN / OPT1")
         code, r = api("POST", "/api/system/import/pfsense/plan", "@" + CFG)
@@ -150,7 +149,7 @@ def define(args):
         m.check("web-plan-names-the-unmappable-section", "captiveportal" in text.lower(), text[-400:])
         code, r = api("POST", "/api/system/import/pfsense/plan", "@/etc/hostname")
         m.check("web-plan-refuses-a-file-that-is-not-config-xml", code == 400, f"{code} {str(r)[:200]}")
-        m.check("web-plan-wrote-nothing", fw.succeed("patronus config export | sha256sum").split()[0] == before, "config export unchanged")
+        _nothing_imported(m, fw, revs_before, "web-plan")
 
         m.phase("3. web apply: written + applied, revision kept")
         code, r = api("POST", "/api/system/import/pfsense/apply", "@" + CFG, timeout=600)
@@ -185,6 +184,17 @@ def _kernel_state(m, fw, lan, opt, when):
     m.check(f"imported-rules-loaded-{when}", "LAN web out" in nft and "IoT not to LAN" in nft, "rule comments")
     m.check(f"port-forward-loaded-{when}", f"dnat" in nft and f"{FWD_TARGET}:{FWD_LOCAL}" in nft and f"dport {FWD_PORT}" in nft,
             "\n".join(l for l in nft.splitlines() if "dnat" in l)[:300])
+
+
+def _nothing_imported(m, fw, revs_before, what):
+    """nothing of the config.xml reached the store: no rule, alias, VLAN, reservation or host override, no new revision
+    (other store rows may change meanwhile: the services write their own state)"""
+    exp = fw.succeed("patronus config export")
+    found = [s for s in ("LAN web out", "IoT not to LAN", "web_ports", f".{VLAN_TAG}\"", RES_MAC, DNS_IP, "fw-imported") if s in exp]
+    revs = fw.succeed("patronus config revisions | wc -l").strip()
+    diff = fw.execute("patronus config export > /root/export-now.json; diff /root/export-before.json /root/export-now.json | head -20")[1]
+    m.check(f"{what}-wrote-nothing", not found and revs == revs_before, f"imported strings in the store: {found}; revisions {revs_before}->{revs}; "
+            f"other changes: {diff.strip()[:300] or 'none'}")
 
 
 def _roles(fw):
