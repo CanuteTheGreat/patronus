@@ -11,9 +11,10 @@ path = "src/main.rs"
 [features]
 default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "uci-import"]
 
-# `patronus import-uci`: OpenWrt UCI config importer (no extra dependencies;
-# its wifi-ap / dhcp-server parts are cfg-gated inside it)
-uci-import = []
+# `patronus import-uci` (OpenWrt UCI) and `patronus import pfsense` (pfSense /
+# OPNsense config.xml): config importers. The XML one needs roxmltree; the
+# wifi-ap / dhcp-server parts are cfg-gated inside them.
+uci-import = ["dep:roxmltree"]
 
 # Core features
 # Embedded tier: `patronus-web` is a link to this binary (multi-call; one copy
@@ -94,6 +95,7 @@ patronus-network = { path = "../patronus-network" }
 patronus-config = { path = "../patronus-config" }
 patronus-web = { path = "../patronus-web", optional = true, default-features = false }
 patronus-gitops = { path = "../patronus-gitops", optional = true }
+roxmltree = { version = "0.20", optional = true }
 patronus-ai = { path = "../patronus-ai", optional = true }
 patronus-cni = { path = "../patronus-cni", optional = true }
 reqwest = { workspace = true, optional = true }
