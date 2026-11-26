@@ -131,12 +131,12 @@ mod built {
         samples: Option<i64>,
     }
 
-    fn dev_path(name: &str) -> Result<String, Response> {
+    fn dev_path(name: &str) -> Result<String, Box<Response>> {
         let p = format!("/dev/{name}");
         if smart::valid_device(&p) {
             Ok(p)
         } else {
-            Err(err(format!("Invalid device {name:?}")))
+            Err(Box::new(err(format!("Invalid device {name:?}"))))
         }
     }
 
@@ -147,7 +147,7 @@ mod built {
     ) -> Response {
         let dev = match dev_path(&name) {
             Ok(d) => d,
-            Err(r) => return r,
+            Err(r) => return *r,
         };
         let store = &st.config_store;
         let Ok(Some(d)) = smart::latest_one(store, &dev).await else {

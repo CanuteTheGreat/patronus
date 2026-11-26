@@ -781,7 +781,7 @@ pub fn due_test(
     if !in_window {
         return None;
     }
-    let due = |every: i64, last: Option<i64>| every > 0 && last.map_or(true, |l| now - l >= every);
+    let due = |every: i64, last: Option<i64>| every > 0 && last.is_none_or(|l| now - l >= every);
     if due(sch.long_test_secs, last_long) {
         Some(TestKind::Long)
     } else if due(sch.short_test_secs, last_short) {

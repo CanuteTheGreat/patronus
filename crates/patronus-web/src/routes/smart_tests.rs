@@ -47,7 +47,6 @@ const ADMIN_PW: &str = "Smart-Page-Admin-Passw0rd";
 struct T {
     app: axum::Router,
     state: crate::AppState,
-    fake: Arc<Fake>,
 }
 
 async fn setup() -> T {
@@ -73,7 +72,7 @@ async fn setup() -> T {
         vec![fake.clone()],
     ));
     let app = super::build_router(state.clone(), Arc::new(crate::WsBroadcaster::new()));
-    T { app, state, fake }
+    T { app, state }
 }
 
 impl T {
