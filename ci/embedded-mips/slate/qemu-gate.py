@@ -410,6 +410,31 @@ def boot_guard():
     Rok("patronus-guard ok"); o = R("patronus-guard status")[1]; need(re.search(r"\bok\b", o), "guard not confirmed: " + o)
 
 
+def access_log():
+    login()
+    j = jget("/api/system/access-log/settings"); need(j["settings"]["retention_rows"] == 2000, "env cap not applied: " + json.dumps(j)[:300])
+    c, t, _ = web("PUT", "/api/system/access-log/settings", {"retention_rows": 100}); need(c == 200, f"PUT settings: {c} {t[:200]}")
+    j = jget("/api/system/access-log/settings"); need(j["settings"]["retention_rows"] == 100, "store value not applied"); time.sleep(12)   # the writer re-reads settings every 10 s
+    w0 = j["writer"]["written"] + j["writer"]["queued_dropped"]
+    # one keep-alive connection: a TLS handshake on the emulated 24Kc takes seconds, a request does not
+    conn = http.client.HTTPSConnection("127.0.0.1", WEBP, timeout=300, context=TLS)
+    try:
+        for i in range(400):
+            conn.request("GET", f"/alog-burst-{i}", None, {"cookie": COOKIE}); conn.getresponse().read()
+    finally: conn.close()
+    for _ in range(60):
+        j = jget("/api/system/access-log/settings"); w = j["writer"]["written"] + j["writer"]["queued_dropped"]
+        if w - w0 >= 400: break
+        time.sleep(3)
+    need(w - w0 >= 400, f"writer accounted only {w - w0} of 400 requests")
+    st = jget("/api/system/access-log/stats"); need(50 <= st["requests"] <= 100, f"rows after the burst: {st['requests']} (cap 100)")
+    need("alog-burst" not in json.dumps(jget("/api/system/access-log?limit=50")), "a raw path was stored")
+    rss = Rok("for p in $(pidof patronus-web); do sed -n 's/^VmRSS:[[:space:]]*//p' /proc/$p/status; done | head -1")
+    GM("accesslog_rows", st["requests"]); GM("accesslog_web_rss_after_burst", rss.replace(" ", ""))
+    web("PUT", "/api/system/access-log/settings", {"retention_rows": 2000})
+    c, t, _ = web("GET", "/system/access-log"); need(c == 200 and "dlg-stats" in t, f"page: {c}")
+
+
 def etph():
     Rok("pgrep etphonehome >/dev/null"); Rok("test -x /usr/sbin/etphonehome")
 
@@ -437,6 +462,7 @@ def main():
     check("boot 1: DHCP: a LAN client behind eth2 gets a lease from the router (pool, router + DNS options) and the API lists it", lambda: dhcp_dns(LANC, lease))
     check("boot 1: DNS: the router answers a local host record to that client; an unknown name gets no address", lambda: dns_local() if lease else need(False, "no lease"))
     check("boot 1: DNS change rolled back through the revision history and undone again", lambda: dns_rollback() if lease else need(False, "no lease"))
+    check("boot 1: access log: the tier's env row cap is applied, a request burst is accounted for and capped, no raw path stored, page served, RSS recorded", access_log)
     check("boot 1: system settings (host name, domain, time zone) saved through the web API and applied", general_set)
     time.sleep(30); stats("boot1")
     Rok("sync")
