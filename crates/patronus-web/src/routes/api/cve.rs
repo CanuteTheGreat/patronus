@@ -95,7 +95,11 @@ async fn scan(State(s): State<AppState>, body: Option<Json<ScanIn>>) -> Response
     }
     .await;
     match r {
-        Ok(()) => (StatusCode::ACCEPTED, Json(json!({ "requested": now, "fetch": fetch }))).into_response(),
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(json!({ "requested": now, "fetch": fetch })),
+        )
+            .into_response(),
         Err(e) => err(e),
     }
 }
@@ -114,7 +118,12 @@ async fn findings(State(s): State<AppState>, Query(q): Query<FindingsQ>) -> Resp
                 .findings
                 .iter()
                 .filter(|f| q.source.as_deref().map(|x| x == f.source).unwrap_or(true))
-                .filter(|f| q.severity.as_deref().map(|x| x == f.severity).unwrap_or(true))
+                .filter(|f| {
+                    q.severity
+                        .as_deref()
+                        .map(|x| x == f.severity)
+                        .unwrap_or(true)
+                })
                 .collect();
             Json(json!({ "verdict": r.verdict, "at": r.at, "findings": list })).into_response()
         }

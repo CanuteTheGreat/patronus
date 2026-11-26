@@ -86,7 +86,8 @@ fn seed_osv(l: &Lab, fetched_at: i64) {
 fn touch_glsa(l: &Lab, t: i64) {
     let p = Path::new(&l.s.glsa_dir).join("glsa-202401-01.xml");
     let f = std::fs::File::options().write(true).open(p).unwrap();
-    f.set_modified(std::time::UNIX_EPOCH + Duration::from_secs(t as u64)).unwrap();
+    f.set_modified(std::time::UNIX_EPOCH + Duration::from_secs(t as u64))
+        .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -107,7 +108,10 @@ async fn standard_tier_affected_with_update_and_crate_hit() {
     assert_eq!(g.update_version, "1.3.2");
     assert!(g.aliases.contains(&"CVE-2022-21797".to_string()));
     let c = r.findings.iter().find(|f| f.source == "osv").unwrap();
-    assert_eq!((c.subject.as_str(), c.installed.as_str(), c.binary.as_str()), ("h2", "0.3.20", "patronus-web"));
+    assert_eq!(
+        (c.subject.as_str(), c.installed.as_str(), c.binary.as_str()),
+        ("h2", "0.3.20", "patronus-web")
+    );
     assert_eq!(c.fixed_in, vec!["0.3.24", "0.4.2"]);
     assert_eq!(c.update, "needs-release");
     assert_eq!(r.crates_checked, 2);
@@ -118,7 +122,10 @@ async fn standard_tier_affected_with_update_and_crate_hit() {
 #[tokio::test(flavor = "multi_thread")]
 async fn no_update_when_the_tree_has_nothing_better() {
     let l = lab(&[("dev-python/joblib", "1.1.0-r1")]);
-    script(&Path::new(&l.s.portageq).to_path_buf(), "echo dev-python/joblib-1.1.0-r1");
+    script(
+        Path::new(&l.s.portageq),
+        "echo dev-python/joblib-1.1.0-r1",
+    );
     let r = scan(&l.s, now()).await;
     let g = r.findings.iter().find(|f| f.source == "glsa").unwrap();
     assert_eq!(g.update, "none");
@@ -134,7 +141,10 @@ async fn missing_or_old_data_is_never_clean() {
     write_bin(&l, "crate serde 1.0.200 registry\n");
     let r = scan(&l.s, now()).await;
     assert_eq!(r.verdict, "unknown");
-    assert!(r.reasons.iter().any(|x| x.contains("no Gentoo security advisories")));
+    assert!(r
+        .reasons
+        .iter()
+        .any(|x| x.contains("no Gentoo security advisories")));
 
     // data present and nothing affected, but both sets are 20 days old -> stale
     let l = lab(&[("dev-python/joblib", "1.3.2")]);
@@ -152,7 +162,10 @@ async fn missing_or_old_data_is_never_clean() {
     touch_glsa(&l, n - 60);
     std::fs::write(&l.s.binaries[0], b"plain binary").unwrap();
     let r = scan(&l.s, n).await;
-    assert_eq!(r.verdict, "unknown", "no embedded list: crates cannot be called clean");
+    assert_eq!(
+        r.verdict, "unknown",
+        "no embedded list: crates cannot be called clean"
+    );
     write_bin(&l, "crate serde 1.0.200 registry\n");
     let r = scan(&l.s, n).await;
     assert_eq!(r.verdict, "clean", "{:?}", r.reasons);
@@ -162,7 +175,10 @@ async fn missing_or_old_data_is_never_clean() {
 async fn router_tier_reads_the_manifest_and_the_gate() {
     let l = lab(&[]);
     let n = now();
-    let day = chrono::DateTime::from_timestamp(n - 86400, 0).unwrap().format("%Y-%m-%d").to_string();
+    let day = chrono::DateTime::from_timestamp(n - 86400, 0)
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string();
     std::fs::write(
         &l.s.manifest_path,
         serde_json::json!({
@@ -191,10 +207,15 @@ async fn record_keeps_first_seen_prunes_fixed_and_emits_one_event() {
     let store = ConfigStore::open_in_memory().await.unwrap();
     let n = now();
     seed_osv(&l, n);
-    let r1 = record(&store, &l.s, scan(&l.s, n - 7200).await).await.unwrap();
+    let r1 = record(&store, &l.s, scan(&l.s, n - 7200).await)
+        .await
+        .unwrap();
     let first = r1.findings[0].first_seen;
     let r2 = record(&store, &l.s, scan(&l.s, n).await).await.unwrap();
-    assert_eq!(r2.findings.iter().map(|f| f.first_seen).min().unwrap(), first);
+    assert_eq!(
+        r2.findings.iter().map(|f| f.first_seen).min().unwrap(),
+        first
+    );
     let ev: i64 = sqlx::query("SELECT count(*) FROM system_events WHERE kind='cve_exposure'")
         .fetch_one(store.pool().unwrap())
         .await
@@ -205,7 +226,9 @@ async fn record_keeps_first_seen_prunes_fixed_and_emits_one_event() {
     std::fs::remove_dir_all(Path::new(&l.s.pkg_db).join("dev-python")).unwrap();
     let p = Path::new(&l.s.pkg_db).join("dev-python/joblib-1.3.2");
     std::fs::create_dir_all(&p).unwrap();
-    let r3 = record(&store, &l.s, scan(&l.s, n + 10).await).await.unwrap();
+    let r3 = record(&store, &l.s, scan(&l.s, n + 10).await)
+        .await
+        .unwrap();
     assert!(r3.findings.iter().all(|f| f.source != "glsa"));
     let left: i64 = sqlx::query("SELECT count(*) FROM cve_findings WHERE source='glsa'")
         .fetch_one(store.pool().unwrap())
@@ -223,7 +246,7 @@ async fn settings_round_trip_and_policy_apply_in_the_window() {
     let store = ConfigStore::open_in_memory().await.unwrap();
     let marker = l.dir.path().join("emerge-args");
     script(
-        &Path::new(&l.s.emerge).to_path_buf(),
+        Path::new(&l.s.emerge),
         &format!("echo \"$@\" > {}", marker.display()),
     );
     let mut i = SettingsIn {
@@ -252,7 +275,9 @@ async fn settings_round_trip_and_policy_apply_in_the_window() {
         ..Default::default()
     };
     save(&store, &i).await.unwrap();
-    state_set(&store, "scan_requested", &(now() + 5).to_string()).await.unwrap();
+    state_set(&store, "scan_requested", &(now() + 5).to_string())
+        .await
+        .unwrap();
     let minute = local_minute_of_day();
     let r = tick(&store).await.unwrap().unwrap();
     if minute < 23 * 60 + 59 {
@@ -264,18 +289,38 @@ async fn settings_round_trip_and_policy_apply_in_the_window() {
         let _ = r;
         // the second request inside the minimum interval does not install again
         std::fs::remove_file(&marker).unwrap();
-        state_set(&store, "scan_requested", &(now() + 10).to_string()).await.unwrap();
+        state_set(&store, "scan_requested", &(now() + 10).to_string())
+            .await
+            .unwrap();
         tick(&store).await.unwrap();
         assert!(!marker.exists());
     }
     // outside the window nothing is installed: a one-minute window that is not now
     let off = (minute + 120) % (24 * 60);
-    let w = format!("{:02}:{:02}-{:02}:{:02}", off / 60, off % 60, (off + 1) / 60 % 24, (off + 1) % 60);
-    save(&store, &SettingsIn { window: Some(w), apply_min_interval_secs: Some(60), ..Default::default() })
+    let w = format!(
+        "{:02}:{:02}-{:02}:{:02}",
+        off / 60,
+        off % 60,
+        (off + 1) / 60 % 24,
+        (off + 1) % 60
+    );
+    save(
+        &store,
+        &SettingsIn {
+            window: Some(w),
+            apply_min_interval_secs: Some(60),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM cve_state WHERE key='last_apply'")
+        .execute(store.pool().unwrap())
         .await
         .unwrap();
-    sqlx::query("DELETE FROM cve_state WHERE key='last_apply'").execute(store.pool().unwrap()).await.unwrap();
-    state_set(&store, "scan_requested", &(now() + 20).to_string()).await.unwrap();
+    state_set(&store, "scan_requested", &(now() + 20).to_string())
+        .await
+        .unwrap();
     tick(&store).await.unwrap();
     assert!(!marker.exists());
 }
@@ -283,7 +328,10 @@ async fn settings_round_trip_and_policy_apply_in_the_window() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failing_emerge_is_logged_and_not_retried_at_once() {
     let l = lab(&[("dev-python/joblib", "1.1.0-r1")]);
-    script(&Path::new(&l.s.emerge).to_path_buf(), "echo conflict >&2; exit 1");
+    script(
+        Path::new(&l.s.emerge),
+        "echo conflict >&2; exit 1",
+    );
     let store = ConfigStore::open_in_memory().await.unwrap();
     assert!(!apply_updates(&store, &l.s, &[">=dev-python/joblib-1.2.0".into()]).await);
     let log = log_history(&store, 5).await.unwrap();
@@ -298,7 +346,11 @@ async fn fetch_reduces_a_downloaded_archive_and_keeps_the_old_data_on_failure() 
     let mut buf = Vec::new();
     {
         let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-        w.start_file("RUSTSEC-2024-0003.json", zip::write::SimpleFileOptions::default()).unwrap();
+        w.start_file(
+            "RUSTSEC-2024-0003.json",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
         w.write_all(H2.as_bytes()).unwrap();
         w.finish().unwrap();
     }
@@ -311,7 +363,11 @@ async fn fetch_reduces_a_downloaded_archive_and_keeps_the_old_data_on_failure() 
                 use std::io::Read;
                 let mut tmp = [0u8; 2048];
                 let _ = c.read(&mut tmp);
-                let _ = write!(c, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                let _ = write!(
+                    c,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
                 let _ = c.write_all(&body);
             }
         }

@@ -904,7 +904,9 @@ async fn main() -> anyhow::Result<()> {
             CveCommands::Scan { fetch, json } => {
                 commands::cve::scan(cli.db.as_deref(), fetch, json).await?
             }
-            CveCommands::Apply { dry_run } => commands::cve::apply(cli.db.as_deref(), dry_run).await?,
+            CveCommands::Apply { dry_run } => {
+                commands::cve::apply(cli.db.as_deref(), dry_run).await?
+            }
             CveCommands::Set { pairs } => commands::cve::set(cli.db.as_deref(), &pairs).await?,
         },
 
