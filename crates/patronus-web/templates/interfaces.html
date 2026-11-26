@@ -356,7 +356,8 @@ function render() {
     devs.length ? hide('devices-empty') : show('devices-empty');
     document.getElementById('missing').textContent = D.missing.length ? 'Configured but not present: ' + D.missing.join(', ') : '';
 
-    const names = devs.map(d => d.name);
+    // idle kernel stub devices are never offered as a parent / member
+    const names = devs.filter(d => !stubs.includes(d)).map(d => d.name);
     document.querySelectorAll('select.parents').forEach(s => {
         const v = s.value;
         s.innerHTML = names.filter(n => !(n.startsWith('ppp'))).map(n => '<option>' + esc(n) + '</option>').join('');
@@ -364,7 +365,7 @@ function render() {
     });
     document.querySelectorAll('.ports').forEach(div => {
         const virt = div.dataset.virtual === '1';
-        div.innerHTML = devs.filter(d => virt ? (d.kind !== 'bridge' && !d.name.startsWith('ppp')) : (d.kind === 'ethernet' || d.kind === 'veth'))
+        div.innerHTML = devs.filter(d => !stubs.includes(d)).filter(d => virt ? (d.kind !== 'bridge' && !d.name.startsWith('ppp')) : (d.kind === 'ethernet' || d.kind === 'veth'))
             .map(d => '<label><input type="checkbox" value="' + esc(d.name) + '"> ' + esc(d.name) + '</label>').join('') || '<span class="muted">no ports</span>';
     });
 
