@@ -5,7 +5,7 @@
 //! it cannot -- driven through the real router with a logged-in session.
 
 use axum::body::Body;
-use axum::http::{header, Method, Request, StatusCode};
+use axum::http::{Method, Request, StatusCode, header};
 use tower::ServiceExt;
 
 /// Literals of the old fixtures. None may appear in any response.
@@ -654,7 +654,11 @@ async fn access_log_records_who_what_and_never_raw_paths() {
         .unwrap();
     assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
     let (s, _) = a
-        .call(Method::GET, "/api/no-such-thing/12345?token=secret-abc", None)
+        .call(
+            Method::GET,
+            "/api/no-such-thing/12345?token=secret-abc",
+            None,
+        )
         .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     let (s, _) = a.call(Method::GET, "/api/system/backups", None).await;
@@ -664,7 +668,9 @@ async fn access_log_records_who_what_and_never_raw_paths() {
     let mut body = String::new();
     for _ in 0..40 {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        let (s, b) = a.call(Method::GET, "/api/system/access-log?limit=100", None).await;
+        let (s, b) = a
+            .call(Method::GET, "/api/system/access-log?limit=100", None)
+            .await;
         assert_eq!(s, StatusCode::OK, "{b}");
         body = b;
         if body.contains("/api/system/backups") && body.contains("attempted_user") {
@@ -676,9 +682,13 @@ async fn access_log_records_who_what_and_never_raw_paths() {
     }
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     let rows = v["rows"].as_array().unwrap();
-    assert!(!body.contains("secret-abc") && !body.contains("12345"), "no query or ids: {body}");
+    assert!(
+        !body.contains("secret-abc") && !body.contains("12345"),
+        "no query or ids: {body}"
+    );
     let find = |m: &str, g: &str, st: i64| {
-        rows.iter().find(|r| r["method"] == m && r["path_group"] == g && r["status"] == st)
+        rows.iter()
+            .find(|r| r["method"] == m && r["path_group"] == g && r["status"] == st)
     };
     let fail = find("POST", "/api/auth/login", 401).expect("failed login row");
     assert_eq!(fail["attempted_user"], "admin");
@@ -686,10 +696,18 @@ async fn access_log_records_who_what_and_never_raw_paths() {
     let ok = find("GET", "/api/system/backups", 200).expect("authenticated read row");
     assert_eq!(ok["principal_kind"], "user");
     assert_eq!(ok["principal_name"], "admin");
-    assert!(rows.iter().any(|r| r["status"] == 404), "the 404 is logged: {body}");
-    assert!(!body.contains("wrong-password-xyz"), "passwords are never stored");
+    assert!(
+        rows.iter().any(|r| r["status"] == 404),
+        "the 404 is logged: {body}"
+    );
+    assert!(
+        !body.contains("wrong-password-xyz"),
+        "passwords are never stored"
+    );
 
-    let (s, st) = a.call(Method::GET, "/api/system/access-log/stats", None).await;
+    let (s, st) = a
+        .call(Method::GET, "/api/system/access-log/stats", None)
+        .await;
     assert_eq!(s, StatusCode::OK);
     let st: serde_json::Value = serde_json::from_str(&st).unwrap();
     assert!(st["requests"].as_i64().unwrap() >= 4);
