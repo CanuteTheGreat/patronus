@@ -16,7 +16,7 @@
     .set-field [aria-invalid=true] { border-color: var(--danger); }
     .set-limits { font-size: 0.78em; color: var(--text-muted); }
     .set-check { display: flex; align-items: center; gap: 8px; }
-    .set-hint { visibility: hidden; position: absolute; left: 0; right: 0; top: 100%; z-index: 5; margin-top: 2px; padding: 6px 8px;
+    .set-hint { visibility: hidden; pointer-events: none; position: absolute; left: 0; right: 0; top: 100%; z-index: 5; margin-top: 2px; padding: 6px 8px;
         border-radius: 4px; font-size: 0.82em; line-height: 1.35; background: var(--surface-3); color: var(--ink); border: 1px solid var(--line-strong);
         box-shadow: 0 2px 8px var(--shadow); }
     .set-field:hover .set-hint, .set-field:focus-within .set-hint { visibility: visible; }
