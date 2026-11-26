@@ -15,7 +15,7 @@ already planned there are referenced here, not repeated.
 | Patronus | daily standard-tier ISO (live + installer) and the web UI of `main` | Patronus CI |
 
 Lab: QEMU/KVM, 6 virtio NICs per firewall (WAN, LAN, OPT/DMZ, VLAN trunk with VLAN 10 and 20, a two-port
-LAGG), a WAN-side dnsmasq (DHCPv4 + DHCPv6/RA) and a LAN-side browser in its own network namespace.
+LAGG), a WAN-side dnsmasq (DHCPv4 + DHCPv6/RA) and a LAN-side browser in its own network namespace (no separate client VM was booted).
 Every installer screen and first-boot prompt was captured over the serial console (text) and VNC
 (screenshots); every menu page and tab of the running web UIs was crawled (pfSense 173 pages, OPNsense
 177 pages, Patronus 30 pages) with title, tabs, text and a screenshot. The package/plugin catalogs were
@@ -36,7 +36,7 @@ Status words: **present** = in the shipped binary, reachable from API/UI, covere
 | VLANs at first boot (both); LAGG at first boot (OPNsense) | missing | n/a | missing -> job `44-patronus-installer-lagg-vlan` (companion plan) |
 | Root/admin password set in installer (OPNsense) | first-run web page with setup code | first-run web page | present |
 | Live mode with "importer" (OPNsense: restore `config.xml` from a USB stick before install) | console "Restore a configuration backup" (Patronus format) | settings import from OpenWrt UCI | partial: no pfSense/OPNsense `config.xml` import |
-| Web setup wizard: hostname, domain, DNS, NTP server, timezone, WAN type (DHCP/static/PPPoE), LAN IP, admin password, DNS resolver options | `/setup`: WAN DHCP/static, LAN IP, DHCP pool, DNS servers | AP role skips it | partial: no PPPoE, no IPv6 WAN, no hostname/domain/timezone/NTP step |
+| Web setup wizard: hostname, domain, DNS, NTP server, timezone, WAN type (DHCP/static/PPPoE), LAN IP, admin password, DNS resolver options (steps from the vendor docs; only the first wizard page was captured live) | `/setup`: WAN DHCP/static, LAN IP, DHCP pool, DNS servers | AP role skips it | partial: no PPPoE, no IPv6 WAN, no hostname/domain/timezone/NTP step |
 | Console menu: pfSense 0-16 (pfTop, filter logs, restart web UI, PHP shell, update from console, enable SSH, restore recent config, restart PHP-FPM); OPNsense 0-13 (+ update, refresh, plugins) | 0-11: assign, set IP (DHCP/static), reset admin password, factory reset, power off, reboot, ping, shell, show web UI URL, restore backup, create backup | serial shell | partial: no live states/top view, no firewall log tail, no "restart web UI", no update from console, no SSH on/off, no "restore previous revision", no IPv6 in "set IP" |
 | Update channel/branch choice (pfSense branch select; OPNsense Community/Business/Development + mirror list) | firmware feed + updates page | signed sysupgrade feed | partial: no channel or mirror selector |
 
