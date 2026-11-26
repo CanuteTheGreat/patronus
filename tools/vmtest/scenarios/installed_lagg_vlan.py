@@ -128,7 +128,7 @@ def define(args):
         sw.start()
         sw.wait_for_shell()
         sw.succeed("ip link set eth0 up && udhcpc -i eth0 -n -q -t 5 >/dev/null 2>&1", timeout=90)
-        sw.succeed(f"echo {ALPINE_REPO} >> /etc/apk/repositories && apk update -q && apk add -q dnsmasq curl netcat-openbsd", timeout=300)
+        sw.succeed(f"echo {ALPINE_REPO} >> /etc/apk/repositories && apk update -q && apk add -q dnsmasq curl netcat-openbsd iproute2", timeout=300)
         sw.succeed("cat > /tmp/switch.sh <<'EOF'\n" + SWITCH_SH + "\nEOF\nsh /tmp/switch.sh", timeout=120)
         sw_mac = sw.succeed("cat /sys/class/net/bond0/address").strip().lower()
         m.check("switch-bond-is-802.3ad", "802.3ad" in sw.succeed("cat /proc/net/bonding/bond0"), sw_mac)
