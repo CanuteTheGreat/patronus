@@ -98,9 +98,7 @@ pub fn spki_pin(pem: &str) -> Option<String> {
 
 /// This node's own pin (what the other node's settings need).
 pub async fn own_pin(state: &AppState) -> Option<String> {
-    let w = patronus_config::webui::load(&state.config_store)
-        .await
-        .ok()?;
+    let w = patronus_config::webui::resolve(Some(&state.config_store)).await;
     let path = if w.tls_cert.is_empty() {
         crate::tls::default_tls_dir().join("cert.pem")
     } else {
