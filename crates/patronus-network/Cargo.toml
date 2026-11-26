@@ -28,6 +28,10 @@ qos = []
 multiwan = []
 ha = []
 intrusion-detection = []
+# LAN security audit (lane j): "scan my network" with nmap+rustscan (standard
+# tier) and a built-in TCP connect scan (router tier). Needs dhcp lease and
+# segmentation enumeration for host names where those features are built.
+lan-audit = []
 dynamic-routing = []
 # Feature pages (svc.rs): each needs its daemon at runtime (Gentoo USE flag of the same name)
 syslog = []

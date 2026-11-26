@@ -139,6 +139,9 @@ pub mod wireless;
 #[cfg(feature = "intrusion-detection")]
 pub mod ids;
 
+#[cfg(feature = "lan-audit")]
+pub mod lanaudit;
+
 #[cfg(feature = "dynamic-routing")]
 pub mod frr;
 

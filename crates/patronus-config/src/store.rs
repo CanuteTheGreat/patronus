@@ -100,6 +100,13 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "guard_bans",
     "guard_failures",
     "guard_reports",
+    // LAN security audit (lane j): scans, the hosts and open ports each one found,
+    // and the findings: measured data, never carried or rewound by a restore. Bounded
+    // by lanaudit.keep_scans retention.
+    "audit_scans",
+    "audit_hosts",
+    "audit_ports",
+    "audit_findings",
     // measured history (lane h): 5-minute CPU/memory/throughput samples (tens of thousands
     // of rows within days), monthly data accounting, the event log and the firewall log.
     // In the export they made every revision, backup and drift check carry megabytes of

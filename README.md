@@ -71,6 +71,15 @@ that are not finished are listed separately under
   IPv6 sources are banned per /64, your own LAN and an allow list are never
   banned, bans survive a reboot and can be lifted from the page or the CLI.
   See docs/BRUTE-FORCE.md. [C151]
+- LAN security audit (USE=lan-audit): "scan my network" for open ports and the
+  services behind them, on demand and on a schedule (quiet hours, rate limited),
+  per LAN segment and never the WAN. Devices are named from the DHCP leases and
+  segmentation; findings (telnet, FTP, SMB, UPnP, admin pages on plain HTTP,
+  known default-credential devices, exposed databases, a new device or a newly
+  open port since the last scan) feed the security events, and any scan exports
+  as CSV or a PDF report. nmap + rustscan do service/version detection on the
+  standard tier; the router tier runs a built-in TCP connect scan of the top
+  ports. See docs/LAN-AUDIT.md. [C152]
 - Firewall log viewer: packets that a logging rule (or a threat feed, or the
   default policy) drops or accepts are recorded with the rule that caught them;
   search by rule, action, address, port, interface or text, follow it live. [C59]

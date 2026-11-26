@@ -34,6 +34,7 @@ IUSE="
 	+captive-portal
 	intrusion-detection suricata snort
 	+bruteforce
+	+lan-audit
 	syslog igmp mdns nat64 l2tp upnp vrf web-proxy dynamic-routing sdwan
 	+vlan qos +tc
 	certificates acme certbot
@@ -124,6 +125,7 @@ RDEPEND="
 		suricata? ( net-analyzer/suricata )
 		snort? ( net-analyzer/snort )
 	)
+	lan-audit? ( net-analyzer/nmap net-analyzer/rustscan )
 	vlan? ( sys-apps/iproute2 )
 	segmentation? ( sys-apps/iproute2 net-firewall/nftables )
 	guest? ( net-dns/dnsmasq sys-apps/iproute2 net-firewall/nftables hostapd? ( net-wireless/hostapd ) )
@@ -255,6 +257,7 @@ src_configure() {
 		$(usex web-proxy "web-proxy" "")
 		$(usex intrusion-detection "intrusion-detection" "")
 		$(usex bruteforce "bruteforce" "")
+		$(usex lan-audit "lan-audit" "")
 		$(usex dynamic-routing "dynamic-routing" "")
 		$(usex sdwan "sdwan-edge" "")
 		$(usex ldap "ldap" "")
@@ -405,6 +408,7 @@ src_install() {
 		use web-proxy && webfeatures+=( web-proxy )
 		use intrusion-detection && webfeatures+=( intrusion-detection )
 		use bruteforce && webfeatures+=( bruteforce )
+		use lan-audit && webfeatures+=( lan-audit )
 		use dynamic-routing && webfeatures+=( dynamic-routing )
 		use sdwan && webfeatures+=( sdwan-edge )
 		# TLS backend and the live threat-feed / journald readers are optional web features now (the router tier
@@ -634,6 +638,7 @@ pkg_postinst() {
 	use ha && elog "  ✓ High Availability"
 	use intrusion-detection && elog "  ✓ IDS/IPS (Suricata)"
 	use bruteforce && elog "  ✓ Brute-force protection (SSH / web login bans)"
+	use lan-audit && elog "  ✓ LAN security audit (nmap + rustscan network scan)"
 	use qos && elog "  ✓ Traffic Shaping/QoS"
 	use certificates && use acme && elog "  ✓ ACME/Let's Encrypt"
 	use geoip && elog "  ✓ GeoIP blocking"

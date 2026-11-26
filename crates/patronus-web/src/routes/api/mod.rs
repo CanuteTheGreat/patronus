@@ -17,6 +17,8 @@ pub mod interfaces;
 #[cfg(feature = "ipsec")]
 pub mod ipsec_rw;
 pub mod lan;
+#[cfg(feature = "lan-audit")]
+pub mod lanaudit;
 pub mod network;
 pub mod packages;
 pub mod qos;

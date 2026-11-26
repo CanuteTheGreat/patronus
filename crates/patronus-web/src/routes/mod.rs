@@ -56,6 +56,7 @@ pub fn build_router(
         .merge(seg_time_pages())
         .merge(seg_dns_pages())
         .merge(guard_pages())
+        .merge(lanaudit_pages())
         .merge(api::setup::pages())
         .merge(api::wifi::pages())
         .merge(api::device::pages())
@@ -369,6 +370,22 @@ fn guard_router() -> Router<AppState> {
 fn guard_router() -> Router<AppState> {
     Router::new()
 }
+#[cfg(feature = "lan-audit")]
+fn lanaudit_pages() -> Router<AppState> {
+    api::lanaudit::pages()
+}
+#[cfg(not(feature = "lan-audit"))]
+fn lanaudit_pages() -> Router<AppState> {
+    Router::new()
+}
+#[cfg(feature = "lan-audit")]
+fn lanaudit_router() -> Router<AppState> {
+    api::lanaudit::router()
+}
+#[cfg(not(feature = "lan-audit"))]
+fn lanaudit_router() -> Router<AppState> {
+    Router::new()
+}
 #[cfg(all(feature = "dns", feature = "segmentation"))]
 fn seg_dns_pages() -> Router<AppState> {
     api::seg_dns::pages()
@@ -442,6 +459,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "web-proxy",
         "intrusion-detection",
         "bruteforce",
+        "lan-audit",
         "dynamic-routing",
         "sdwan-edge",
         "ldap",
@@ -515,6 +533,10 @@ pub fn absent_features(
             "bruteforce",
             "Brute-force protection (bans for SSH / web login guessing)",
         ),
+        (
+            "lan-audit",
+            "LAN security audit (scan the network for open ports and risky services)",
+        ),
         ("dynamic-routing", "BGP / OSPF"),
         ("sdwan-edge", "SD-WAN edge"),
         ("totp", "Two-factor login (TOTP)"),
@@ -581,6 +603,7 @@ fn api_routes() -> Router<AppState> {
         .merge(seg_time_router())
         .merge(seg_dns_router())
         .merge(guard_router())
+        .merge(lanaudit_router())
         .merge(api::vpn::router())
         .merge(api::network::router())
         .merge(api::routing::router())

@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+
+{% block title %}Network scan - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    .pill { display: inline-block; padding: 1px 10px; border-radius: 10px; font-size: 0.8em; font-weight: 600; background: var(--info-bg); color: var(--info-fg); }
+    .pill.on { background: var(--ok-bg); color: var(--ok-fg); }
+    .pill.off { background: var(--warn-bg); color: var(--warn-fg); }
+    .pill.crit { background: var(--bad-bg); color: var(--bad-fg); }
+    .pill.warn { background: var(--warn-bg); color: var(--warn-fg); }
+    .pill.info { background: var(--info-bg); color: var(--info-fg); }
+    .hint { color: var(--muted); font-size: 0.85em; margin: 4px 0 10px; }
+    .g-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+    .g-stat { flex: 1 1 150px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--card-bg); }
+    .g-stat b { display: block; font-size: 1.5em; }
+    .g-stat span { color: var(--muted); font-size: 0.85em; }
+    .sev-crit { color: var(--bad-fg); font-weight: 600; }
+    .sev-warn { color: var(--warn-fg); font-weight: 600; }
+    .sev-info { color: var(--muted); }
+    .scroll-x { overflow-x: auto; }
+    .finding-detail { color: var(--muted); font-size: 0.85em; }
+    .scan-row { cursor: pointer; }
+    .scan-row.sel { background: var(--hover-bg, rgba(127,127,127,.08)); }
+    details.g-adv > div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    @media (max-width: 640px) {
+        form.lan-form input, form.lan-form select, form.lan-form textarea { min-width: 0; width: 100%; }
+        form.lan-form label { width: 100%; }
+        form.lan-form label.chk { width: 100%; flex-direction: row; align-items: center; gap: 6px; }
+        form.lan-form input[type=checkbox] { width: auto; flex: 0 0 auto; }
+        table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; box-sizing: border-box; }
+        table.stack tr.hd { display: none; }
+        table.stack tr { border-bottom: 1px solid var(--line); padding: 8px 0; }
+        table.stack td { border: 0; padding: 3px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; text-align: right; overflow-wrap: anywhere; }
+        table.stack td::before { content: attr(data-label); color: var(--muted); font-size: 0.8em; text-align: left; flex: 0 0 34%; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Network scan</h1>
+    <p class="page-subtitle">Looks at the devices on your LAN for open ports and risky services, compares it with the last scan, and raises findings. It never scans the internet side.</p>
+</div>
+<div id="la-error" class="alert-error" style="display:none" role="alert"></div>
+<div id="la-tools" class="hint" aria-live="polite"></div>
+
+<div class="g-stats" id="la-stats" aria-live="polite">
+    <div class="g-stat"><b id="la-state">...</b><span>Scheduled scans</span></div>
+    <div class="g-stat"><b id="la-hosts">...</b><span>Hosts in the last scan</span></div>
+    <div class="g-stat"><b id="la-ports">...</b><span>Open ports</span></div>
+    <div class="g-stat"><b id="la-findings">...</b><span>Findings</span></div>
+</div>
+
+<div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 class="card-title">Scan</h2>
+        <div style="display:flex;gap:8px;align-items:center">
+            <span id="la-running" class="pill" style="display:none">Scanning…</span>
+            {% if can_modify %}<button id="la-scan" class="btn btn-primary btn-sm" onclick="startScan()">Scan now</button>{% endif %}
+        </div>
+    </div>
+    <div class="card-body">
+        <p class="hint" id="la-latest">No scan yet.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap" id="la-export" hidden>
+            <a id="la-csv" class="btn btn-sm" href="#">Download CSV</a>
+            <a id="la-pdf" class="btn btn-sm" href="#">Download PDF report</a>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Findings</h2></div>
+    <div class="card-body scroll-x">
+        <table class="stack data-table" id="la-find-tbl">
+            <thead><tr class="hd"><th>Severity</th><th>Device</th><th>Port</th><th>What</th></tr></thead>
+            <tbody id="la-find-body"><tr><td colspan="4" class="hint">—</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Devices and open ports</h2></div>
+    <div class="card-body scroll-x">
+        <table class="stack data-table" id="la-host-tbl">
+            <thead><tr class="hd"><th>Device</th><th>Address</th><th>Open ports</th></tr></thead>
+            <tbody id="la-host-body"><tr><td colspan="3" class="hint">—</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+{% if can_modify %}
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Settings</h2></div>
+    <form class="lan-form" id="la-form" onsubmit="return saveSettings(event)">
+        <label class="chk"><input type="checkbox" name="enabled"> <span>Run scheduled scans</span></label>
+        <label>Scan every (hours, 0 = on demand only)<input name="interval_hours" type="number" min="0" max="720" required></label>
+        <label>Quiet hours start (HH:MM)<input name="quiet_start" type="time" required></label>
+        <label>Quiet hours end (HH:MM)<input name="quiet_end" type="time" required></label>
+        <label>Segments to scan (empty = every LAN; never the WAN)<input name="segments" placeholder="@lan, @opt1"></label>
+        <label>Alert on findings at or above<select name="alert_min_severity"><option value="info">info</option><option value="warning">warning</option><option value="critical">critical</option></select></label>
+        <details class="g-adv"><summary>Advanced</summary><div>
+            <label>Ports probed at once (per host)<input name="max_parallel" type="number" min="1" max="256"></label>
+            <label>nmap packet rate cap (0 = none)<input name="max_rate" type="number" min="0" max="1000000"></label>
+            <label>Connect timeout (ms)<input name="connect_timeout_ms" type="number" min="50" max="10000"></label>
+            <label class="chk"><input type="checkbox" name="discover_neighbours"> <span>Also discover unknown devices from the neighbour table</span></label>
+            <label>Keep this many past scans<input name="keep_scans" type="number" min="1" max="10000"></label>
+        </div></details>
+        <button class="btn btn-primary btn-sm" type="submit" id="la-save">Save</button>
+    </form>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Past scans</h2></div>
+    <div class="card-body scroll-x">
+        <table class="stack data-table" id="la-scans-tbl">
+            <thead><tr class="hd"><th>Started</th><th>Trigger</th><th>Segments</th><th>Hosts</th><th>Ports</th><th>Findings</th><th>State</th></tr></thead>
+            <tbody id="la-scans-body"><tr><td colspan="7" class="hint">—</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+const CAN_MODIFY = {% if can_modify %}true{% else %}false{% endif %};
+let SELECTED = null;      // selected scan id
+let LATEST = null;        // newest scan id
+let POLL = null;
+
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function showErr(m){ const e=document.getElementById('la-error'); if(!m){e.style.display='none';return;} e.textContent=m; e.style.display='block'; }
+function minToTime(m){ const h=Math.floor(m/60), x=m%60; return String(h).padStart(2,'0')+':'+String(x).padStart(2,'0'); }
+function timeToMin(v){ const [h,m]=(v||'0:0').split(':').map(Number); return (h*60+(m||0)); }
+function sevClass(s){ return s==='critical'?'crit':(s==='warning'?'warn':'info'); }
+function fmtTs(ts){ if(!ts) return '—'; return new Date(ts*1000).toLocaleString(); }
+
+async function load(){
+    showErr('');
+    let d;
+    try { d = await (await fetch('/api/lanaudit')).json(); }
+    catch(e){ showErr('Could not load the scan data.'); return; }
+    if (d.error){ showErr(d.error); return; }
+    const t = d.tools || {};
+    document.getElementById('la-tools').textContent =
+        t.nmap ? (t.rustscan ? 'Scanning with rustscan + nmap (service and version detection).'
+                             : 'Scanning with nmap (service and version detection).')
+               : 'Scanning with the built-in TCP connect scan (nmap/rustscan not installed on this unit).';
+    // settings into the form
+    const s = d.settings || {};
+    if (CAN_MODIFY){
+        const f = document.getElementById('la-form');
+        f.enabled.checked = !!s.enabled;
+        f.interval_hours.value = s.interval_hours;
+        f.quiet_start.value = minToTime(s.quiet_start_min);
+        f.quiet_end.value = minToTime(s.quiet_end_min);
+        f.segments.value = (s.segments||[]).join(', ');
+        f.alert_min_severity.value = s.alert_min_severity;
+        f.max_parallel.value = s.max_parallel;
+        f.max_rate.value = s.max_rate;
+        f.connect_timeout_ms.value = s.connect_timeout_ms;
+        f.discover_neighbours.checked = !!s.discover_neighbours;
+        f.keep_scans.value = s.keep_scans;
+    }
+    document.getElementById('la-state').textContent = s.enabled ? ('every '+s.interval_hours+'h') : 'off';
+    // scans list
+    const scans = d.scans || [];
+    renderScans(scans);
+    const running = !!d.running;
+    const btn = document.getElementById('la-scan');
+    if (btn) btn.disabled = running;
+    document.getElementById('la-running').style.display = running ? 'inline-block' : 'none';
+    // pick a scan to show: keep the selected one, else the newest done
+    const newest = scans.find(x => x.state === 'done') || scans[0];
+    LATEST = newest ? newest.id : null;
+    if (SELECTED == null) SELECTED = LATEST;
+    if (SELECTED != null) await showScan(SELECTED, scans);
+    // poll while a scan runs
+    if (running && !POLL){ POLL = setInterval(load, 3000); }
+    if (!running && POLL){ clearInterval(POLL); POLL = null; }
+}
+
+function renderScans(scans){
+    const b = document.getElementById('la-scans-body');
+    if (!scans.length){ b.innerHTML = '<tr><td colspan="7" class="hint">No scans yet.</td></tr>'; return; }
+    b.innerHTML = scans.map(x => {
+        const sel = x.id === SELECTED ? ' sel' : '';
+        return `<tr class="scan-row${sel}" onclick="selectScan(${x.id})">
+          <td data-label="Started">${esc(fmtTs(x.started_at))}</td>
+          <td data-label="Trigger">${esc(x.trigger)}</td>
+          <td data-label="Segments">${esc(x.segments)}</td>
+          <td data-label="Hosts">${x.hosts_up}</td>
+          <td data-label="Ports">${x.ports_open}</td>
+          <td data-label="Findings">${x.findings}</td>
+          <td data-label="State"><span class="pill ${x.state==='done'?'on':(x.state==='failed'?'off':'')}">${esc(x.state)}</span></td>
+        </tr>`; }).join('');
+}
+
+async function selectScan(id){ SELECTED = id; await showScan(id); renderSel(); }
+function renderSel(){ document.querySelectorAll('.scan-row').forEach(r=>r.classList.remove('sel')); }
+
+async function showScan(id){
+    let d;
+    try { d = await (await fetch('/api/lanaudit/scans/'+id)).json(); }
+    catch(e){ return; }
+    if (d.error){ return; }
+    const scan = d.scan || {};
+    document.getElementById('la-hosts').textContent = scan.hosts_up ?? 0;
+    document.getElementById('la-ports').textContent = scan.ports_open ?? 0;
+    document.getElementById('la-findings').textContent = scan.findings ?? 0;
+    document.getElementById('la-latest').textContent =
+        'Scan #'+scan.id+' — '+fmtTs(scan.started_at)+' ('+esc(scan.trigger)+', '+esc(scan.engine)+')'
+        + (scan.error ? ' — error: '+esc(scan.error) : '');
+    const exp = document.getElementById('la-export');
+    exp.hidden = false;
+    document.getElementById('la-csv').href = '/api/lanaudit/scans/'+id+'/export.csv';
+    document.getElementById('la-pdf').href = '/api/lanaudit/scans/'+id+'/export.pdf';
+    // findings
+    const fb = document.getElementById('la-find-body');
+    const fs = d.findings || [];
+    fb.innerHTML = fs.length ? fs.map(f => `<tr>
+        <td data-label="Severity"><span class="sev-${sevClass(f.severity)}">${esc(f.severity)}</span></td>
+        <td data-label="Device">${esc(f.name || f.address)}</td>
+        <td data-label="Port">${f.port==null?'—':esc(f.port)+'/'+esc(f.proto)}</td>
+        <td data-label="What"><div>${esc(f.title)}</div><div class="finding-detail">${esc(f.detail)}</div></td>
+      </tr>`).join('') : '<tr><td colspan="4" class="hint">No findings in this scan.</td></tr>';
+    // hosts
+    const hb = document.getElementById('la-host-body');
+    const hs = d.hosts || [];
+    hb.innerHTML = hs.length ? hs.map(h => {
+        const ports = (h.ports||[]).map(p => {
+            const v = [p.service, p.product, p.version].filter(Boolean).join(' ');
+            return esc(p.port)+'/'+esc(p.proto)+(v?' ('+esc(v)+')':'');
+        }).join('<br>');
+        return `<tr>
+          <td data-label="Device">${esc(h.name || '—')}</td>
+          <td data-label="Address">${esc(h.address)}${h.mac?'<br><span class="finding-detail">'+esc(h.mac)+'</span>':''}</td>
+          <td data-label="Open ports">${ports||'—'}</td>
+        </tr>`; }).join('') : '<tr><td colspan="3" class="hint">No devices answered in this scan.</td></tr>';
+}
+
+async function startScan(){
+    showErr('');
+    const btn = document.getElementById('la-scan');
+    if (btn) btn.disabled = true;
+    try {
+        const r = await fetch('/api/lanaudit/scan', {method:'POST'});
+        if (r.status === 409){ showErr('A scan is already running.'); }
+        SELECTED = null; // follow the newest
+    } catch(e){ showErr('Could not start the scan.'); }
+    setTimeout(load, 500);
+}
+
+async function saveSettings(ev){
+    ev.preventDefault();
+    showErr('');
+    const f = ev.target;
+    const body = {
+        enabled: f.enabled.checked,
+        interval_hours: parseInt(f.interval_hours.value,10),
+        quiet_start_min: timeToMin(f.quiet_start.value),
+        quiet_end_min: timeToMin(f.quiet_end.value),
+        segments: f.segments.value.split(',').map(x=>x.trim()).filter(Boolean),
+        alert_min_severity: f.alert_min_severity.value,
+        max_parallel: parseInt(f.max_parallel.value,10),
+        max_rate: parseInt(f.max_rate.value,10),
+        connect_timeout_ms: parseInt(f.connect_timeout_ms.value,10),
+        discover_neighbours: f.discover_neighbours.checked,
+        keep_scans: parseInt(f.keep_scans.value,10),
+    };
+    const btn = document.getElementById('la-save');
+    btn.disabled = true;
+    try {
+        const r = await fetch('/api/lanaudit/settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+        const d = await r.json();
+        if (!r.ok){ showErr(d.error || 'Could not save.'); } else { await load(); }
+    } catch(e){ showErr('Could not save the settings.'); }
+    btn.disabled = false;
+    return false;
+}
+
+load();
+</script>
+{% endblock %}
