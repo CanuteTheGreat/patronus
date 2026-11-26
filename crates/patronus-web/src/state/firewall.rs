@@ -504,6 +504,11 @@ impl FirewallManager {
         probe.enabled = true;
         patronus_firewall::nftables::render_filter_rule_ext(&probe, &self.alias_map().await?, &ctx)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        if let Some(what) = patronus_firewall::nftables::kernel_caps().missing_for(&core.ext) {
+            anyhow::bail!(
+                "Invalid rule: this device's kernel has no {what}, which these limits need"
+            );
+        }
         if let Some(g) = &core.gateway {
             if !patronus_config::policy::policy_marks(&self.store)
                 .await
@@ -1765,6 +1770,101 @@ mod tests {
             .unwrap()
             .expect("same id after a failed delete");
         assert_eq!(back.port, "8080");
+    }
+
+    #[tokio::test]
+    async fn floating_rules_groups_limiters_and_limits_are_validated_and_stored() {
+        use patronus_firewall::floating::{IfGroup, Limiter};
+        let (fw, _a, _store) = fake().await;
+        // a floating rule round-trips with its options and summary
+        let mut f = sample_rule("any");
+        f.name = Some("fl".into());
+        f.floating = true;
+        f.quick = Some(false);
+        f.direction = Some("any".into());
+        f.interfaces = vec!["eth1".into(), "@lan".into()];
+        f.category = Some("guests".into());
+        let id = fw.add_rule(f.clone()).await.unwrap();
+        let got = fw.get_rule(id).await.unwrap().unwrap();
+        assert!(got.ext.floating && !got.ext.quick);
+        assert_eq!(got.ext.interfaces, vec!["eth1", "@lan"]);
+        assert_eq!(got.ext.category.as_deref(), Some("guests"));
+        assert_eq!(got.chain, "forward");
+        assert!(got.ext_summary.contains("floating, not quick, any on eth1, LAN"), "{}", got.ext_summary);
+        // a plain rule has no options and no summary
+        let plain = fw.add_rule(sample_rule("192.0.2.0/24")).await.unwrap();
+        let p = fw.get_rule(plain).await.unwrap().unwrap();
+        assert!(p.ext.is_plain() && p.ext_summary.is_empty());
+        // refused: bad direction, category with quotes, zero limit, limit on a block rule, unknown group/limiter
+        let mut bad = f.clone();
+        bad.direction = Some("sideways".into());
+        assert!(fw.add_rule(bad).await.unwrap_err().to_string().contains("Invalid"));
+        let mut bad = sample_rule("any");
+        bad.category = Some("x\"; flush ruleset".into());
+        assert!(fw.add_rule(bad).await.unwrap_err().to_string().contains("Invalid category"));
+        let mut bad = sample_rule("any");
+        bad.max_states = Some(0);
+        assert!(fw.add_rule(bad).await.is_err());
+        let mut bad = sample_rule("any");
+        bad.action = "drop".into();
+        bad.max_src_conn = Some(5);
+        let e = fw.add_rule(bad).await.unwrap_err().to_string();
+        assert!(e.contains("Invalid") && e.contains("pass rules"), "{e}");
+        let mut bad = sample_rule("any");
+        bad.limiter = Some("nope".into());
+        assert!(fw.add_rule(bad).await.unwrap_err().to_string().contains("unknown limiter"));
+        let mut bad = sample_rule("any");
+        bad.interface = "group:nope".into();
+        assert!(fw.add_rule(bad).await.unwrap_err().to_string().contains("does not exist"));
+        let mut bad = f.clone();
+        bad.interfaces = vec!["group:nope".into()];
+        assert!(fw.add_rule(bad).await.unwrap_err().to_string().contains("does not exist"));
+        // groups: validation, use protection, delete
+        let g = |name: &str, m: &[&str]| IfGroup {
+            name: name.into(),
+            members: m.iter().map(|s| s.to_string()).collect(),
+            description: None,
+        };
+        assert!(fw.save_group(g("bad name", &[])).await.is_err());
+        assert!(fw.save_group(g("g1", &["eth0\" }"])).await.is_err());
+        fw.save_group(g("g1", &["eth1"])).await.unwrap();
+        let mut on_group = sample_rule("any");
+        on_group.name = Some("onG".into());
+        on_group.interface = "group:g1".into();
+        let gid = fw.add_rule(on_group).await.unwrap();
+        let e = fw.delete_group("g1").await.unwrap_err().to_string();
+        assert!(e.contains("Invalid") && e.contains(&gid.to_string()), "{e}");
+        fw.delete_rule(gid).await.unwrap();
+        fw.delete_group("g1").await.unwrap();
+        assert!(fw.list_groups().await.unwrap().is_empty());
+        // limiters: validation, use protection
+        let lim = |n: &str, r: u32| Limiter {
+            name: n.into(),
+            rate_kbit: r,
+            burst_kb: 128,
+            per_source: true,
+            description: None,
+        };
+        assert!(fw.save_limiter(lim("cap", 0)).await.unwrap_err().to_string().contains("Invalid"));
+        fw.save_limiter(lim("cap", 4000)).await.unwrap();
+        let mut with_lim = sample_rule("any");
+        with_lim.name = Some("wl".into());
+        with_lim.limiter = Some("cap".into());
+        with_lim.max_src_rate = Some(30);
+        with_lim.max_src_rate_secs = Some(10);
+        with_lim.overload = Some("flood".into());
+        let lid = fw.add_rule(with_lim).await.unwrap();
+        assert!(fw.delete_limiter("cap").await.unwrap_err().to_string().contains("used by"));
+        let cats = fw.categories().await.unwrap();
+        assert_eq!(cats, vec![("guests".to_string(), 1)]);
+        let tables = fw.overload_tables().await.unwrap();
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].name, "flood");
+        assert_eq!(tables[0].rules, vec![lid]);
+        fw.delete_rule(lid).await.unwrap();
+        fw.delete_limiter("cap").await.unwrap();
+        assert!(fw.release_overload("x\"y", None).await.is_err());
+        assert!(fw.release_overload("flood", Some("not-an-ip")).await.is_err());
     }
 
     #[tokio::test]
