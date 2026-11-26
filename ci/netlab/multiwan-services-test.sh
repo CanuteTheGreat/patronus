@@ -15,7 +15,15 @@
 set -euo pipefail
 INIT=${1:?openrc|systemd}
 
-fail() { echo "FAIL: $*" >&2; exit 1; }
+fail() {
+  echo "FAIL: $*" >&2
+  set +e
+  echo "--- debug: routes, rules, table 4250, tracked connections, gateway status"
+  ip -4 route; ip -4 rule; ip -4 route show table 4250; conntrack -L 2>/dev/null | head -20
+  cat /run/patronus/gateway-status.json 2>/dev/null; echo
+  N lan curl -sv --max-time 4 http://198.51.100.10/ 2>&1 | tail -12
+  exit 1
+}
 ok() { echo "ok - $*"; }
 N() { local ns=$1; shift; ip netns exec "$ns" "$@"; }
 has() { grep -qF -- "$2" <<<"$1" || fail "$3: $1"; }
@@ -154,7 +162,7 @@ seen_udp() { awk -v s="$1" -v t="$2" '$2=="udp" && $3==s && $1>t {n++} END {exit
 
 echo "=== 3. second uplink, gateways, a failover group with a latency trigger"
 want 200 PUT /api/interfaces/rtr-wan2 '{"role":"opt1","ipv4_mode":"static","ipv4":["100.64.0.2/24"],"gateway4":"100.64.0.1"}'
-want 201 POST /api/routing/gateways '{"name":"WAN1","interface":"@wan","address":"203.0.113.1","latency_threshold":100,"latency_warn":40,"dns_servers":"198.51.100.10"}'
+want 201 POST /api/routing/gateways '{"name":"WAN1","interface":"@wan","address":"203.0.113.1","latency_threshold":100,"latency_warn":40,"dns_servers":"198.51.100.53"}'
 want 201 POST /api/routing/gateways '{"name":"WAN2","interface":"@opt1","address":"100.64.0.1","monitor_ip":"192.0.2.10"}'
 GRP='"name":"FAILOVER","members":"WAN1:1, WAN2:2"'
 want 201 POST /api/routing/groups "{$GRP,\"trigger\":\"latency\",\"kill_states\":\"down_recovery\"}"
@@ -163,7 +171,7 @@ wait_for "both gateways online" 30 gw_is WAN1 online
 wait_for "WAN2 online" 30 gw_is WAN2 online
 via_is 'via 203.0.113.1 dev rtr-wan' || fail "default via the group: $(ip -4 route show table 4250)"
 [ "$(who)" = 203.0.113.2 ] || fail "the client should leave via WAN1"
-ip -4 route show proto 252 | grep '198.51.100.10 via 203.0.113.1 dev rtr-wan' >/dev/null \
+ip -4 route show proto 252 | grep '198.51.100.53 via 203.0.113.1 dev rtr-wan' >/dev/null \
   || fail "DNS server of WAN1 is not pinned to it: $(ip -4 route show proto 252)"
 ok "gateways and group configured through the API; WAN1 carries the LAN; WAN1's DNS server is pinned to it"
 

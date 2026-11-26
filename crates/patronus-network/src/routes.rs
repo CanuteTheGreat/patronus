@@ -411,14 +411,13 @@ pub async fn load(store: &ConfigStore) -> Result<RoutingConfig> {
             name,
         });
     }
-    for r in
-        sqlx::query(
-            "SELECT name, trigger, description, sticky_secs, kill_states \
+    for r in sqlx::query(
+        "SELECT name, trigger, description, sticky_secs, kill_states \
              FROM route_gateway_groups ORDER BY name",
-        )
-            .fetch_all(pool)
-            .await
-            .map_err(db_err("read gateway groups"))?
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(db_err("read gateway groups"))?
     {
         let name: String = r.get(0);
         let members = sqlx::query(
@@ -2950,7 +2949,8 @@ impl Applier for RoutesApplier {
                 &d.sticky,
                 &crate::supervise::NetPaths::default().run_dir,
             )
-            .await {
+            .await
+            {
                 Ok(v) => v.into_iter().for_each(|l| rep.applied(l)),
                 Err(e) => rep.warn(format!("sticky connections: {e}")),
             }
