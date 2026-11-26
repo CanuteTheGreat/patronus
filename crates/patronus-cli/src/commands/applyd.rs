@@ -32,6 +32,12 @@ pub async fn run(
         let store = std::sync::Arc::new(open_store(db.as_deref()).await?);
         patronus_network::routes::Monitor::system(routes).spawn(store);
     }
+    // intrusion detection: collect alerts into the history table and run the nightly rule-set update
+    #[cfg(feature = "intrusion-detection")]
+    {
+        let store = std::sync::Arc::new(open_store(db.as_deref()).await?);
+        patronus_network::ids::spawn_task(store, false);
+    }
     // access point: names of Wi-Fi clients from the DHCP requests crossing the bridge (read only)
     let ap = patronus_network::apwifi::Paths::default();
     if ap.present() {
