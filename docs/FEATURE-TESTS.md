@@ -38,7 +38,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | Dynamic routing BGP/OSPF (FRR) | `ci/netlab/lane-j-frr.sh` | netlab | PASS 82 s|
 | Intrusion detection / prevention | `ci/netlab/lane-j-ids.sh` | netlab | PASS 59 s|
 | IGMP proxy (multicast) | `ci/netlab/lane-j-igmp.sh` | netlab | PASS 34 s|
-| UPS monitoring (NUT, dummy-ups) | `ci/netlab/lane-u-ups.sh` | netlab | pending first run |
+| UPS monitoring (NUT, dummy-ups) | `ci/netlab/lane-u-ups.sh` | netlab | PASS 61 s, local run on an AWS build host (2026-11-26) |
 | L2TP server (real client) | `ci/netlab/lane-j-l2tp.sh` | netlab | PASS 38 s, 2026-11-09 run 898 job 79308 (after post-reboot dial retry); re-run PASS 40 s in run 901 (2026-11-09) |
 | NAT64 / DNS64 | `ci/netlab/lane-j-nat64.sh` | netlab | PASS 19 s|
 | NetFlow / IPFIX export | `ci/netlab/lane-j-netflow.sh` | netlab | PASS 18 s|
