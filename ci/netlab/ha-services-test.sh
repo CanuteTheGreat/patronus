@@ -353,6 +353,7 @@ wait_for "B's external cache has the flow (state sync over UDP 3780)" 20 sh -c "
 ok "the flow client -> 203.0.113.9:9000 (through A) appears in B's conntrackd external cache"
 echo "=== 9. maintenance mode on A: B takes over and commits the synced flow into its kernel table"
 want 200 POST /api/ha/maintenance '{"enabled":true}'
+cp /tmp/api.out /tmp/maint-on.out
 wait_for "B becomes MASTER" 15 b_has_vip
 wait_for "A is BACKUP" 15 state_is BACKUP
 has "$(cat /etc/keepalived/keepalived.conf)" "priority 1" "maintenance priority missing"
@@ -363,7 +364,7 @@ wait_for "A preempts again" 15 a_has_vip
 wait_for "A is MASTER" 15 state_is MASTER
 ok "leaving maintenance mode: A (priority 100 > 50) takes the VIP back"
 kill "$FLOW" 2>/dev/null || true
-has "$(cat /tmp/api.out)" '"confirmed":true' "the hand-off was not confirmed"
+has "$(cat /tmp/maint-on.out)" '"confirmed":true' "the hand-off was not confirmed"
 
 echo "=== 9b. confirmed hand-off: progress, the automatic path around an upgrade, refusal with an unhealthy peer"
 # the progress the HA page banner shows
