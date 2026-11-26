@@ -86,4 +86,4 @@ past midnight, a non-window weekday; nested any/all/not; a migrated legacy chann
 unit tests in `patronus-config` (`notify_matcher`: nesting, not, calendar edges, midnight, DST, limits, migration
 equivalence) and `patronus-web` (`state::telemetry`), and the router-image gates (`ci/embedded-aarch64/ax1800/qemu-gate.sh`,
 `ci/embedded-mips/slate/qemu-gate.py`: a matcher is saved on the image and an event reaches a webhook on the emulator's
-host). README claim C87.
+host). README claim C187.

@@ -243,7 +243,7 @@ that are not finished are listed separately under
   calendar windows (weekdays, start and end time in the box's time zone, windows
   may run past midnight), edited as a tree with buttons, keys or drag and drop,
   previewed against the last events, and a declarative `NotifyMatcher` resource;
-  channels made before it keep behaving the same. [C87]
+  channels made before it keep behaving the same. [C187]
 - Traffic insight history (`/insights`, USE=insight for the monthly database
   job): the router adds up the kernel's per-flow byte counters by hour, per
   device and per direction, and names where the traffic went by country and
