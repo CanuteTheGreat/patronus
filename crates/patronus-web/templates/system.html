@@ -779,7 +779,7 @@ async function fwFeedDownload() {
             const r = await fetch('/api/system/hooks/' + h.id + '/matcher', {method: 'PUT', credentials: 'same-origin',
                 headers: {'content-type': 'application/json'}, body: JSON.stringify({matcher: s.value})});
             if (!r.ok) { let j = {}; try { j = await r.json(); } catch (_) {} alert('Not applied: ' + (j.error || r.status)); s.value = h.matcher || ''; }
-            else h.matcher = s.value;
+            else { h.matcher = s.value; document.dispatchEvent(new Event('hook-matcher-changed')); }
         };
         td.appendChild(s); tr.appendChild(td);
     }

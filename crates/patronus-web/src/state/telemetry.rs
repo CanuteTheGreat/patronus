@@ -17,12 +17,12 @@
 //!   kind and minimum severity, with a "send test" per channel.
 
 use super::{host, AppState};
+use patronus_config::notify_matcher as matcher;
 use patronus_config::ConfigStore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
-use patronus_config::notify_matcher as matcher;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -56,7 +56,11 @@ fn ev(kind: &str, subject: &str, severity: &str, detail: String) -> Event {
 
 /// An event made up by the user ("which channels get this?"): not stored in the log.
 pub fn sample_event(kind: &str, subject: &str, severity: &str) -> Event {
-    let subject = if subject.is_empty() { "sample" } else { subject };
+    let subject = if subject.is_empty() {
+        "sample"
+    } else {
+        subject
+    };
     ev(
         kind,
         subject,
@@ -558,11 +562,7 @@ pub async fn save_channel(store: &ConfigStore, h: &HookSpec) -> anyhow::Result<i
 
 /// Point a channel at another matcher (`""` = back to its own kinds +
 /// minimum severity).
-pub async fn set_hook_matcher(
-    store: &ConfigStore,
-    id: i64,
-    name: &str,
-) -> anyhow::Result<bool> {
+pub async fn set_hook_matcher(store: &ConfigStore, id: i64, name: &str) -> anyhow::Result<bool> {
     let name = name.trim();
     if !name.is_empty() && matcher::get_tree(store, name).await?.is_none() {
         anyhow::bail!("Invalid matcher {name:?}: no such notification matcher");
@@ -903,7 +903,9 @@ fn wants_event(
             subject: &e.subject,
             local,
         }),
-        None => wants(hook, &e.kind) && severity_rank(&e.severity) >= severity_rank(&hook.min_severity),
+        None => {
+            wants(hook, &e.kind) && severity_rank(&e.severity) >= severity_rank(&hook.min_severity)
+        }
     }
 }
 
@@ -931,7 +933,10 @@ pub const DEFAULT_PREVIEW_EVENTS: i64 = 50;
 
 /// "Would match" preview: the last events of `system_events`, newest first,
 /// each judged by `tree` at the box-local time it happened.
-pub async fn preview(store: &ConfigStore, tree: &matcher::Matcher) -> anyhow::Result<Vec<PreviewRow>> {
+pub async fn preview(
+    store: &ConfigStore,
+    tree: &matcher::Matcher,
+) -> anyhow::Result<Vec<PreviewRow>> {
     use chrono::TimeZone;
     let n = store
         .load_system_config("notify.preview_events")
@@ -952,7 +957,8 @@ pub async fn preview(store: &ConfigStore, tree: &matcher::Matcher) -> anyhow::Re
         .iter()
         .map(|r| {
             let ts: i64 = r.get(1);
-            let (kind, subject, severity): (String, String, String) = (r.get(2), r.get(3), r.get(4));
+            let (kind, subject, severity): (String, String, String) =
+                (r.get(2), r.get(3), r.get(4));
             let local = chrono::Local
                 .timestamp_opt(ts, 0)
                 .single()
@@ -1991,7 +1997,9 @@ mod tests {
             {"op":"calendar","days":["mon","tue","wed","thu","fri"],"start":"22:00","end":"06:00"},
             {"op":"not","items":[{"op":"subject","glob":"guest*"}]}]}))
         .unwrap();
-        matcher::upsert(&store, "night", "", tree.clone(), EVENT_KINDS).await.unwrap();
+        matcher::upsert(&store, "night", "", tree.clone(), EVENT_KINDS)
+            .await
+            .unwrap();
         assert!(set_hook_matcher(&store, id, "night").await.unwrap());
         assert!(set_hook_matcher(&store, id, "nope").await.is_err());
         let hs = hooks(&store).await.unwrap();
@@ -2004,12 +2012,19 @@ mod tests {
         // a shared matcher stays when its channel goes; the auto one goes
         assert!(delete_hook(&store, id).await.unwrap());
         assert!(matcher::get_tree(&store, "night").await.unwrap().is_some());
-        assert!(matcher::get_tree(&store, "auto-legacy").await.unwrap().is_none());
+        assert!(matcher::get_tree(&store, "auto-legacy")
+            .await
+            .unwrap()
+            .is_none());
         // channel naming a matcher that does not exist is refused
         let mut sp = spec("webhook", "https://w.example", "", "", "");
         sp.name = "x".into();
         sp.matcher = "missing".into();
-        assert!(save_channel(&store, &sp).await.unwrap_err().to_string().starts_with("Invalid"));
+        assert!(save_channel(&store, &sp)
+            .await
+            .unwrap_err()
+            .to_string()
+            .starts_with("Invalid"));
         // preview judges stored events
         for e in [&down, &up, &guest] {
             record(&store, e).await.unwrap();
