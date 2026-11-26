@@ -163,6 +163,13 @@ enum Commands {
         action: ApWifiCommands,
     },
 
+    /// Brute-force protection: active bans, ban/unban, settings
+    #[cfg(feature = "bruteforce")]
+    Guard {
+        #[command(subcommand)]
+        action: GuardCommands,
+    },
+
     /// Web UI accounts (recovery on the box: lost second factor)
     Users {
         #[command(subcommand)]
@@ -486,6 +493,36 @@ enum WifiChanCommands {
     Status,
 }
 
+#[cfg(feature = "bruteforce")]
+#[derive(Subcommand)]
+enum GuardCommands {
+    /// Settings and active bans
+    Status {
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Ban an address (IPv4, IPv6 or an IPv6 prefix) by hand
+    Ban {
+        address: String,
+        /// Seconds (default: until lifted)
+        #[arg(long)]
+        secs: Option<u64>,
+        /// Note shown with the ban
+        #[arg(long, default_value = "")]
+        reason: String,
+    },
+    /// Lift the active ban of an address
+    Unban { address: String },
+    /// Change settings: KEY=VALUE ... (enabled, max_failures, find_secs, ban_secs, ban_max_secs,
+    /// escalate, escalate_window_secs, exempt_lan, allowlist, sources, ipv6_prefix, log_files,
+    /// journal, history_days, history_max_rows, tick_secs)
+    Set {
+        #[arg(required = true)]
+        pairs: Vec<String>,
+    },
+}
+
 #[derive(Subcommand)]
 enum UsersCommands {
     /// List the web UI accounts (role, enabled, two-factor)
@@ -800,6 +837,22 @@ async fn main() -> anyhow::Result<()> {
             ApWifiCommands::Export { json } => commands::apwifi::export(json)?,
             ApWifiCommands::Plan { file } => commands::apwifi::plan(file)?,
             ApWifiCommands::Apply { file } => commands::apwifi::apply(file)?,
+        },
+
+        #[cfg(feature = "bruteforce")]
+        Commands::Guard { action } => match action {
+            GuardCommands::Status { json } => {
+                commands::guard::status(cli.db.as_deref(), json).await?
+            }
+            GuardCommands::Ban {
+                address,
+                secs,
+                reason,
+            } => commands::guard::ban(cli.db.as_deref(), &address, secs, &reason).await?,
+            GuardCommands::Unban { address } => {
+                commands::guard::unban(cli.db.as_deref(), &address).await?
+            }
+            GuardCommands::Set { pairs } => commands::guard::set(cli.db.as_deref(), &pairs).await?,
         },
 
         Commands::Users { action } => match action {
