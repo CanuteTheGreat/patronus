@@ -201,7 +201,7 @@ async fn page(me: crate::auth::AuthUser) -> Response {
     })
     .render()
     {
-        Ok(h) => Html(h).into_response(),
+        Ok(h) => Html(h.replace("@PATRONUS_VERSION@", env!("CARGO_PKG_VERSION"))).into_response(),
         Err(e) => {
             tracing::error!("render time limits: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()

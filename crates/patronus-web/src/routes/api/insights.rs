@@ -202,7 +202,7 @@ struct InsightsTemplate {
 
 async fn page(_me: crate::auth::AuthUser) -> Response {
     match (InsightsTemplate { page: "insights" }).render() {
-        Ok(h) => Html(h).into_response(),
+        Ok(h) => Html(h.replace("@PATRONUS_VERSION@", env!("CARGO_PKG_VERSION"))).into_response(),
         Err(e) => {
             tracing::error!("render insights: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
