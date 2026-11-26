@@ -115,7 +115,7 @@
     {% if leases.is_empty() %}
     <p class="empty">No leases yet. Leases appear here as soon as a client gets an address.</p>
     {% else %}
-    <table class="lan ui-grid" id="dhcp-leases">
+    <table class="lan ui-grid" id="dhcp-leases" data-filterable aria-label="DHCP leases">
         <thead><tr><th>IP address</th><th>MAC / DUID</th><th>Hostname</th><th>Expires</th><th>State</th><th>Type</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for l in leases %}

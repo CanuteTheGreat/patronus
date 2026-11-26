@@ -70,7 +70,7 @@
         and QR code can then be downloaded here (for phones and laptops). For a site-to-site peer paste the other side's
         public key and give its endpoint and the networks behind it.</p>
     {% if peers.is_empty() %}<p class="empty">No peers configured.</p>{% else %}
-    <table class="lan ui-grid" id="wg-config-peers">
+    <table class="lan ui-grid" id="wg-config-peers" data-filterable aria-label="WireGuard peers">
         <thead><tr><th>Peer</th><th>Tunnel</th><th>Allowed IPs</th><th>Endpoint</th><th>Status</th><th>Last handshake</th><th>Transfer</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for p in peers %}
@@ -210,7 +210,7 @@
     {% else if wg_peers.is_empty() %}
     <p class="empty">No WireGuard peers: no WireGuard interface with peers exists on this system (`wg show` is empty).</p>
     {% else %}
-    <table class="lan ui-grid" id="wg-peers">
+    <table class="lan ui-grid" id="wg-peers" data-filterable aria-label="live WireGuard peers">
         <thead><tr><th>Interface / peer</th><th>Public key</th><th>Allowed IPs</th><th>Endpoint</th><th>Last handshake</th><th>Transfer</th><th>Status</th></tr></thead>
         <tbody>
         {% for peer in wg_peers %}
@@ -238,7 +238,7 @@
     {% else if ipsec_tunnels.is_empty() %}
     <p class="empty">No IPsec SAs (`swanctl --list-sas` is empty).</p>
     {% else %}
-    <table class="lan ui-grid" id="ipsec-sas">
+    <table class="lan ui-grid" id="ipsec-sas" data-filterable aria-label="IPsec security associations">
         <thead><tr><th>Name</th><th>State</th><th>Local subnets</th><th>Remote subnets</th><th>Remote gateway</th></tr></thead>
         <tbody>
         {% for t in ipsec_tunnels %}
