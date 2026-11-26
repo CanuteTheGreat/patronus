@@ -163,7 +163,7 @@ pub async fn set(db: Option<&Path>, pairs: &[String]) -> anyhow::Result<()> {
         let k = k.trim().trim_start_matches("cve.");
         let v = v.trim();
         let val = match k {
-            "enabled" | "fetch" => {
+            "enabled" | "fetch" | "show_informational" => {
                 serde_json::Value::Bool(matches!(v, "1" | "true" | "yes" | "on"))
             }
             "binaries" => serde_json::Value::Array(
