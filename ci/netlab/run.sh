@@ -90,6 +90,8 @@ apt-get install -y -qq slapd ldap-utils >/dev/null
 apt-get install -y -qq --no-install-recommends openvpn squid miniupnpc radvd isc-dhcp-server git udhcpc >/dev/null
 apt-get install -y -qq --no-install-recommends miniupnpd-nftables >/dev/null 2>&1 || apt-get install -y -qq --no-install-recommends miniupnpd >/dev/null
 apt-get install -y -qq dhcpcd-base >/dev/null 2>&1 || apt-get install -y -qq dhcpcd5 >/dev/null 2>&1 || apt-get install -y -qq dhcpcd >/dev/null
+# lane N reverse proxy (lane-n-reverse-proxy*.sh): HAProxy, installed here while DNS still works
+apt-get install -y -qq --no-install-recommends haproxy >/dev/null
 # wg(8) only; its "recommends" would pull wireguard-dkms + kernel headers
 apt-get install -y -qq --no-install-recommends wireguard-tools >/dev/null
 # lane F IPsec road warriors (lane-f-ipsec-rw.sh): strongSwan server + a second charon as the client
