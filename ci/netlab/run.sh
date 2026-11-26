@@ -58,6 +58,8 @@ cp -r ci/netlab/fixtures "$OUT/"
 cp ci/guest-page-e2e.py "$OUT/"
 # lane N reverse proxy UI scenario
 cp ci/revproxy-page-e2e.py "$OUT/"
+# lane W UI scenario (language + API reference) drives this one
+cp ci/i18n-page-e2e.py "$OUT/"
 # lane J XDP data plane: the shipped BPF program source
 cp crates/patronus-ebpf/src/xdp_firewall.bpf.c "$OUT/"
 OLD_ENV=
