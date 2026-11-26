@@ -404,7 +404,7 @@ async function fwFeedDownload() {
         <label><input name="password_auth" type="checkbox"{% if ssh_password %} checked{% endif %}> Allow password login</label>
         <label>Trusted user CA public keys (one per line)<br>
             <textarea name="trusted_user_ca_keys" rows="3" cols="70" data-keep-empty="1">{{ ssh_ca }}</textarea></label>
-        <label>Authorized principals (<code>user=principal,principal</code> per line)<br>
+        <label><span>Authorized principals (<code>user=principal,principal</code> per line)</span>
             <textarea name="principals" rows="3" cols="70" data-keep-empty="1">{{ ssh_principals }}</textarea></label>
         <label>Host certificate (one line)<br>
             <textarea name="host_certificate" rows="2" cols="70" data-keep-empty="1">{{ ssh_cert }}</textarea></label>
