@@ -1,6 +1,8 @@
 # Visual-regression baseline of the live UI (ci/ui-qa/run.sh): the reduced screenshot set (320 px greyscale PNGs of
-# every page, desktop 1280 + phone 390, light + dark, standard tier + router tier AP and gateway role) that a CI run on
-# main published as a Forgejo generic package (ci/ui-qa/baseline.sh publish). Bump = copy url + sha256 of a newer
-# published set here after looking at its diff report. url = none: no baseline yet (the diff only packs).
-url = none
-sha256 = none
+# every page, desktop 1280 + phone 390, light + dark, standard tier + router tier AP and gateway role) that a run of
+# ci/ui-qa/run.sh (the CI job, or the same harness and Playwright image by hand) packed and ci/ui-qa/baseline.sh publish
+# uploaded as a Forgejo generic package. Bump = copy url + sha256 of a newer published set here after looking at its
+# diff report and screenshots. url = none: no baseline (the diff only packs).
+# Current: ui-kit-3 5dc17926 (588 pages; checked against the previous build's set: 0 fail).
+url = https://git.canutethegreat.com/api/packages/CanuteTheGreat/generic/patronus-ui-shots/5dc17926/ui-shots-5dc17926.tar.gz
+sha256 = 5cbc4e8071c787e30662601fa540b46db0cefadfc302393a545968177d0f9c5d
