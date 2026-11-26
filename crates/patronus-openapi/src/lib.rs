@@ -38,10 +38,33 @@ pub fn workspace_version(root: &Path) -> String {
     "0.0.0".into()
 }
 
+/// The same document with every object's keys in sorted order, whatever order the `Map` type of
+/// the build keeps (cargo feature unification can switch `serde_json` to insertion order).
+fn sorted(v: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match v {
+        Value::Object(m) => {
+            let mut keys: Vec<String> = m.keys().cloned().collect();
+            keys.sort();
+            let mut out = serde_json::Map::new();
+            let mut m = m;
+            for k in keys {
+                if let Some(x) = m.remove(&k) {
+                    out.insert(k, sorted(x));
+                }
+            }
+            Value::Object(out)
+        }
+        Value::Array(a) => Value::Array(a.into_iter().map(sorted).collect()),
+        x => x,
+    }
+}
+
 pub fn generate(root: &Path) -> Result<Output, String> {
     let scan = scan::scan(root)?;
     let mut problems = scan.unparsed.clone();
-    let built = spec::build(&scan, &workspace_version(root))?;
+    let mut built = spec::build(&scan, &workspace_version(root))?;
+    built.spec = sorted(built.spec);
     let mut json = serde_json::to_string_pretty(&built.spec).map_err(|e| e.to_string())?;
     json.push('\n');
     // the copy compiled into patronus-web is compact (it ships in the router-tier image)
