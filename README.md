@@ -68,6 +68,12 @@ that are not finished are listed separately under
 - Firewall log viewer: packets that a logging rule (or a threat feed, or the
   default policy) drops or accepts are recorded with the rule that caught them;
   search by rule, action, address, port, interface or text, follow it live. [C59]
+- Floating rules, interface groups, state limits and limiters: a floating rule matches
+  several interfaces (or a group) in either direction and is placed before (quick) or
+  after (not quick) the interface rules; a group is a named interface list that a rule
+  follows when a member is added; a pass rule can cap connections per source or in
+  total, put a source that opens connections too fast into an overload table that
+  blocks it, and use a limiter that caps one client's data rate. [C1210]
 - Schedules: a rule can be limited to days and hours; it switches on and
   off on time, and after a reboot. [C18]
 - Port forwards (protocol + external port to an internal host and port)

@@ -979,6 +979,12 @@ pub async fn release_overload(
     }
 }
 
+/// GET /api/firewall/capabilities -- which optional nft features this
+/// device's kernel has (the page greys out limits that need a missing one)
+pub async fn get_capabilities() -> Response {
+    Json(patronus_firewall::nftables::kernel_caps()).into_response()
+}
+
 /// GET /api/firewall/categories -- category names with their rule counts
 pub async fn list_categories(State(state): State<AppState>) -> Response {
     match state.firewall.categories().await {
@@ -1066,4 +1072,5 @@ pub fn router() -> axum::Router<AppState> {
             axum::routing::delete(release_overload),
         )
         .route("/firewall/categories", get(list_categories))
+        .route("/firewall/capabilities", get(get_capabilities))
 }
