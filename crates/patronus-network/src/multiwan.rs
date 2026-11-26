@@ -179,7 +179,9 @@ pub fn parse_table(text: &str) -> BTreeMap<String, Vec<u32>> {
                     None => v.parse().ok(),
                 };
                 if let Some(n) = n {
-                    out.get_mut(name).map(|m| m.push(n));
+                    if let Some(m) = out.get_mut(name) {
+                        m.push(n);
+                    }
                 }
             }
         }
