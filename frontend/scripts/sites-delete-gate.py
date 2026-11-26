@@ -106,6 +106,22 @@ with sync_playwright() as p:
     expect(dlg.count() == 0 and len(deletes) == 0, 'click outside closes and sends nothing')
     expect(pg.locator('[data-testid=site-card]').count() == 3, 'all 3 sites still listed')
 
+    # search / status filter / sort (a list with several rows needs find + order)
+    cards = pg.locator('[data-testid=site-card]')
+    pg.get_by_label('Search').fill(name.lower())
+    expect(cards.count() == 1 and name in cards.first.inner_text(), 'search matches name case-insensitively')
+    expect('Showing 1 of 3' in pg.locator('[data-testid=site-count]').inner_text(), 'count says Showing 1 of 3')
+    pg.get_by_label('Search').fill('zzz-no-such-site')
+    pg.get_by_test_id('no-match').wait_for(timeout=3000)
+    pg.get_by_role('button', name='Clear filters').click()
+    expect(cards.count() == 3, 'Clear filters restores all 3')
+    pg.get_by_label('Status').select_option('OFFLINE')
+    expect(all('offline' in cards.nth(i).inner_text().lower() for i in range(cards.count())), 'status filter keeps only offline sites')
+    pg.get_by_label('Status').select_option('ALL')
+    pg.get_by_label('Sort by').select_option('name')
+    names = [cards.nth(i).locator('h3').inner_text() for i in range(cards.count())]
+    expect(names == sorted(names, key=str.lower), f'sorted by name ({names})')
+
     open_dialog()
     dlg.get_by_label('Type the site name to confirm').fill(name)
     expect(confirm_btn().is_enabled(), 'exact name enables Delete')
