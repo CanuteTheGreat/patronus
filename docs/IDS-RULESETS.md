@@ -15,7 +15,7 @@ pfSense Suricata package (docs/design/pfsense-opnsense-parity.md, section 6).
 - **Download** is the product's own task (`patronus applyd`, or patronus-web when there is no applyd):
   a rule set you switch on is fetched at once, an older one in the nightly window (settings
   `update_hour`, `update_window_hours`, `update_interval_hours`, local time of the router), a failure
-  waits an hour. The **Update rule sets now** button asks the root applier to fetch everything.
+  waits `update_retry_minutes` (default 60). The **Update rule sets now** button asks the root applier to fetch everything.
 - **Verify before swap**: the download is unpacked (`tar.gz` entries with `..` or an absolute path are
   refused, only regular `*.rules` files are kept), then the *whole* merged candidate (this source's
   new files plus every other running set, your own rules, `threshold.config`) is loaded with

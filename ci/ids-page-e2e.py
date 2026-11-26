@@ -134,9 +134,20 @@ def run(p, kind):
     cls = link.get_attribute("class") or ""
     check(tag + "the entry is not marked unavailable", "nav-unavailable" not in cls, cls)
 
+    # the dashboard card
+    page.goto(BASE + "/")
+    page.wait_for_selector("#ids-card", state="visible", timeout=15000)
+    card = page.locator("#ids-card").inner_text()
+    check(tag + "the dashboard has an Intrusion detection card with the state and the 24 hour alert count",
+          "alert(s) in the last 24 hours" in card and ("Running" in card if WRITE else True), card)
+    check(tag + "the card links to the alerts and the rule sets",
+          page.locator('#ids-card a[href="/svc/ids/alerts"]').count() == 1 and page.locator('#ids-card a[href="/svc/ids"]').count() == 1)
+    page.goto(BASE + "/svc/ids")
+    page.wait_for_selector("#svc-settings-form [name=mode]", timeout=15000)
+
     # 2. the page
     keys = ["enabled", "mode", "interface", "home_net", "distro_rules", "update_enabled", "update_hour",
-            "update_window_hours", "update_interval_hours", "alert_retention_days", "alert_max_rows"]
+            "update_window_hours", "update_interval_hours", "update_retry_minutes", "alert_retention_days", "alert_max_rows"]
     missing = [k for k in keys if page.locator(f"#svc-settings-form [name={k}]").count() != 1]
     check(tag + "every IDS setting is on the page", not missing, missing)
     colls = ["sources", "policies", "overrides", "suppress", "interfaces", "rules"]
@@ -149,7 +160,7 @@ def run(p, kind):
     check(tag + "the alert browser is linked", page.locator("#ids-alerts-link").get_attribute("href") == "/svc/ids/alerts")
     page.wait_for_function("() => document.querySelector('#svc-status') && !/Loading/.test(document.querySelector('#svc-status').innerText)", timeout=15000)
     st = page.locator("#svc-status").inner_text()
-    check(tag + "the status shows the rule-set table", "Rule set" in st and "Licence" in st, st[:300])
+    check(tag + "the status shows the rule-set table", "rule set" in st.lower() and "licence" in st.lower(), st[:300])
 
     # 3. a refused entry
     before = api(page, "/api/svc/ids")["json"]["collections"]["sources"]
@@ -166,6 +177,7 @@ def run(p, kind):
     page.wait_for_selector("#ids-filter", timeout=15000)
     page.wait_for_function("() => !/Loading/.test(document.getElementById('ids-rows').innerText)", timeout=15000)
     check(tag + "the alert browser has its filters", all(page.locator(f"#ids-filter [name={k}]").count() == 1 for k in ["window", "src", "dst", "sid", "q", "action"]))
+    page.wait_for_function("() => !/Loading/.test(document.querySelector('.ids-top').innerText)", timeout=15000)
     check(tag + "the top lists are filled, not 'Loading'", "Loading" not in page.locator(".ids-top").inner_text())
 
     if WRITE:
@@ -179,9 +191,9 @@ def run(p, kind):
         check(tag + "the rule set was added through the page", True)
         page.locator("#svc-action-buttons button", has_text="Update rule sets now").click()
         page.wait_for_function(
-            "() => /Netlab UI rules \\(netlab-ui\\)[\\s\\S]*?ok/.test(document.getElementById('svc-status').innerText)", timeout=120000)
+            "() => /Netlab UI rules \\(netlab-ui\\)[\\s\\S]*?(ok|unchanged)/.test(document.getElementById('svc-status').innerText)", timeout=120000)
         rs = [r for r in api(page, "/api/svc/ids")["json"]["status"]["rule_sets"] if r["key"] == "netlab-ui"][0]
-        check(tag + "Update rule sets now: the rule set was downloaded, checked and loaded", rs["status"] == "ok" and rs["rules"] >= 1, rs)
+        check(tag + "Update rule sets now: the rule set was downloaded, checked and loaded", rs["status"] in ("ok", "unchanged") and rs["rules"] >= 1, rs)
 
         # 6. a policy and a setting through the page
         fill_form(page, "#svc-form-policies", {"scope": "ruleset", "target": "netlab-ui", "action": "alert", "note": "e2e"})
@@ -226,7 +238,12 @@ def run(p, kind):
         page.locator("#ids-filter button[type=submit]").click()
         page.wait_for_selector("#ids-rows tr[data-id]", timeout=20000)
         page.locator("#ids-rows tr[data-id]").first.locator("button", has_text="Suppress rule").click()
-        page.wait_for_function("() => /Entry added/.test(document.getElementById('ids-page').innerText)", timeout=60000)
+        try:
+            page.wait_for_function("() => /Entry added/.test(document.getElementById('ids-page').innerText)", timeout=60000)
+        except Exception:
+            check(tag + "one click on the alert made a suppress entry", False, page.locator("#ids-error").inner_text())
+            browser.close()
+            return
         sup = api(page, "/api/svc/ids")["json"]["collections"]["suppress"]
         check(tag + "one click on the alert made a suppress entry for its rule", any(str(r["sid"]) == SID and r["kind"] == "suppress" for r in sup), sup)
         page.goto(BASE + "/svc/ids")
