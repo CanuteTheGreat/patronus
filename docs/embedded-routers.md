@@ -865,6 +865,21 @@ lock the window and a restart opens a new one, expiry, root password as proof, l
 removed, web log line, status `completed/ap/no wizard`, wizard apply 409, and after a restart no second record and no code.
 The MIPS harnesses (`t_e2e.py`, `t_slate.py`) read the code over the console/ssh.
 
+### 12.9b Multi-WAN (gateway groups) on the router tier: measured, not enabled (2026-11-26)
+
+Measured with the AX1800 builder image on an arm64 runner, `stage-patronus.sh`'s flags (`opt-level z`, fat LTO,
+`panic=abort`, stripped), the feature list of 12.10 without and with `multiwan`: **both binaries are 16,049,064 B**
+(the two files differ in content, xz 5,847,636 B without and 5,845,656 B with). Cost of the flag on aarch64: **0 B** in
+the binary. The only new
+runtime piece is conntrack-tools for kill states: Alpine's apks are 237,731 B compressed in six files
+(`conntrack-tools` 156,942, `libnetfilter_conntrack` 42,250, `libnfnetlink`, `libnetfilter_cthelper`,
+`libnetfilter_cttimeout`, `libnetfilter_queue`), about two LEBs of the rootfs and two more for the rollback copy; the
+kernel also needs `kmod-nf-conntrack-netlink` (not in `kmods.pin`). By these numbers it fits the AX1800's NAND budget (the budget script was not re-run); the Slate (MIPS) was not
+measured: its rootfs is 9.99 of 16 MiB, so +0.25 MiB of conntrack-tools would fit, the binary delta there is unmeasured. It stays off the AX1800 because that unit is a wired access point with one uplink; a
+router build that wants gateway groups adds `multiwan` to `CLI_FEATURES`, `conntrack-tools` to `stage-rootfs.sh`, the
+kmod pin and a `multiwan` branch to `check-rootfs.sh` (conntrack binary + module). Without conntrack the monitor logs a
+warning and kill states do nothing; failover, sticky connections and the rest need only `ip` and `nft`.
+
 ### 12.10 Router-tier features: WireGuard, the NTP server and remote syslog (2026-11-17)
 
 The GL-AX1800 image builds `patronus-cli` with `nftables,cli,dhcp-server,dns-server,uci-import,wifi-ap,web-multicall,
