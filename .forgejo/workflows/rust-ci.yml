@@ -416,6 +416,20 @@ jobs:
           REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
           NETLAB_TEST: ha-services-test.sh
         run: ci/netlab/lan-services.sh systemd
+      # Lane G phase 2 (ci/netlab/ha-sync-test.sh): HA configuration sync between two complete
+      # Patronus routers (B in a private mount namespace): a rule added on A appears in B's
+      # nftables over pinned HTTPS, a wrong pin never receives the key, a switched-off section is
+      # untouched, a push B cannot apply is undone and reported on A. Once per init system.
+      - name: Lane G HA configuration sync - OpenRC path (Gentoo stage3)
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          NETLAB_TEST: ha-sync-test.sh
+        run: ci/netlab/lan-services.sh openrc
+      - name: Lane G HA configuration sync - systemd path (Gentoo stage3)
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          NETLAB_TEST: ha-sync-test.sh
+        run: ci/netlab/lan-services.sh systemd
       # Device segmentation, per-device/group DNS policy
       # (ci/netlab/segmentation-dns-services-test.sh): real Unbound views per
       # group and device, family preset, block/allow/override rules, bypass
