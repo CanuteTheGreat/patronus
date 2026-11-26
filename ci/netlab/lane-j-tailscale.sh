@@ -2,7 +2,7 @@
 # Lane J: Tailscale mesh VPN client (USE=tailscale), proven against a real Headscale
 # control server (no internet login in CI) and a second tailscale node:
 #
-#   router (203.0.113.2) --- isp --- headscale (198.51.100.10:8080, nl-inet)
+#   router (203.0.113.2) --- isp --- headscale (198.51.100.10:8090, nl-inet)
 #                              \---- peer node (198.19.0.2, nl-peer)
 #
 # - the Tailscale page joins the router to the tailnet with a pre-auth key read from a FILE
@@ -25,7 +25,7 @@ command -v tailscaled >/dev/null && command -v headscale >/dev/null || nl_fail "
 HS=/t/hs; PEER=/t/ts-peer; STATE=/t/ts-router
 KEY=/t/ts-router.key
 rm -rf "$HS" "$PEER" "$STATE"; mkdir -p "$HS" "$PEER" "$STATE"
-HSURL=http://198.51.100.10:8080
+HSURL=http://198.51.100.10:8090
 api_ok() { nl_api "$@"; case "$NL_CODE" in 2??) ;; *) nl_fail "$1 $2: HTTP $NL_CODE $(cat "$NL_OUT")";; esac; }
 jget() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$NL_OUT" "$1"; }
 PEERNS() { ip netns exec nl-peer "$@"; }
@@ -43,7 +43,7 @@ pkill -x tailscaled 2>/dev/null || true
 
 cat > $HS/config.yaml <<EOF
 server_url: $HSURL
-listen_addr: 198.51.100.10:8080
+listen_addr: 198.51.100.10:8090
 metrics_listen_addr: 127.0.0.1:9090
 grpc_listen_addr: 127.0.0.1:50443
 grpc_allow_insecure: true
@@ -55,7 +55,15 @@ prefixes:
   allocation: sequential
 derp:
   server:
-    enabled: false
+    enabled: true
+    region_id: 999
+    region_code: lab
+    region_name: Lab relay
+    stun_listen_addr: 198.51.100.10:3478
+    private_key_path: $HS/derp_server_private.key
+    automatically_add_embedded_derp_region: true
+    ipv4: 198.51.100.10
+    verify_clients: false
   urls: []
   paths: []
   auto_update_enabled: false
