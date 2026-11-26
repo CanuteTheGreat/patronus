@@ -108,6 +108,8 @@ pub mod netflow;
 pub mod igmp;
 #[cfg(feature = "mdns")]
 pub mod mdns;
+#[cfg(feature = "lldp")]
+pub mod lldp;
 
 #[cfg(feature = "nat64")]
 pub mod nat64;

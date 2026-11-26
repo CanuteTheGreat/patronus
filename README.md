@@ -273,6 +273,9 @@ that are not finished are listed separately under
   exports flow records (v5, v9 or IPFIX) to a collector. [C47]
 - IGMP proxy (USE=igmp): igmpproxy forwards multicast streams from the WAN to
   LAN interfaces, with the firewall rules it needs generated for it. [C48]
+- LLDP (USE=lldp): lldpd announces the router on the interfaces you list (never
+  the WAN unless listed), per-interface rx/tx mode, optional CDP/EDP/FDP/SONMP,
+  and the LLDP page shows the switch ports each cable ends on.
 - NAT64 / DNS64 (USE=nat64): IPv6-only clients reach IPv4-only servers through
   tayga, and Unbound answers AAAA queries for IPv4-only names with addresses
   in the NAT64 prefix. [C49]

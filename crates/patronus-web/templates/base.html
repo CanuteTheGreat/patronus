@@ -825,6 +825,10 @@
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
                         <span>mDNS repeater</span>
                     </a>
+                    <a href="/svc/lldp" class="nav-item {% if page == "svc-lldp" %}active{% endif %}">
+                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"></path></svg>
+                        <span>LLDP</span>
+                    </a>
                     <a href="/svc/nat64" class="nav-item {% if page == "svc-nat64" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
                         <span>NAT64 / DNS64</span>
@@ -1041,7 +1045,7 @@
         const have = new Set(d.features);
         const need = {'/vpn': ['wireguard', 'ipsec', 'openvpn', 'l2tp'], '/dhcp': ['dhcp'], '/dns': ['dns'], '/ntp': ['ntp'], '/ha': ['ha'], '/qos': ['qos'],
             '/segmentation': ['segmentation'], '/segmentation/time': ['segmentation'], '/segmentation/dns': ['dns'], '/packages': ['plugins'],
-            '/svc/syslog': ['syslog'], '/svc/netflow': ['netflow'], '/svc/igmp': ['igmp'], '/svc/mdns': ['mdns'], '/svc/nat64': ['nat64'], '/svc/l2tp': ['l2tp'],
+            '/svc/syslog': ['syslog'], '/svc/netflow': ['netflow'], '/svc/igmp': ['igmp'], '/svc/mdns': ['mdns'], '/svc/lldp': ['lldp'], '/svc/nat64': ['nat64'], '/svc/l2tp': ['l2tp'],
             '/svc/ids': ['intrusion-detection'], '/svc/frr': ['dynamic-routing'], '/svc/guest': ['guest']};
         document.querySelectorAll('.sidebar-nav a.nav-item').forEach(a => {
             const f = need[a.getAttribute('href')];

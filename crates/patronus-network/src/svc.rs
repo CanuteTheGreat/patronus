@@ -178,6 +178,8 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     v.push(Arc::new(crate::igmp::IgmpSvc));
     #[cfg(feature = "mdns")]
     v.push(Arc::new(crate::mdns::MdnsSvc));
+    #[cfg(feature = "lldp")]
+    v.push(Arc::new(crate::lldp::LldpSvc));
     #[cfg(feature = "nat64")]
     v.push(Arc::new(crate::nat64::Nat64Svc));
     #[cfg(feature = "l2tp")]
@@ -211,6 +213,7 @@ pub const SVC_TABLES: &[&str] = &[
     "syslog_targets",
     "igmp_interfaces",
     "mdns_interfaces",
+    "lldp_interfaces",
     "l2tp_users",
     "proxy_blocked",
     "vrf_instances",

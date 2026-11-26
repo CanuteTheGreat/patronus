@@ -55,6 +55,7 @@ pub const LAN_TABLES: &[&str] = &[
     "syslog_targets",
     "igmp_interfaces",
     "mdns_interfaces",
+    "lldp_interfaces",
     "l2tp_users",
     "proxy_blocked",
     "vrf_instances",
@@ -995,6 +996,8 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::igmp::IgmpApplier::default()));
     #[cfg(feature = "mdns")]
     v.push(Arc::new(crate::mdns::MdnsApplier::default()));
+    #[cfg(feature = "lldp")]
+    v.push(Arc::new(crate::lldp::LldpApplier::default()));
     #[cfg(feature = "nat64")]
     v.push(Arc::new(crate::nat64::Nat64Applier::default()));
     #[cfg(feature = "l2tp")]
