@@ -12,7 +12,7 @@ colour scheme, it requires:
   3. Connect without ticking the terms is refused on the page (an alert is shown) and the client is
      still captured;
   4. ticking the terms and Connect takes the browser to the page first asked for (the internet
-     answers), then /status shows the logout button, and Disconnect brings the sign-in page back.
+     answers), then the status page (on the portal's own port) shows the logout button, and Disconnect brings the sign-in page back.
 No JavaScript errors anywhere. Exit 0 = every check passed.
 
 Usage: ROUTER=192.168.50.1 TARGET_URL=http://198.51.100.10/ TARGET_TEXT='sees' captive-portal-e2e.py [firefox,chromium]
@@ -26,6 +26,7 @@ ROUTER = os.environ["ROUTER"]
 TARGET = os.environ["TARGET_URL"]
 TARGET_TEXT = os.environ.get("TARGET_TEXT", "")
 TITLE = os.environ.get("PORTAL_TITLE", "")
+PORT = os.environ.get("PORTAL_HTTPS_PORT", "8003")
 
 failures = []
 
@@ -104,7 +105,7 @@ def run(browser_name, pw):
         body = page.locator("body").inner_text()
         check(f"{tag}: signed in, the page first asked for opens", page.url.startswith(TARGET) and TARGET_TEXT in body,
               f"{page.url} {body[:200]}")
-        page.goto(f"https://{ROUTER}/status", wait_until="load")
+        page.goto(f"https://{ROUTER}:{PORT}/status", wait_until="load")
         check(f"{tag}: status page has the logout button", page.locator("#cp-logout").count() == 1 and page.locator("#cp-online").count() == 1,
               page.content()[:300])
         page.click("#cp-logout")

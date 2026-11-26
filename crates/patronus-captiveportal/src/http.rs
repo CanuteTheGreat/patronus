@@ -98,6 +98,23 @@ async fn host_for(st: &PortalHttp, c: &ClientCtx) -> String {
     }
 }
 
+/// The status page of a signed-in client. Absolute, on the portal's own
+/// port: once signed in, the router's standard ports are no longer redirected
+/// to the portal for this client.
+async fn status_url(st: &PortalHttp, c: &ClientCtx) -> String {
+    let g = st.portal.globals().await;
+    let host = if g.hostname.is_empty() {
+        c.router.to_string()
+    } else {
+        g.hostname.clone()
+    };
+    if st.tls {
+        format!("https://{host}:{}/status", g.https_port)
+    } else {
+        format!("http://{host}:{}/status", g.http_port)
+    }
+}
+
 async fn landing(
     State(st): State<St>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -115,9 +132,8 @@ async fn landing(
         }
         // signed in, on the HTTP listener by its port: the status page is on HTTPS
         // (port 443 of the router is the web UI again for a signed-in client)
-        let host = host_for(&st, &c).await;
-        let port = st.portal.globals().await.https_port;
-        return redirect(StatusCode::FOUND, &format!("https://{host}:{port}/status"));
+        let tls = PortalHttp { portal: st.portal.clone(), tls: true };
+        return redirect(StatusCode::FOUND, &status_url(&tls, &c).await);
     }
     // what the client asked for before it was sent here (HTTP listener only)
     let orig = if st.tls {
@@ -184,7 +200,7 @@ async fn login(
             } else if safe_target(&redirurl) {
                 redirurl
             } else {
-                "/status".to_string()
+                status_url(&st, &c).await
             };
             redirect(StatusCode::SEE_OTHER, &to)
         }
@@ -282,14 +298,30 @@ async fn api(State(st): State<St>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -
     no_store(r)
 }
 
+/// Plain-HTTP answers close their connection: a browser that kept a
+/// redirected connection open would otherwise send its next request for that
+/// host to the portal again after signing in (the kernel no longer redirects
+/// new connections, but an open one stays where it was).
+async fn close_http(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    let mut r = next.run(req).await;
+    r.headers_mut()
+        .insert(header::CONNECTION, header::HeaderValue::from_static("close"));
+    r
+}
+
 pub fn router(portal: Arc<Portal>, tls: bool) -> Router {
-    Router::new()
+    let r = Router::new()
         .route("/api/captive", get(api))
         .route("/login", post(login))
         .route("/logout", get(logout).post(logout))
         .route("/status", get(status))
         .fallback(landing)
-        .with_state(Arc::new(PortalHttp { portal, tls }))
+        .with_state(Arc::new(PortalHttp { portal, tls }));
+    if tls {
+        r
+    } else {
+        r.layer(axum::middleware::from_fn(close_http))
+    }
 }
 
 #[cfg(test)]

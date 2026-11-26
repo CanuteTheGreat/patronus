@@ -157,12 +157,13 @@ pub fn pages() -> Router<AppState> {
         .route("/captive-portal/rolls/:id/print", get(print))
 }
 
+/// Mounted under `/api` by the caller.
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/captive-portal/sessions", get(sessions))
+        .route("/captive-portal/sessions", get(sessions))
         .route(
-            "/api/captive-portal/sessions/:id/disconnect",
+            "/captive-portal/sessions/:id/disconnect",
             post(disconnect),
         )
-        .route("/api/captive-portal/rolls", get(rolls))
+        .route("/captive-portal/rolls", get(rolls))
 }

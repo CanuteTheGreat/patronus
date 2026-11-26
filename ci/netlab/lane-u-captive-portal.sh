@@ -19,6 +19,8 @@ DB=/t/lane-u-captive-portal.db
 rm -f "$DB" "$NL_T/nl-jar"
 RTR=$NL_RTR_LAN
 PORTAL="https://$RTR"
+# a signed-in client reaches the portal on its own port (the standard ports are the router's again)
+PORTAL_S="https://$RTR:8003"
 RADIUS_IP=198.51.100.30
 RADIUS_SECRET=netlab-radius-test-secret
 RLOG=$NL_T/nl-radius.log
@@ -55,14 +57,13 @@ fr_setup() {
 }
 
 # --- client helpers ------------------------------------------------------------------------------------------------
-CMAC=$(C cat /sys/class/net/lan0/address 2>/dev/null || true)
 online() { C curl -s -m 4 -o "$NL_OUT.net" "http://$NL_WWW/" && grep -q "sees $NL_RTR_WAN" "$NL_OUT.net"; }
 offline() { ! online; }
 tcp_out() { C python3 "$NL_T/nl-conn.py" "$1" 9000 >/dev/null 2>&1; }
 # portal REQ...: a request from the client to the portal (curl -k: the lab's self-signed certificate); body in $NL_OUT
 portal() { PCODE=$(C curl -sk -m 8 -o "$NL_OUT" -w '%{http_code}' "$@" || true); }
 login() { portal -X POST "$@" "$PORTAL/login"; }
-logout() { portal -X POST "$PORTAL/logout"; }
+logout() { portal -X POST "$PORTAL_S/logout"; }
 expect_online() { nl_wait 8 online || nl_fail "$1: the client is not online"; nl_ok "$1: client online (masqueraded as $NL_RTR_WAN)"; }
 expect_blocked() {
   nl_wait 12 offline || nl_fail "$1: the client still reaches the internet"
@@ -79,6 +80,7 @@ nl_up
 nl_apply "$DB" || { cat "$NL_OUT"; nl_fail "boot: patronus apply failed"; }
 nl_web_start "$DB"; nl_login
 fr_setup
+CMAC=$(C cat /sys/class/net/lan0/address 2>/dev/null || true)
 [ -n "$CMAC" ] || nl_fail "client MAC unknown"
 
 echo "=== 1. off: nothing in the way"
@@ -97,6 +99,8 @@ ZID=$(jget 'd["id"]')
 nl_wait 10 out_has "table inet patronus_portal" R nft list tables || nl_fail "portal table not loaded"
 nl_assert_nft_has "redirect to :8002"
 expect_blocked "zone on, not signed in"
+portal_http_up() { [ "$(C curl -s -m 3 -o /dev/null -w '%{http_code}' "http://$NL_WWW/" || true)" = 302 ]; }
+nl_wait 15 portal_http_up || nl_fail "the portal's HTTP listener does not answer"
 PCODE=$(C curl -s -m 8 -o /dev/null -w '%{http_code} %{redirect_url}' "http://$NL_WWW/some/page?x=1" || true)
 case "$PCODE" in "302 https://$RTR/?redirurl=http%3A%2F%2F$NL_WWW%2Fsome%2Fpage%3Fx%3D1") ;; *) nl_fail "HTTP is not sent to the portal: $PCODE";; esac
 nl_ok "HTTP to anywhere -> 302 to $PORTAL/ with the page asked for"
@@ -117,6 +121,8 @@ login --data-urlencode "redirurl=http://$NL_WWW/x"
 offline || nl_fail "refused login let the client out"
 login --data-urlencode terms=1 --data-urlencode "redirurl=http://$NL_WWW/x"
 [ "$PCODE" = 303 ] || nl_fail "click-through login: $PCODE $(head -c 300 "$NL_OUT")"
+REDIR=$(C curl -sk -m 8 -o /dev/null -w '%{redirect_url}' -X POST --data-urlencode terms=1 "$PORTAL_S/login" || true)
+[ "$REDIR" = "$PORTAL_S/status" ] || nl_fail "signed-in login answer should lead to the status page on the portal port: $REDIR"
 expect_online "click-through"
 portal "https://$RTR:8003/api/captive"
 [ "$(jget 'd["captive"]')" = False ] || nl_fail "RFC 8908 API after login: $(cat "$NL_OUT")"
@@ -125,7 +131,8 @@ out_has "$CMAC" R "$P" --db "$DB" captive-portal sessions || nl_fail "CLI does n
 nl_ok "session listed in the API and the CLI"
 
 echo "=== 4. logout blocks again"
-portal "$PORTAL/logout"
+portal "$PORTAL_S/logout"
+[ "$PCODE" = 200 ] && grep -q 'id="cp-logout"' "$NL_OUT" || nl_fail "status page on the portal port: $PCODE"
 offline && nl_fail "a GET of /logout must not sign out" || true
 logout
 [ "$PCODE" = 200 ] || nl_fail "logout: $PCODE"

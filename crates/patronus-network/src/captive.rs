@@ -126,7 +126,7 @@ static ZONE_FIELDS: [Field; 31] = [
     Field::new("voucher_label", "Voucher label", Kind::Text).def("Voucher code"),
     Field::new("error_text", "Login refused text", Kind::Text)
         .def("That did not work. Check what you typed and try again."),
-    Field::new("accent_color", "Accent colour", Kind::Token)
+    Field::new("accent_color", "Accent colour", Kind::Text)
         .help("#rrggbb for the button; empty = the built-in theme"),
     Field::new("description", "Description", Kind::Text),
     Field::new("max_sessions", "Sessions per account", Kind::Int(0, 1000))

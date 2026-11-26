@@ -546,7 +546,13 @@ impl Portal {
             return Err(Refused::Unavailable(e));
         }
         self.shape(&s);
-        let _ = self.sys.run(&["conntrack", "-D", "-s", &s.ip]);
+        // web connections the portal redirected (TCP 80 to anywhere) keep their
+        // NAT to the portal while tracked: forget them so the next packet goes
+        // out. Never all of the client's flows: the HTTPS connection this login
+        // came in on would lose its NAT and the answer with it.
+        let _ = self
+            .sys
+            .run(&["conntrack", "-D", "-s", &s.ip, "-p", "tcp", "--dport", "80"]);
         let _ = self
             .store
             .audit(
@@ -794,7 +800,9 @@ impl Portal {
             }
         }
         self.unshape(&s);
-        let _ = self.sys.run(&["conntrack", "-D", "-s", &s.ip]);
+        // no conntrack flush: the zone's forward chain checks every packet
+        // (not only new connections), so the client's open connections stop
+        // at once, and its logout request still gets its answer
         let _ = self
             .store
             .audit(
@@ -1069,7 +1077,7 @@ mod tests {
         assert!(cmds.contains(
             "delete element inet patronus_portal z1_auth { 02:00:00:00:00:14 . 10.1.0.20 }"
         ));
-        assert!(cmds.contains("conntrack -D -s 10.1.0.20"));
+        assert!(cmds.contains("conntrack -D -s 10.1.0.20 -p tcp --dport 80"));
         assert!(p.active(&c).await.is_none());
     }
 
