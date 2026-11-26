@@ -5,7 +5,9 @@
 # wizard with the default "DHCP from the ISP" WAN (200 + a dhcpcd client for the WAN port), a wizard that fails half-way (one readable
 # sentence, nothing applied), then LAN pool + reservation + static WAN, a REBOOT, and: dnsmasq running, a second machine on the LAN gets
 # the reserved address, the static default route is back, the system dhcpcd does not manage the Patronus ports. Both inits run the same
-# scenarios (tools/vmtest/scenarios/*.py never name a service manager).
+# scenarios (tools/vmtest/scenarios/*.py never name a service manager). installed_firstrun's last phases run the wizard against a
+# virtual ISP node (Alpine: radvd + kea DHCPv6 with prefix delegation, rp-pppoe access concentrator): WAN DHCPv6 asking for a /56 with
+# the LAN tracking it, PPPoE (refused without a password, then a session with MTU 1492 and masquerade on pppoe0), and an OPT port.
 # installed-pfsense-import (vmtest, x86_64): a config.xml written by the scenario (WAN/LAN/OPT + VLAN, alias, rules, port forward,
 # reservation, host override, one unmappable section) -- the CLI plan writes nothing, web plan + apply, kernel state, REBOOT.
 # installed-lagg-vlan (vmtest, x86_64): an answer file with an 802.3ad bond and WAN / LAN / management on VLANs of it. At the FIRST boot,
@@ -27,7 +29,7 @@ vmtest_gate() {   # NAME SCENARIO DEADLINE
   fi
 }
 if [ "$ARCH" = x86_64 ]; then
-  vmtest_gate installed-firstrun installed_firstrun.py 5400
+  vmtest_gate installed-firstrun installed_firstrun.py 7200
   vmtest_gate installed-pfsense-import installed_pfsense_import.py 4200
   vmtest_gate installed-lagg-vlan installed_lagg_vlan.py 5400
 fi
