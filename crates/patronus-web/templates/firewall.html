@@ -30,7 +30,10 @@
     #rules-table td.fw-name small { color: var(--c-muted); margin-left: 6px; }
     #rules-table td.fw-sel, #rules-table th.fw-sel { width: 32px; padding-right: 0; }
     #rules-table tr.off td:not(.fw-sel):not(.fw-act) { color: var(--c-muted); }
-    #rules-table td.fw-act { text-align: right; }
+    /* row actions stay in view when the grid scrolls sideways */
+    #rules-table td.fw-act, #rules-table th.fw-act { text-align: right; position: sticky; right: 0; background: var(--c-surface); box-shadow: -6px 0 6px -6px rgb(0 0 0 / .3); }
+    #rules-table th.fw-act { background: var(--c-sunken); z-index: 2; }
+    #rules-table tbody tr:hover td.fw-act { background: var(--c-row-hover); }
     #rules-table td.fw-act .ui-btn { min-width: 26px; padding: 0 6px; }
     .fw-page .ui-toolbar .ui-input[type=search] { width: 16rem; max-width: 100%; }
     .fw-page .ui-toolbar .fw-filter { min-height: 26px; height: 26px; padding: 0 var(--s-2); font-size: var(--fs-sm); }

@@ -110,7 +110,8 @@ NAV_OPEN_JS = r"""() => { const b = document.querySelector('[data-nav-toggle], b
   if (!b) return false; b.click(); return true; }"""
 NAV_CLOSE_JS = r"""() => { const b = document.querySelector('[data-nav-toggle][aria-expanded=true], button[aria-expanded=true][aria-controls]'); if (b) b.click(); }"""
 
-LINKS_JS = r"""() => [...document.querySelectorAll('a[href]')].map(a => [a.getAttribute('href'), (a.innerText || '').trim().slice(0, 40), !!a.closest('nav, aside, .sidebar')])"""
+# links a user can see (a nav item the page hides for a feature this build leaves out is not a route anyone reaches)
+LINKS_JS = r"""() => [...document.querySelectorAll('a[href]')].filter(a => a.getClientRects().length > 0).map(a => [a.getAttribute('href'), (a.innerText || '').trim().slice(0, 40), !!a.closest('nav, aside, .sidebar')])"""
 
 
 def load_config(path):
