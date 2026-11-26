@@ -1,4 +1,89 @@
-import { Settings as SettingsIcon, Bell, Shield, Network } from 'lucide-react'
+import { useState, type FormEvent } from 'react'
+import { Settings as SettingsIcon, Bell, Shield, Network, KeyRound } from 'lucide-react'
+import { changePassword, getUser } from '../auth'
+
+const inputClass =
+  'w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500'
+
+function AccountCard() {
+  const user = getUser()
+  const [oldPw, setOldPw] = useState('')
+  const [newPw, setNewPw] = useState('')
+  const [confirmPw, setConfirmPw] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    if (newPw !== confirmPw) {
+      setMsg({ ok: false, text: 'The new password and its confirmation differ.' })
+      return
+    }
+    setBusy(true)
+    setMsg(null)
+    try {
+      await changePassword(oldPw, newPw)
+      setOldPw('')
+      setNewPw('')
+      setConfirmPw('')
+      setMsg({ ok: true, text: 'Password changed. Use it the next time you sign in.' })
+    } catch (err) {
+      setMsg({ ok: false, text: err instanceof Error ? err.message : 'Password change failed' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form
+      data-testid="account-card"
+      onSubmit={submit}
+      className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 lg:col-span-2"
+    >
+      <div className="flex items-center gap-3 mb-4">
+        <div className="p-2 bg-blue-50 dark:bg-blue-900/30 rounded-lg">
+          <KeyRound className="h-6 w-6 text-blue-700 dark:text-blue-400" />
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Your account</h2>
+          {user && (
+            <p className="text-sm text-gray-600 dark:text-gray-300">
+              Signed in as {user.email} ({user.role})
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+          Current password
+          <input type="password" autoComplete="current-password" required value={oldPw}
+            onChange={(e) => setOldPw(e.target.value)} className={`mt-1 ${inputClass}`} />
+        </label>
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+          New password
+          <input type="password" autoComplete="new-password" required minLength={8} value={newPw}
+            onChange={(e) => setNewPw(e.target.value)} className={`mt-1 ${inputClass}`} />
+        </label>
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+          Confirm new password
+          <input type="password" autoComplete="new-password" required value={confirmPw}
+            onChange={(e) => setConfirmPw(e.target.value)} className={`mt-1 ${inputClass}`} />
+        </label>
+      </div>
+      <div className="mt-4 flex items-center gap-4">
+        <button type="submit" disabled={busy}
+          className="px-4 py-2 bg-primary-700 text-white rounded-lg hover:bg-primary-800 disabled:opacity-60 transition-colors">
+          {busy ? 'Changing...' : 'Change password'}
+        </button>
+        {msg && (
+          <p role="status" className={msg.ok ? 'text-sm text-green-700 dark:text-green-400' : 'text-sm text-red-700 dark:text-red-400'}>
+            {msg.text}
+          </p>
+        )}
+      </div>
+    </form>
+  )
+}
 
 export default function Settings() {
   return (
@@ -6,6 +91,7 @@ export default function Settings() {
       <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Settings</h1>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <AccountCard />
         {/* General Settings */}
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
           <div className="flex items-center gap-3 mb-4">

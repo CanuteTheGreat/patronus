@@ -64,3 +64,20 @@ export async function refresh(): Promise<boolean> {
   localStorage.setItem(REFRESH_KEY, body.refresh_token)
   return true
 }
+
+/** Change the signed-in user's password (POST /api/v1/auth/change-password). */
+export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
+  const token = getToken()
+  const res = await fetch('/api/v1/auth/change-password', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || body.message || `Password change failed (${res.status})`)
+  }
+}
