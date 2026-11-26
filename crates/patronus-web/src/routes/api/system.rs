@@ -7,13 +7,37 @@ use crate::auth::{AdminUser, UserRole, UserUpdate};
 use crate::state::{system::ServiceError, AppState};
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
 use serde::Deserialize;
 use serde_json::json;
+
+/// `?force=true` on reboot / shutdown / firmware install / update apply: go ahead even when an
+/// HA node cannot hand its virtual IPs over to a healthy peer first.
+#[derive(Deserialize, Default)]
+pub struct HaForce {
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// An HA node first enters maintenance (confirmed hand-off) before an action that interrupts it.
+/// `Ok(true)` = it did (and must leave again), `Err` = refused with the reasons (HTTP 409).
+#[cfg(feature = "ha")]
+async fn ha_gate(state: &AppState, reason: &str, force: bool) -> Result<bool, String> {
+    crate::state::ha_maint::before_disruption(state, reason, force)
+        .await
+        .map_err(|e| {
+            format!("not done, this node is part of an HA pair: {e} (add ?force=true to go ahead anyway)")
+        })
+}
+
+#[cfg(not(feature = "ha"))]
+async fn ha_gate(_state: &AppState, _reason: &str, _force: bool) -> Result<bool, String> {
+    Ok(false)
+}
 
 fn error(code: StatusCode, msg: impl Into<String>) -> Response {
     (code, Json(json!({ "error": msg.into() }))).into_response()
@@ -548,22 +572,59 @@ pub async fn check_updates(
 pub async fn apply_updates(
     State(state): State<AppState>,
     _admin: AdminUser,
+    Query(q): Query<HaForce>,
     body: Option<Json<UpdateRequest>>,
 ) -> Response {
-    update_job(state, "update_apply", body.map(|b| b.0).unwrap_or_default()).await
+    // the update restarts services: an HA node hands over first and leaves maintenance when the job ends
+    let entered = match ha_gate(&state, "package update", q.force).await {
+        Ok(e) => e,
+        Err(m) => return error(StatusCode::CONFLICT, m),
+    };
+    let st = state.clone();
+    let r = update_job(state, "update_apply", body.map(|b| b.0).unwrap_or_default()).await;
+    #[cfg(feature = "ha")]
+    if entered {
+        if r.status().is_success() {
+            crate::state::ha_maint::leave_after_update(st);
+        } else if let Err(e) = crate::state::ha_maint::leave(&st, "package update").await {
+            tracing::warn!("HA: {e}");
+        }
+    }
+    #[cfg(not(feature = "ha"))]
+    let _ = (entered, st);
+    r
 }
 
 /// POST /api/system/reboot and /api/system/shutdown (admins; the box goes
 /// down a few seconds after the answer).
-async fn power(state: AppState, action: &str) -> Response {
+async fn power(state: AppState, action: &str, force: bool) -> Response {
+    let entered = match ha_gate(&state, action, force).await {
+        Ok(e) => e,
+        Err(m) => return error(StatusCode::CONFLICT, m),
+    };
     match state
         .system
         .system_op(action, serde_json::Value::Null)
         .await
     {
         Ok(v) => (StatusCode::ACCEPTED, Json(v)).into_response(),
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(e) => {
+            ha_cancel(&state, entered, action).await;
+            error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        }
     }
+}
+
+/// The action that needed the hand-off failed: give the virtual IPs back.
+async fn ha_cancel(state: &AppState, entered: bool, reason: &str) {
+    #[cfg(feature = "ha")]
+    if entered {
+        if let Err(e) = crate::state::ha_maint::leave(state, reason).await {
+            tracing::warn!("HA: {e}");
+        }
+    }
+    #[cfg(not(feature = "ha"))]
+    let _ = (state, entered, reason);
 }
 
 /// GET /api/system/general -- the stored host name / domain / time zone
@@ -662,8 +723,12 @@ pub async fn put_web(
     }
 }
 
-pub async fn reboot(State(state): State<AppState>, _admin: AdminUser) -> Response {
-    power(state, "reboot").await
+pub async fn reboot(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Query(q): Query<HaForce>,
+) -> Response {
+    power(state, "reboot", q.force).await
 }
 
 /// Largest firmware image the upload takes (a router-tier sysupgrade tar is ~22 MiB).
@@ -873,7 +938,15 @@ pub async fn firmware_upload(
 
 /// POST /api/system/firmware/install (admins): stage the checked upload (settings are kept) and restart the box
 /// to install it. The answer comes before the restart.
-pub async fn firmware_install(State(state): State<AppState>, admin: AdminUser) -> Response {
+pub async fn firmware_install(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Query(q): Query<HaForce>,
+) -> Response {
+    let entered = match ha_gate(&state, "firmware upgrade", q.force).await {
+        Ok(e) => e,
+        Err(m) => return error(StatusCode::CONFLICT, m),
+    };
     match state
         .system
         .system_op("firmware_stage", serde_json::Value::Null)
@@ -899,7 +972,10 @@ pub async fn firmware_install(State(state): State<AppState>, admin: AdminUser) -
             });
             (StatusCode::ACCEPTED, Json(v)).into_response()
         }
-        Err(e) => err(e),
+        Err(e) => {
+            ha_cancel(&state, entered, "firmware upgrade").await;
+            err(e)
+        }
     }
 }
 
@@ -915,8 +991,12 @@ pub async fn firmware_discard(State(state): State<AppState>, _admin: AdminUser) 
     }
 }
 
-pub async fn shutdown(State(state): State<AppState>, _admin: AdminUser) -> Response {
-    power(state, "shutdown").await
+pub async fn shutdown(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Query(q): Query<HaForce>,
+) -> Response {
+    power(state, "shutdown", q.force).await
 }
 
 /// GET /api/system/services -- installed Patronus-related services and

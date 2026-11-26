@@ -257,6 +257,11 @@ that are not finished are listed separately under
   with VRRP (keepalived), preemption and a maintenance mode, connection-state
   sync (conntrackd) so a failover keeps established connections, and alias
   addresses; configured from the HA page or `/api/ha`. [C42]
+  Maintenance mode is a confirmed hand-off: it checks the other node is healthy
+  (refuses with the reason otherwise), lowers the priority and waits until the
+  peer carries every virtual IP; firmware upgrades, package updates, restarts
+  and shutdowns on an HA node enter it by themselves and leave it once the node
+  is back and healthy. [C87]
 - Traffic shaping (USE=qos): CAKE, fq_codel or a rate limit per interface from
   the Traffic shaping page, applied with `tc` and re-applied at boot. [C45]
 - External login: people on a RADIUS server (PAP, answers verified with the
