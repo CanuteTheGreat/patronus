@@ -22,8 +22,8 @@
 
 use crate::aliases::{alias_map, load_aliases, sets_script};
 use crate::nftables::{
-    self, base_table_script, policy_chain_script, render_filter_rule_ext,
-    render_nat_rule, render_policy_rule, rule_to_nft_command, NatContext, RenderCtx, TABLE,
+    self, base_table_script, policy_chain_script, render_filter_rule_ext, render_nat_rule,
+    render_policy_rule, rule_to_nft_command, NatContext, RenderCtx, TABLE,
 };
 use crate::schedule::{load_schedules, now as schedule_now};
 use async_trait::async_trait;
@@ -96,6 +96,9 @@ pub async fn auto_nat_devices(store: &ConfigStore) -> Result<Vec<String>> {
     nat_devices(store, &load_roles(store).await?).await
 }
 
+/// (device, nft interface expression): one side of a rule's interface match.
+type IfacePair = (Option<String>, Option<String>);
+
 /// The (rule, render context) pairs one stored rule expands to: a plain
 /// rule per resolved interface pair (an `group:NAME` reference becomes a
 /// set match), a floating rule per hook/direction and interface selector.
@@ -106,14 +109,21 @@ fn rule_variants(
     roles: &Roles,
     groups: &[crate::floating::IfGroup],
     limiters: &BTreeMap<String, crate::nftables::LimiterSpec>,
+    knobs: (u32, u32),
 ) -> std::result::Result<Vec<(FirewallRule, RenderCtx)>, String> {
     let base_ctx = RenderCtx {
         limiters: limiters.clone(),
+        set_size: knobs.0,
+        overload_secs: knobs.1,
         ..RenderCtx::default()
     };
     if rule.ext.floating {
         let mut out = Vec::new();
         for (chain, kw) in crate::floating::floating_hooks(rule.ext.direction) {
+            // a limiter never sees traffic for the router itself (see render_filter_rule_ext)
+            if rule.ext.limiter.is_some() && chain == ChainType::Input {
+                continue;
+            }
             for e in crate::floating::selector_exprs(kw, &rule.ext.interfaces, roles, groups)? {
                 let mut r = rule.clone();
                 r.chain = chain.clone();
@@ -131,7 +141,7 @@ fn rule_variants(
         return Ok(out);
     }
     // one side: a group reference, or the role/device resolution as before
-    let side = |kw: &str, v: &Option<String>| -> std::result::Result<Vec<(Option<String>, Option<String>)>, String> {
+    let side = |kw: &str, v: &Option<String>| -> std::result::Result<Vec<IfacePair>, String> {
         if let Some(g) = v.as_deref().and_then(|v| v.strip_prefix("group:")) {
             let sel = [format!("group:{g}")];
             return Ok(crate::floating::selector_exprs(kw, &sel, roles, groups)?
@@ -325,12 +335,15 @@ impl FirewallApplier {
             )
         };
         script.push_str(&crate::floating::groups_script(&groups, &roles));
-        let limiter_map: BTreeMap<String, crate::nftables::LimiterSpec> =
-            limiters.iter().map(|l| (l.name.clone(), l.spec())).collect();
+        let limiter_map: BTreeMap<String, crate::nftables::LimiterSpec> = limiters
+            .iter()
+            .map(|l| (l.name.clone(), l.spec()))
+            .collect();
         // sets the rules' state limits need are collected here and spliced
         // in right after the group sets (before the first rule)
         let sets_pos = script.len();
         let caps = nftables::kernel_caps();
+        let knobs = crate::floating::limit_knobs(store).await?;
         let mut rule_sets: BTreeMap<String, String> = BTreeMap::new();
         let mut limit_rules: BTreeMap<String, String> = BTreeMap::new();
         // WAN source guard (block private / bogon sources), ahead of every rule
@@ -432,8 +445,15 @@ impl FirewallApplier {
                 ));
                 continue;
             }
-            let variants = match rule_variants(&rule, &roles, &groups, &limiter_map) {
+            let variants = match rule_variants(&rule, &roles, &groups, &limiter_map, knobs) {
                 Ok(v) => v,
+                Err(why) if rule.action != FirewallAction::Accept && why.starts_with("unknown interface group") => {
+                    // a block rule must never silently disappear: refuse the ruleset
+                    return Err(Error::Firewall(format!(
+                        "{label} is a {} rule that names an {why}, refusing to load a ruleset without it",
+                        rule.action
+                    )));
+                }
                 Err(why) => {
                     report.warn(format!("{label} skipped: {why}"));
                     continue;
@@ -2193,7 +2213,11 @@ mod tests {
         s.save_firewall_rule(&quick).await.unwrap();
         let slow = float_rule("slow-block", false);
         s.save_firewall_rule(&slow).await.unwrap();
-        let mut iface = FirewallRule::new("lan-pass".into(), ChainType::Forward, FirewallAction::Accept);
+        let mut iface = FirewallRule::new(
+            "lan-pass".into(),
+            ChainType::Forward,
+            FirewallAction::Accept,
+        );
         iface.interface_in = Some("@lan".into());
         s.save_firewall_rule(&iface).await.unwrap();
         let out = FirewallApplier.render_script(&s, false).await.unwrap();
@@ -2207,14 +2231,34 @@ mod tests {
             script.contains("add rule inet patronus forward oifname { \"eth1\", \"eth2\" } tcp dport 9000 drop comment \"quick-block\""),
             "{script}"
         );
-        assert!(script.contains("add rule inet patronus input iifname { \"eth1\", \"eth2\" } tcp dport 9000 drop"), "{script}");
-        assert!(script.contains("add rule inet patronus output oifname { \"eth1\", \"eth2\" } tcp dport 9000 drop"), "{script}");
-        let at = |needle: &str| script.find(needle).unwrap_or_else(|| panic!("missing {needle}: {script}"));
+        assert!(
+            script.contains(
+                "add rule inet patronus input iifname { \"eth1\", \"eth2\" } tcp dport 9000 drop"
+            ),
+            "{script}"
+        );
+        assert!(
+            script.contains(
+                "add rule inet patronus output oifname { \"eth1\", \"eth2\" } tcp dport 9000 drop"
+            ),
+            "{script}"
+        );
+        let at = |needle: &str| {
+            script
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing {needle}: {script}"))
+        };
         let q = at("comment \"quick-block\"");
         let l = at("comment \"lan-pass\"");
         let n = at("comment \"slow-block\"");
-        assert!(q < l, "quick floating rules come before interface rules: {script}");
-        assert!(l < n, "non-quick floating rules come after interface rules: {script}");
+        assert!(
+            q < l,
+            "quick floating rules come before interface rules: {script}"
+        );
+        assert!(
+            l < n,
+            "non-quick floating rules come after interface rules: {script}"
+        );
         // the anti-lockout system rule is still first of all
         assert!(at("Anti-lockout") < q, "{script}");
     }
@@ -2240,23 +2284,66 @@ mod tests {
         let mut f = float_rule("fg", true);
         f.ext.interfaces = vec!["group:trusted".into(), "eth5".into()];
         s.save_firewall_rule(&f).await.unwrap();
-        let script = FirewallApplier.render_script(&s, false).await.unwrap().script;
-        assert!(script.contains("add set inet patronus ifgrp_trusted { type ifname;"), "{script}");
-        assert!(script.contains("add element inet patronus ifgrp_trusted { \"eth1\", \"wg0\" }"), "{script}");
-        assert!(script.contains("forward iifname @ifgrp_trusted tcp dport 22 drop"), "{script}");
+        let script = FirewallApplier
+            .render_script(&s, false)
+            .await
+            .unwrap()
+            .script;
+        assert!(
+            script.contains("add set inet patronus ifgrp_trusted { type ifname;"),
+            "{script}"
+        );
+        assert!(
+            script.contains("add element inet patronus ifgrp_trusted { \"eth1\", \"wg0\" }"),
+            "{script}"
+        );
+        assert!(
+            script.contains("forward iifname @ifgrp_trusted tcp dport 22 drop"),
+            "{script}"
+        );
         // floating rule: one line for the plain device, one for the group
-        assert!(script.contains("forward iifname \"eth5\" tcp dport 9000 drop"), "{script}");
-        assert!(script.contains("forward iifname @ifgrp_trusted tcp dport 9000 drop"), "{script}");
+        assert!(
+            script.contains("forward iifname \"eth5\" tcp dport 9000 drop"),
+            "{script}"
+        );
+        assert!(
+            script.contains("forward iifname @ifgrp_trusted tcp dport 9000 drop"),
+            "{script}"
+        );
         // a group that does not exist: the pass rule is skipped with a warning
         let mut bad = FirewallRule::new("bad".into(), ChainType::Forward, FirewallAction::Accept);
         bad.interface_in = Some("group:nope".into());
         s.save_firewall_rule(&bad).await.unwrap();
         let out = FirewallApplier.render_script(&s, false).await.unwrap();
-        assert!(out.report.warnings.iter().any(|w| w.contains("bad") && w.contains("nope")), "{:?}", out.report.warnings);
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .any(|w| w.contains("bad") && w.contains("nope")),
+            "{:?}",
+            out.report.warnings
+        );
         assert!(!out.script.contains("comment \"bad\""));
+        // a BLOCK rule on a group that does not exist refuses the whole ruleset (it must never silently vanish)
+        let mut blk = FirewallRule::new("blk".into(), ChainType::Forward, FirewallAction::Drop);
+        blk.interface_in = Some("group:ghost".into());
+        let blk_id = s.save_firewall_rule(&blk).await.unwrap();
+        let e = match FirewallApplier.render_script(&s, false).await {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("a block rule on a missing group must refuse the ruleset"),
+        };
+        assert!(e.contains("blk") && e.contains("ghost"), "{e}");
+        s.delete_firewall_rule(blk_id as u64).await.unwrap();
         // lockdown carries no group, no floating rule
-        let lock = FirewallApplier.render_script(&s, true).await.unwrap().script;
-        assert!(!lock.contains("ifgrp_") && !lock.contains("tcp dport 9000"), "{lock}");
+        let lock = FirewallApplier
+            .render_script(&s, true)
+            .await
+            .unwrap()
+            .script;
+        assert!(
+            !lock.contains("ifgrp_") && !lock.contains("tcp dport 9000"),
+            "{lock}"
+        );
     }
 
     #[tokio::test]
@@ -2285,7 +2372,11 @@ mod tests {
         r.ext.overload = Some("flooders".into());
         r.ext.limiter = Some("cap".into());
         let id = s.save_firewall_rule(&r).await.unwrap();
-        let script = FirewallApplier.render_script(&s, false).await.unwrap().script;
+        let script = FirewallApplier
+            .render_script(&s, false)
+            .await
+            .unwrap()
+            .script;
         for want in [
             format!("add set inet patronus sc{id}_v4 {{ type ipv4_addr;"),
             format!("add set inet patronus sr{id}_v4 {{ type ipv4_addr;"),
@@ -2297,13 +2388,56 @@ mod tests {
             assert!(script.contains(&want), "{want}\n{script}");
         }
         // sets and chains are defined before the first rule that uses them
-        let first_rule = script.find("add rule inet patronus").unwrap();
-        assert!(script.find("ov_flooders_v4 { type").unwrap() < first_rule, "{script}");
+        for set in ["ov_flooders_v4 { type", "sc", "lm"] {
+            let def = script
+                .find(&format!("add set inet patronus {set}"))
+                .unwrap_or(0);
+            let used = script
+                .find("add rule inet patronus forward iifname \"eth1\" ip saddr @ov_flooders_v4")
+                .unwrap();
+            assert!(def < used, "{set}: {script}");
+        }
         // a rule naming a limiter that no longer exists is skipped (pass) with a warning
         crate::floating::delete_limiter(&s, "cap").await.unwrap();
         let out = FirewallApplier.render_script(&s, false).await.unwrap();
-        assert!(out.report.warnings.iter().any(|w| w.contains("limited") && w.contains("limiter")), "{:?}", out.report.warnings);
-        assert!(!out.script.contains("comment \"limited\""), "{}", out.script);
+        assert!(
+            out.report
+                .warnings
+                .iter()
+                .any(|w| w.contains("limited") && w.contains("limiter")),
+            "{:?}",
+            out.report.warnings
+        );
+        assert!(
+            !out.script.contains("comment \"limited\""),
+            "{}",
+            out.script
+        );
+    }
+
+    #[tokio::test]
+    async fn limit_knobs_set_the_table_size_and_the_default_overload_timeout() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        assert_eq!(crate::floating::limit_knobs(&s).await.unwrap(), (65535, 3600));
+        assert!(crate::floating::save_limit_knobs(&s, 3, 10).await.is_err());
+        assert!(crate::floating::save_limit_knobs(&s, 1024, 0).await.is_err());
+        crate::floating::save_limit_knobs(&s, 2048, 900).await.unwrap();
+        let mut r = FirewallRule::new("rate".into(), ChainType::Forward, FirewallAction::Accept);
+        r.interface_in = Some("@lan".into());
+        r.ip_version = Some(patronus_core::types::IpVersion::V4);
+        r.ext.max_src_rate = Some(5);
+        r.ext.max_src_rate_secs = Some(10);
+        r.ext.overload = Some("bad".into());
+        s.save_firewall_rule(&r).await.unwrap();
+        let script = FirewallApplier.render_script(&s, false).await.unwrap().script;
+        assert!(script.contains("add set inet patronus ov_bad_v4 { type ipv4_addr; size 2048; flags dynamic,timeout; timeout 900s; }"), "{script}");
+        // a rule's own timeout wins
+        r.name = "rate2".into();
+        r.ext.overload = Some("bad2".into());
+        r.ext.overload_secs = Some(60);
+        s.save_firewall_rule(&r).await.unwrap();
+        let script = FirewallApplier.render_script(&s, false).await.unwrap().script;
+        assert!(script.contains("ov_bad2_v4 { type ipv4_addr; size 2048; flags dynamic,timeout; timeout 60s; }"), "{script}");
     }
 
     #[tokio::test]

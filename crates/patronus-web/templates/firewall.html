@@ -494,6 +494,14 @@
         <h3>Overload tables</h3>
         <p class="hint">Sources that exceeded a rule's new-connection rate. Release one, or all of a table, to let them through again.</p>
         <table id="overload-table"><thead><tr><th>Table</th><th>Fed by rules</th><th>Blocked sources</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody><tr><td colspan="4" class="hint">loading...</td></tr></tbody></table>
+        <h3>Limit tables</h3>
+        <form id="limit-settings-form" onsubmit="return saveLimitSettings(event)">
+            <div class="row">
+                <label title="Most distinct source addresses each per-source limit remembers">Entries per limit table <input name="set_size" type="number" min="64" max="4194304" required></label>
+                <label title="How long a source stays in an overload table when the rule names no time">Default overload timeout (seconds) <input name="overload_secs" type="number" min="1" max="2592000" required></label>
+            </div>
+            <button type="submit" class="btn btn-primary">Save</button>
+        </form>
         <h3>Categories</h3>
         <p class="hint" id="categories-summary">loading...</p>
     </div>
@@ -1123,9 +1131,19 @@ async function loadCaps() {
         if (missing.length) document.getElementById('caps-note').textContent = 'Not available on this device: ' + missing.join(', ') + ' (its kernel does not include it).';
     } catch (e) { }
 }
+async function loadLimitSettings() {
+    try {
+        const r = await api('GET', '/firewall/limit-settings'), f = document.getElementById('limit-settings-form');
+        f.elements['set_size'].value = r.set_size; f.elements['overload_secs'].value = r.overload_secs;
+    } catch (e) { }
+}
+function saveLimitSettings(ev) {
+    ev.preventDefault(); const f = ev.target;
+    return run(api('PUT', '/firewall/limit-settings', { set_size: parseInt(f.elements['set_size'].value, 10), overload_secs: parseInt(f.elements['overload_secs'].value, 10) }));
+}
 function rowButton(label, cls, fn) {
     const b = document.createElement('button'); b.type = 'button'; b.className = cls; b.textContent = label;
-    b.addEventListener('click', fn); return b;
+    b.style.marginRight = '0.35rem'; b.addEventListener('click', fn); return b;
 }
 function editGroup(g) {
     const f = document.getElementById('group-form');
@@ -1157,6 +1175,7 @@ function saveLimiter(ev) {
 }
 loadGroups();
 loadCaps();
+loadLimitSettings();
 
 // ---- log viewer ----
 let logLast = 0, logTimer = null;

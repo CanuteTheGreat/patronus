@@ -50,7 +50,7 @@ impl FirewallManager {
             .filter(|r| {
                 r.interface_in.as_deref() == Some(&key)
                     || r.interface_out.as_deref() == Some(&key)
-                    || r.ext.interfaces.iter().any(|i| *i == key)
+                    || r.ext.interfaces.contains(&key)
             })
             .filter_map(|r| r.id.map(|i| i as u32))
             .collect())
@@ -107,7 +107,12 @@ impl FirewallManager {
 
     pub async fn delete_group(&self, name: &str) -> anyhow::Result<()> {
         let _l = self.edit.lock().await;
-        let Some(old) = self.list_groups().await?.into_iter().find(|g| g.name == name) else {
+        let Some(old) = self
+            .list_groups()
+            .await?
+            .into_iter()
+            .find(|g| g.name == name)
+        else {
             anyhow::bail!("Interface group {name} not found");
         };
         let users = self.group_users(name).await?;
@@ -140,9 +145,7 @@ impl FirewallManager {
     // ---------------------------------------------------------------
 
     pub async fn list_limiters(&self) -> anyhow::Result<Vec<Limiter>> {
-        floating::load_limiters(&self.store)
-            .await
-            .map_err(Self::e)
+        floating::load_limiters(&self.store).await.map_err(Self::e)
     }
 
     pub async fn limiter_users(&self, name: &str) -> anyhow::Result<Vec<u32>> {
@@ -221,6 +224,40 @@ impl FirewallManager {
         }
         self.audit("delete", "limiter", name, serde_json::Value::Null)
             .await;
+        Ok(())
+    }
+
+    // ---------------------------------------------------------------
+    // limit knobs
+    // ---------------------------------------------------------------
+
+    pub async fn limit_settings(&self) -> anyhow::Result<(u32, u32)> {
+        floating::limit_knobs(&self.store).await.map_err(Self::e)
+    }
+
+    pub async fn set_limit_settings(
+        &self,
+        set_size: u32,
+        overload_secs: u32,
+    ) -> anyhow::Result<()> {
+        let old = self.limit_settings().await?;
+        let _g = self.edit.lock().await;
+        self.snapshot("change the limit table settings".to_string())
+            .await?;
+        floating::save_limit_knobs(&self.store, set_size, overload_secs)
+            .await
+            .map_err(|e| anyhow::anyhow!("Invalid request: {e}"))?;
+        if let Err(e) = self.push().await {
+            let _ = floating::save_limit_knobs(&self.store, old.0, old.1).await;
+            return Err(e);
+        }
+        self.audit(
+            "update",
+            "limit_settings",
+            "firewall",
+            serde_json::json!({ "set_size": set_size, "overload_secs": overload_secs }),
+        )
+        .await;
         Ok(())
     }
 
@@ -310,9 +347,9 @@ impl FirewallManager {
 
 /// Elements of a dynamic set from `nft -j list set`.
 fn read_set_entries(set: &str) -> Vec<OverloadEntry> {
-    let Ok(out) =
-        patronus_firewall::nftables::execute_nft_command(&["-j", "list", "set", "inet", "patronus", set])
-    else {
+    let Ok(out) = patronus_firewall::nftables::execute_nft_command(&[
+        "-j", "list", "set", "inet", "patronus", set,
+    ]) else {
         return Vec::new();
     };
     parse_set_json(&out)
