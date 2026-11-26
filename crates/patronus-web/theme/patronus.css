@@ -48,3 +48,10 @@
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --shadow: rgba(0,0,0,.4); } }
 :root[data-theme="dark"] { --shadow: rgba(0,0,0,.4); }
+/* <dialog class="ui-dialog"> with a <form> around its parts (every Patronus dialog submits a form): the base layout
+   resets all margins, which drops the native centring, and the kit styles header / body / footer only as direct
+   children of the dialog. */
+dialog.ui-dialog { margin: auto; max-height: calc(100vh - 32px); }
+.ui-dialog > form > header { padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--c-border); font-weight: 600; font-size: var(--fs-lg); }
+.ui-dialog > form > .ui-dialog-body { padding: var(--s-4); }
+.ui-dialog > form > footer { display: flex; justify-content: flex-end; gap: var(--s-2); padding: var(--s-3) var(--s-4); border-top: 1px solid var(--c-border); background: var(--c-sunken); }
