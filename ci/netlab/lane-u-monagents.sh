@@ -16,7 +16,7 @@ set -euo pipefail
 DB=/t/lane-u-monagents.db
 rm -f "$DB" "$NL_T/nl-jar"
 nl_write_installer_toml
-nl_kill_daemons zabbix_agent2 telegraf
+pkill -f '/usr/local/bin/[z]abbix_agent2' 2>/dev/null || true; pkill -f '/usr/local/bin/[t]elegraf' 2>/dev/null || true; nl_kill_daemons none
 rm -rf /var/lib/patronus-monagent /tmp/nl-standin-*
 BIN=/usr/local/bin
 
@@ -62,6 +62,13 @@ export PATRONUS_MONAGENT_SNAPSHOT_SECS=2
 nl_boot "$DB"
 nl_web_start "$DB"; nl_login
 
+diag() {
+  set +e
+  echo "--- diag: $*"; tail -30 "$NL_T/nl-web.log"; ls -la /var/lib/patronus-monagent /var/lib/patronus-monagent/* /var/lib/patronus/net/svc 2>&1 | head -40
+  for f in /tmp/nl-standin-*.log /run/patronus/*.log; do echo "--- $f"; cat "$f" 2>&1 | tail -20; done
+  ps -eo pid,stat,args | grep -E 'zabbix|telegraf|standin' | grep -v grep
+}
+agents_gone() { ! pgrep -f '/usr/local/bin/[z]abbix_agent2' && ! pgrep -f '/usr/local/bin/[t]elegraf'; }
 lan_get() { C curl -s -m 4 "http://$NL_RTR_LAN:$1/" >"$NL_OUT" 2>&1; }
 wan_get() { ISP curl -s -m 4 "http://$NL_RTR_WAN:$1/" >"$NL_OUT" 2>&1; }
 
@@ -78,7 +85,7 @@ nl_ok "bad PSK, remote commands and a bad server name are refused (400)"
 nl_api_ok "server" POST /svc/zabbix/servers '{"host":"zbx.example.net"}'
 PSK=00112233445566778899aabbccddeeff
 nl_api_ok "enable" PUT /svc/zabbix "{\"enabled\":true,\"hostname\":\"lab-router\",\"psk\":\"$PSK\",\"psk_identity\":\"lab-psk\"}"
-nl_wait 10 pgrep -x zabbix_agent2 || nl_fail "the Zabbix agent did not start"
+nl_wait 10 pgrep -f '/usr/local/bin/[z]abbix_agent2' || { diag zabbix; nl_fail "the Zabbix agent did not start"; }
 nl_wait 10 lan_get 10050 || nl_fail "the LAN client cannot reach the Zabbix agent on $NL_RTR_LAN:10050"
 nl_ok "LAN client reaches the agent: $(cat "$NL_OUT")"
 CONF=/var/lib/patronus-monagent/zabbix/zabbix_agent2.conf
@@ -102,10 +109,10 @@ if wan_get 10050; then nl_fail "the WAN side reached the agent: $(cat "$NL_OUT")
 nl_ok "WAN side cannot reach the agent (only the firewall stands in the way)"
 
 echo "=== no restart without a change"
-PID1=$(pgrep -x zabbix_agent2 | head -1)
+PID1=$(pgrep -f '/usr/local/bin/[z]abbix_agent2' | head -1)
 nl_api_ok "same settings again" PUT /svc/zabbix '{"hostname":"lab-router"}'
 sleep 1
-PID2=$(pgrep -x zabbix_agent2 | head -1)
+PID2=$(pgrep -f '/usr/local/bin/[z]abbix_agent2' | head -1)
 [ "$PID1" = "$PID2" ] || nl_fail "the agent was restarted without a configuration change ($PID1 -> $PID2)"
 nl_api_ok "new host name" PUT /svc/zabbix '{"hostname":"lab-router2"}'
 nl_wait 10 grep -q "^Hostname=lab-router2" "$CONF" || nl_fail "config not updated"
@@ -166,7 +173,7 @@ nl_api_ok "on again" PUT /svc/metrics '{"enabled":true}'
 
 echo "=== reboot: both agents come back"
 nl_web_stop
-nl_kill_daemons zabbix_agent2 telegraf
+pkill -f '/usr/local/bin/[z]abbix_agent2' 2>/dev/null || true; pkill -f '/usr/local/bin/[t]elegraf' 2>/dev/null || true; nl_kill_daemons none
 nl_boot "$DB"
 nl_wait 10 lan_get 10050 || nl_fail "the Zabbix agent is not back after a reboot"
 nl_ok "after a reboot the boot apply restarts the Zabbix agent and its firewall rule"
@@ -174,10 +181,11 @@ nl_ok "after a reboot the boot apply restarts the Zabbix agent and its firewall 
 echo "=== disable: the listener, its firewall rule and the key are gone"
 nl_web_start "$DB"; nl_login
 nl_api_ok "off" PUT /svc/zabbix '{"enabled":false}'
-nl_wait 10 sh -c '! pgrep -x zabbix_agent2 && ! pgrep -x telegraf' || nl_fail "an agent is still running"
+nl_wait 10 sh -c '! pgrep -f "/usr/local/bin/[z]abbix_agent2"' || nl_fail "the Zabbix agent is still running"
 nl_assert_nft_lacks "tcp dport 10050"
 [ ! -e /var/lib/patronus-monagent/zabbix/psk.key ] || nl_fail "the PSK file outlived the feature"
 nl_api_ok "off" PUT /svc/telegraf '{"enabled":false}'
+nl_wait 10 agents_gone || nl_fail "an agent is still running"
 [ ! -e "$TCONF" ] || nl_fail "telegraf.conf (it carries a token) outlived the feature"
 nl_ok "everything cleaned up"
 nl_web_stop
