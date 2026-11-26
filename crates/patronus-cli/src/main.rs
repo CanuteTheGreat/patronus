@@ -141,6 +141,12 @@ enum Commands {
         action: IpdbCommands,
     },
 
+    /// Updates (standard tier, Portage): channel + mirror, check, apply
+    Update {
+        #[command(subcommand)]
+        action: UpdateCommands,
+    },
+
     /// Configuration history
     Config {
         #[command(subcommand)]
@@ -659,6 +665,35 @@ enum IpdbCommands {
 }
 
 #[derive(Subcommand)]
+enum UpdateCommands {
+    /// Show (or with options set) the update channel and mirror
+    Channel {
+        /// stable, testing or development
+        #[arg(long)]
+        set: Option<String>,
+        /// Overlay mirror (git or rsync URL; "" = the default)
+        #[arg(long)]
+        mirror: Option<String>,
+        /// Binary package host URL, or "none"
+        #[arg(long)]
+        binhost: Option<String>,
+    },
+    /// Sync the overlay and list pending updates (background job)
+    Check {
+        /// Do not sync the trees first
+        #[arg(long)]
+        no_sync: bool,
+    },
+    /// Update the Patronus package (or everything: --scope world)
+    Apply {
+        #[arg(long, default_value = "patronus")]
+        scope: String,
+    },
+    /// The last check and the running/last job
+    Status,
+}
+
+#[derive(Subcommand)]
 enum ConfigCommands {
     /// List stored configuration revisions (newest first)
     Revisions,
@@ -996,6 +1031,20 @@ async fn main() -> anyhow::Result<()> {
         Commands::Ipdb { action } => match action {
             IpdbCommands::Update { force } => commands::ipdb::update(cli.db, force).await?,
             IpdbCommands::Status => commands::ipdb::status(cli.db).await?,
+        },
+        Commands::Update { action } => match action {
+            UpdateCommands::Channel {
+                set,
+                mirror,
+                binhost,
+            } => commands::update::channel(cli.db.as_deref(), set, mirror, binhost).await?,
+            UpdateCommands::Check { no_sync } => {
+                commands::update::job(cli.db.as_deref(), "update_check", !no_sync, "world").await?
+            }
+            UpdateCommands::Apply { scope } => {
+                commands::update::job(cli.db.as_deref(), "update_apply", false, &scope).await?
+            }
+            UpdateCommands::Status => commands::update::status()?,
         },
 
         Commands::CaptivePortal { action } => match action {

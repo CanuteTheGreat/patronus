@@ -1,0 +1,55 @@
+name: Overlay sync
+
+# The Patronus Portage overlay (the Portage parts of gentoo/: metadata/, profiles/ and every category directory with
+# ebuilds) is ALSO published as its own git repository, CanuteTheGreat/patronus-overlay (mirrored to GitHub), which
+# installed Patronus systems sync for their updates (System > Updates, settings update.*: /etc/portage/repos.conf/patronus.conf,
+# default sync-uri = patronus_config::updates::DEFAULT_OVERLAY_URI).
+# Each change of main becomes ONE commit on the overlay repo whose tree is that filtered gentoo/ tree; the overlay only ever
+# fast-forwards (its tip is always the parent of the next commit). Never edit it by hand.
+# Secret OVERLAY_DEPLOY_KEY = the write deploy key of patronus-overlay (no other access).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'gentoo/**'
+      - 'ci/overlay-tree.sh'
+      - '.forgejo/workflows/overlay-sync.yml'
+  # a push with [skip ci] skips this workflow too: the hourly poll catches it (idempotent: an unchanged tree exits at once)
+  schedule:
+    - cron: '41 * * * *'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    name: Publish the overlay as patronus-overlay
+    runs-on: arm64-light  # light git job; never queue it behind heavy builds
+    container: catthehacker/ubuntu:act-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # a scheduled run's GITHUB_SHA can be an older push: always publish main's tip
+          ref: main
+          fetch-depth: 1
+
+      - name: Build the filtered tree and fast-forward the overlay repository
+        env:
+          OVERLAY_DEPLOY_KEY: ${{ secrets.OVERLAY_DEPLOY_KEY }}
+        run: |
+          set -eu
+          [ -n "$OVERLAY_DEPLOY_KEY" ] || { echo "::error::secret OVERLAY_DEPLOY_KEY is not set"; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$OVERLAY_DEPLOY_KEY" > ~/.ssh/overlay_key && chmod 600 ~/.ssh/overlay_key
+          trap 'rm -f ~/.ssh/overlay_key' EXIT
+          export GIT_SSH_COMMAND='ssh -i ~/.ssh/overlay_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new'
+          git config user.name "Patronus CI"; git config user.email "ci@patronus.invalid"
+          tree=$(bash ci/overlay-tree.sh)
+          echo "overlay tree $tree"
+          OV=git@git.canutethegreat.com:CanuteTheGreat/patronus-overlay.git
+          if git fetch -q --depth 1 "$OV" main 2>/dev/null; then remote=$(git rev-parse FETCH_HEAD); else remote=""; fi
+          if [ -n "$remote" ] && [ "$(git rev-parse "$remote^{tree}")" = "$tree" ]; then echo "overlay already has this tree"; exit 0; fi
+          msg="sync gentoo/ from patronus main $(git rev-parse HEAD)"
+          if [ -n "$remote" ]; then c=$(git commit-tree "$tree" -p "$remote" -m "$msg"); else c=$(git commit-tree "$tree" -m "$msg"); fi
+          git push "$OV" "$c:refs/heads/main"
+          echo "published $c"

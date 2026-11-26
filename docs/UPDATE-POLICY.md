@@ -62,10 +62,29 @@ product site's download section; the signing key is `keys/release-signing.asc` i
 
 ### Standard tier (x86_64 / aarch64 installs, Gentoo packages)
 
-* There is **no unattended update service today**: Patronus never updates itself and never contacts a
-  Patronus server to look for a new version (see [PRIVACY.md](PRIVACY.md)). The administrator updates the
-  installed packages with Portage (`emerge -uDN @world`) or reinstalls from a newer ISO and imports the
-  exported configuration.
+* **Update channel and mirror** (System > Updates, `GET/PUT /api/system/updates/channel`, settings
+  `update.channel`, `update.overlay_uri`, `update.binhost_uri`, `update.repo_location`, also `[update]` in
+  `/etc/patronus/patronus.toml`; carried by export/plan/apply and backups like every other setting):
+
+  | Channel | Gets |
+  |---|---|
+  | `stable` (default) | tagged releases only: pre-release ebuilds (`_alpha`, `_beta`, `_pre`, `_rc`) and the live ebuild are masked |
+  | `testing` | tagged releases and release candidates |
+  | `development` | the live ebuild `net-firewall/patronus-9999`, built from `main` at every update |
+
+  Updates come from the Patronus overlay, published by CI from the `gentoo/` directory of this repository
+  (`.forgejo/workflows/overlay-sync.yml`, repository `patronus-overlay`; default mirror
+  `https://github.com/CanuteTheGreat/patronus-overlay.git`). The mirror can be any git (`https://`, `ssh://`,
+  `git://`, `file:///`) or `rsync://` URL, for example a local copy on an offline network. The optional binary
+  package host is added as a Portage binrepo; without one Patronus is built from source on the device. Saving the
+  card (and every check/apply) writes `repos.conf/patronus.conf`, `package.accept_keywords/patronus-channel`,
+  `package.mask/patronus-channel(-prerelease)` and `binrepos.conf/patronus.conf` under `/etc/portage`, each
+  marked "managed by Patronus"; nothing else in `/etc/portage` is changed.
+* Patronus never updates itself on a timer and never contacts a Patronus server on its own (see
+  [PRIVACY.md](PRIVACY.md)): only **Check** syncs the overlay mirror.
+* There is **no unattended update service today**: the administrator clicks **Check** and **Update** (or runs
+  Portage by hand, `emaint sync -r patronus && emerge -uDN @world`), or reinstalls from a newer ISO and imports
+  the exported configuration.
 * The Packages page of the web UI installs and updates the optional daemons only (it runs `emerge` with
   binary packages on an administrator's click).
 * On a ZFS root (the installer's default), an `emerge` run first takes a boot-environment snapshot

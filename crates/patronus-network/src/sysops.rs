@@ -247,13 +247,15 @@ fn spawn_job(dir: &Path, kind: &str, scope: &str, script: &str) -> Result<Value>
 /// The package atom Patronus is installed as.
 pub const PATRONUS_ATOM: &str = "net-firewall/patronus";
 
-fn check_script(sync: bool) -> String {
+/// `post_sync`: shell run right after the sync (the update channel's
+/// pre-release mask, `crate::update_channel::prerelease_mask_script`).
+fn check_script_with(sync: bool, post_sync: &str) -> String {
     let sync_step = if sync {
         "if command -v emaint >/dev/null 2>&1; then emaint sync -a || exit 1; else emerge --sync || exit 1; fi; "
     } else {
         ""
     };
-    format!("{sync_step}emerge --pretend --update --changed-use --newuse --deep --with-bdeps=y --verbose --columns @world")
+    format!("{sync_step}{post_sync}emerge --pretend --update --changed-use --newuse --deep --with-bdeps=y --verbose --columns @world")
 }
 
 /// Shell guard run before every apply. GRUB reads kernels from the separate
@@ -729,6 +731,12 @@ pub fn handle_in(dir: &Path, action: &str, params: &Value) -> Result<Value> {
             "job": job_status(dir),
             "last_check": pending_from_last_check(dir),
         })),
+        "update_channel_apply" => {
+            let s = crate::update_channel::from_params(params)?.ok_or_else(|| {
+                Error::Config("Invalid update settings: channel_settings is missing".into())
+            })?;
+            crate::update_channel::apply(&s, &crate::update_channel::PortagePaths::default())
+        }
         "update_check" | "update_apply" => {
             if !has_portage() {
                 return Err(Error::Service(
@@ -736,9 +744,20 @@ pub fn handle_in(dir: &Path, action: &str, params: &Value) -> Result<Value> {
                         .into(),
                 ));
             }
+            // the channel and mirror go into Portage's configuration first, so the
+            // sync and the emerge below see exactly what is configured now
+            let chan = crate::update_channel::from_params(params)?;
+            let paths = crate::update_channel::PortagePaths::default();
+            if let Some(s) = &chan {
+                crate::update_channel::apply(s, &paths)?;
+            }
             if action == "update_check" {
                 let sync = params.get("sync").and_then(Value::as_bool).unwrap_or(true);
-                spawn_job(dir, "check", "world", &check_script(sync))
+                let post = chan
+                    .as_ref()
+                    .map(|s| crate::update_channel::prerelease_mask_script(s, &paths))
+                    .unwrap_or_default();
+                spawn_job(dir, "check", "world", &check_script_with(sync, &post))
             } else {
                 let scope = params
                     .get("scope")
