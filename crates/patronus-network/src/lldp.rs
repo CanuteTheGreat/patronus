@@ -64,9 +64,9 @@ static FIELDS: [Field; 11] = [
 ];
 
 static IFACE_FIELDS: [Field; 4] = [
-    Field::new("iface", "Interface", Kind::Iface)
-        .req()
-        .help("device or @wan / @lan / @optN: a port whose cable end should be announced and listened on"),
+    Field::new("iface", "Interface", Kind::Iface).req().help(
+        "device or @wan / @lan / @optN: a port whose cable end should be announced and listened on",
+    ),
     Field::new("mode", "Mode", Kind::Select(MODES))
         .def("rx-and-tx")
         .help("announce and listen, listen only (stay silent), announce only, or off"),
@@ -231,7 +231,8 @@ const ID_TYPES: &[&str] = &[
 pub fn parse_neighbors(text: &str) -> Vec<Value> {
     let mut out: Vec<Map<String, Value>> = Vec::new();
     let mut cur: Option<(String, Map<String, Value>)> = None;
-    let flush = |cur: &mut Option<(String, Map<String, Value>)>, out: &mut Vec<Map<String, Value>>| {
+    let flush = |cur: &mut Option<(String, Map<String, Value>)>,
+                 out: &mut Vec<Map<String, Value>>| {
         if let Some((_, m)) = cur.take() {
             out.push(m);
         }
@@ -448,7 +449,11 @@ impl Applier for LldpApplier {
     async fn status(&self, store: &ConfigStore) -> Result<Value> {
         let s = Settings::load(store, &SPEC).await?;
         let running = self.sup.is_running(svc::DAEMON_SERVICE, INSTANCE);
-        let neighbors = if running { self.neighbors() } else { Vec::new() };
+        let neighbors = if running {
+            self.neighbors()
+        } else {
+            Vec::new()
+        };
         Ok(json!({
             "enabled": s.b("enabled"),
             "installed": which("lldpd").is_some(),
@@ -584,11 +589,9 @@ lldp.eth0.10.port.ttl=180
         ] {
             assert!(svc::save_row(&s, &SPEC.colls[0], None, &bad).await.is_err());
         }
-        assert!(
-            svc::put_settings(&s, &SPEC, &json!({"tx_interval": 0}))
-                .await
-                .is_err()
-        );
+        assert!(svc::put_settings(&s, &SPEC, &json!({"tx_interval": 0}))
+            .await
+            .is_err());
         assert!(
             svc::put_settings(&s, &SPEC, &json!({"system_name": "a b\nc"}))
                 .await
@@ -610,7 +613,10 @@ lldp.eth0.10.port.ttl=180
         );
         let r = a.render(&s).await.unwrap();
         assert!(r.contains("-I eth9"), "{r}");
-        assert!(r.contains("configure ports eth9 lldp status rx-only"), "{r}");
+        assert!(
+            r.contains("configure ports eth9 lldp status rx-only"),
+            "{r}"
+        );
         // a disabled row is not given to the daemon
         svc::save_row(
             &s,
