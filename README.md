@@ -302,6 +302,19 @@ that are not finished are listed separately under
   The guest Wi-Fi name is served by its own hostapd with client isolation; a
   voucher stops working when it expires. [C81] Not on an access-point unit or in
   the embedded router images: the page says so and why.
+- Reverse proxy / load balancer (Reverse proxy page, HAProxy; Gentoo and ISO
+  tier, not in the embedded router images): publish a LAN web service on the
+  router's public address by host name and path, put several servers behind
+  one name with a balance algorithm and health checks (a server that fails its
+  check gets no traffic until it passes again), terminate TLS with a certificate
+  file or pass TLS through by its server name, and redirect HTTP to HTTPS.
+  "Publish a LAN service" makes the listener, the backend, the routing rule and
+  the firewall rule in one step; the live statistics are haproxy's own. A new
+  configuration is checked with `haproxy -c` before it replaces the running
+  one: a refused one is undone and the old one keeps serving, and a listener on
+  the web UI's port or another listener's port is refused with the reason.
+  Every value is a setting in the configuration (export, history, rollback),
+  the API and the page. [C87]
 - Packet capture (admin API `POST /api/system/capture`): captures packets on one
   interface with tcpdump, filtered by protocol, host and port (at most 500
   packets or 30 seconds), and returns the decoded lines. [C72]

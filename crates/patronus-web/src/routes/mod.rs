@@ -424,6 +424,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "upnp",
         "vrf",
         "web-proxy",
+        "reverse-proxy",
         "intrusion-detection",
         "dynamic-routing",
         "sdwan-edge",
@@ -463,6 +464,7 @@ pub(crate) const AP_ROUTER_JOBS: &[&str] = &[
     "dynamic-routing",
     "vrf",
     "web-proxy",
+    "reverse-proxy",
 ];
 
 /// What a user may look for and not find on this unit, and why: features
@@ -497,6 +499,7 @@ pub fn absent_features(
         ("upnp", "UPnP / NAT-PMP"),
         ("vrf", "VRFs"),
         ("web-proxy", "Web proxy"),
+        ("reverse-proxy", "Reverse proxy / load balancer"),
         ("intrusion-detection", "Intrusion detection (Suricata)"),
         ("dynamic-routing", "BGP / OSPF"),
         ("sdwan-edge", "SD-WAN edge"),
