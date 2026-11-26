@@ -41,13 +41,24 @@ fn which(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// True unless `/dev/log` is a plain socket of another daemon (the router images keep the busybox
+/// syslogd there, so journald never sees `logger`/daemon lines and only the syslog file is complete).
+fn journald_owns_dev_log() -> bool {
+    match std::fs::symlink_metadata("/dev/log") {
+        Ok(m) => m.file_type().is_symlink(),
+        Err(_) => true,
+    }
+}
+
 /// journald back end when it is chosen or (auto) running; files otherwise.
 pub fn choose(s: &LogViewSettings) -> Backend {
     match s.backend.as_str() {
         "journald" => Backend::Journald,
         "files" => Backend::Files,
         _ => {
-            if std::path::Path::new("/run/systemd/journal/socket").exists() && which(&s.journalctl)
+            if std::path::Path::new("/run/systemd/journal/socket").exists()
+                && which(&s.journalctl)
+                && journald_owns_dev_log()
             {
                 Backend::Journald
             } else {
