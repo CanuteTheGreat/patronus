@@ -262,6 +262,11 @@ that are not finished are listed separately under
   peer carries every virtual IP; firmware upgrades, package updates, restarts
   and shutdowns on an HA node enter it by themselves and leave it once the node
   is back and healthy. [C87]
+  Configuration sync: the source node pushes the switched-on sections (firewall
+  rules, aliases, NAT, DHCP, DNS, VPN, schedules) to its peer over HTTPS with a
+  dedicated API key and the peer's pinned TLS key; the peer applies them through
+  its normal appliers, keeps a revision, undoes a push it cannot apply and
+  reports the reason back to the source. [C88]
 - Traffic shaping (USE=qos): CAKE, fq_codel or a rate limit per interface from
   the Traffic shaping page, applied with `tc` and re-applied at boot. [C45]
 - External login: people on a RADIUS server (PAP, answers verified with the
