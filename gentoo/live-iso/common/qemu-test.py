@@ -1432,6 +1432,7 @@ class Runner:
                 kb.key("UP")                               # -> 'ZFS layout'
                 kb.key("RIGHT")
                 shot("03b-filesystem-zfs-mirror")
+                kb.key("TAB")                              # -> 'ZFS pool name' (advanced text row under the layout; keeps rpool)
                 kb.key("TAB")
                 if p == "horcrux":
                     kb.key("TAB")                          # -> 'TEST MACHINE: NO disk encryption' (advanced row added by b9d3838; the VGA zfs-mirror run pressed ENTER on 'Show advanced options' and sat on the disk screen for 1700 s)
@@ -1485,6 +1486,8 @@ class Runner:
                 kb.key("TAB"); kb.key("TAB"); kb.key("ENTER", 1)   # 'Show advanced options' -> buttons -> Next
         wait(r"\] Services", "08-services")
         kb.key("TAB")                                      # optional services list -> buttons
+        if installer_profile().get("update_channels") and installer_profile().get("update_channel_file"):
+            kb.key("TAB")                                  # the update channel choice (liveinst updchan.enabled): default kept
         kb.key("ENTER", 1)
         wait(r"\] Security hardening", "09-hardening")
         if a.ssh_password_opt_in or a.console_open:

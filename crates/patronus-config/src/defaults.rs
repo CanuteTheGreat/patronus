@@ -154,6 +154,8 @@ pub struct Bootstrap {
     /// Dedicated management network (role `mgmt`): carries the anti-lockout
     /// rule (SSH + web UI) instead of the LAN.
     pub mgmt: Vec<String>,
+    /// `opt_interfaces = [...]`: OPT1, OPT2 ... in that order (roles opt1, opt2 ...)
+    pub opt: Vec<String>,
     pub bonds: Vec<BootBond>,
     pub vlans: Vec<BootVlan>,
 }
@@ -244,6 +246,8 @@ struct NetworkSection {
     bond: Vec<BootBond>,
     #[serde(default)]
     vlan: Vec<BootVlan>,
+    #[serde(default)]
+    opt_interfaces: Vec<String>,
 }
 
 /// Linux interface name rules (at most 15 bytes, no `/`, `:` or blanks).
@@ -281,6 +285,7 @@ impl Bootstrap {
             wan: role_list(n.wan_interface, n.wan_interfaces),
             lan: role_list(n.lan_interface, n.lan_interfaces),
             mgmt: role_list(n.mgmt_interface, n.mgmt_interfaces),
+            opt: role_list(None, n.opt_interfaces),
             bonds: n.bond,
             vlans: n.vlan,
         })
@@ -377,7 +382,12 @@ impl Bootstrap {
             }
             names.push(d);
         }
-        for (role, list) in [("wan", &self.wan), ("lan", &self.lan), ("mgmt", &self.mgmt)] {
+        for (role, list) in [
+            ("wan", &self.wan),
+            ("lan", &self.lan),
+            ("mgmt", &self.mgmt),
+            ("opt", &self.opt),
+        ] {
             for n in list {
                 if members.contains(&n.as_str()) {
                     return bad(format!(
@@ -387,9 +397,9 @@ impl Bootstrap {
             }
         }
         for m in &self.mgmt {
-            if self.wan.contains(m) || self.lan.contains(m) {
+            if self.wan.contains(m) || self.lan.contains(m) || self.opt.contains(m) {
                 return bad(format!(
-                    "the management network {m} is also the WAN or LAN: use a separate port or VLAN, or leave mgmt_interface out"
+                    "the management network {m} is also the WAN, LAN or an OPT interface: use a separate port or VLAN, or leave mgmt_interface out"
                 ));
             }
         }
@@ -404,6 +414,24 @@ impl Bootstrap {
         }
         let mut v: Vec<String> = self.bonds.iter().map(|b| b.name.clone()).collect();
         v.extend(self.vlans.iter().map(|x| x.device()));
+        v
+    }
+
+    /// (interface, role) pairs in file order: wan, lan, mgmt, then opt1, opt2 ...
+    pub fn roles(&self) -> Vec<(String, String)> {
+        let mut v: Vec<(String, String)> = Vec::new();
+        for n in &self.wan {
+            v.push((n.clone(), "wan".into()));
+        }
+        for n in &self.lan {
+            v.push((n.clone(), "lan".into()));
+        }
+        for n in &self.mgmt {
+            v.push((n.clone(), "mgmt".into()));
+        }
+        for (i, n) in self.opt.iter().enumerate() {
+            v.push((n.clone(), format!("opt{}", i + 1)));
+        }
         v
     }
 
@@ -455,19 +483,17 @@ pub async fn ensure_defaults(
             // bonds / VLANs the bootstrap declares are created by the interfaces applier
             // later in this same boot: a role may name them before they exist
             let declared = b.virtual_names();
-            for (role, names) in [("wan", &b.wan), ("lan", &b.lan), ("mgmt", &b.mgmt)] {
-                for n in names {
-                    if existing.iter().any(|e| e == n) || declared.contains(n) {
-                        planned.push((n.clone(), role.to_string()));
-                    } else {
-                        let w = format!(
-                            "patronus.toml names {role} interface {n:?}, which does not exist \
-                             (present: {}); not assigned",
-                            existing.join(", ")
-                        );
-                        tracing::warn!("{w}");
-                        rep.warnings.push(w);
-                    }
+            for (n, role) in b.roles() {
+                if existing.contains(&n) || declared.contains(&n) {
+                    planned.push((n, role));
+                } else {
+                    let w = format!(
+                        "patronus.toml names {role} interface {n:?}, which does not exist \
+                         (present: {}); not assigned",
+                        existing.join(", ")
+                    );
+                    tracing::warn!("{w}");
+                    rep.warnings.push(w);
                 }
             }
             // one transaction: no reader ever sees a half-assigned set (WAN without LAN)
@@ -523,6 +549,65 @@ pub async fn ensure_defaults(
         rep.defaults_seeded = true;
     }
     Ok(rep)
+}
+
+/// Make the store's WAN/LAN/OPT roles exactly those of `b` (the console menu's
+/// "Assign interfaces" after the first boot, `patronus interfaces assign`).
+/// Every named interface must exist and carry one role; there must be a WAN.
+/// Interfaces that had a role and are not named lose it. A config revision
+/// is kept first so the change can be rolled back. Returns the new roles.
+pub async fn reassign_roles(
+    store: &ConfigStore,
+    b: &Bootstrap,
+    existing: &[String],
+    actor: &str,
+) -> Result<Vec<(String, String)>> {
+    let roles = b.roles();
+    if b.wan.is_empty() {
+        return Err(Error::Config("no WAN interface given".into()));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for (n, role) in &roles {
+        if !existing.contains(n) {
+            return Err(Error::Config(format!(
+                "{} interface {n:?} does not exist (present: {})",
+                role.to_uppercase(),
+                existing.join(", ")
+            )));
+        }
+        if !seen.insert(n.clone()) {
+            return Err(Error::Config(format!("interface {n:?} is given two roles")));
+        }
+    }
+    let old = store.interface_roles().await?;
+    if old
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        == roles
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+    {
+        return Ok(roles);
+    }
+    store
+        .snapshot(actor, "before interface assignment (console)")
+        .await?;
+    for (n, _) in old.iter().filter(|(n, _)| !seen.contains(n)) {
+        store.set_interface_role(n, None).await?;
+    }
+    store.set_interface_roles(&roles).await?;
+    store
+        .audit(
+            actor,
+            "assign_interfaces",
+            "interfaces",
+            None,
+            &serde_json::json!({"before": old, "after": roles}),
+        )
+        .await?;
+    Ok(roles)
 }
 
 /// The default rows (see the module docs).
@@ -945,6 +1030,63 @@ mod tests {
             .unwrap();
         assert_eq!(s.interfaces_with_role("lan").await.unwrap(), vec!["eth5"]);
         assert!(s.interfaces_with_role("wan").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn opt_interfaces_seed_and_reassign_replaces_every_role() {
+        let b = Bootstrap::parse(
+            "[network]\nwan_interface = \"eth0\"\nlan_interface = \"eth1\"\nopt_interfaces = [\"eth2\", \"eth3\"]\n",
+        )
+        .unwrap();
+        assert_eq!(b.opt, vec!["eth2", "eth3"]);
+        let ex: Vec<String> = ["eth0", "eth1", "eth2", "eth3", "eth4"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        ensure_defaults(&s, Some(&b), &ex).await.unwrap();
+        assert_eq!(s.interfaces_with_role("opt2").await.unwrap(), vec!["eth3"]);
+        // console reassignment after the first boot: WAN moves, eth3 loses its role, eth4 is OPT1
+        let nb = Bootstrap {
+            wan: vec!["eth1".into()],
+            lan: vec!["eth0".into()],
+            opt: vec!["eth4".into()],
+            ..Default::default()
+        };
+        let revs_before = s.list_revisions().await.unwrap().len();
+        let r = reassign_roles(&s, &nb, &ex, "console").await.unwrap();
+        assert_eq!(r.len(), 3);
+        let mut now = s.interface_roles().await.unwrap();
+        now.sort();
+        assert_eq!(
+            now,
+            vec![
+                ("eth0".to_string(), "lan".to_string()),
+                ("eth1".into(), "wan".into()),
+                ("eth4".into(), "opt1".into())
+            ]
+        );
+        assert_eq!(s.list_revisions().await.unwrap().len(), revs_before + 1);
+        // unchanged: no new revision
+        reassign_roles(&s, &nb, &ex, "console").await.unwrap();
+        assert_eq!(s.list_revisions().await.unwrap().len(), revs_before + 1);
+        // refused: missing interface, two roles, no WAN (and nothing changed)
+        let bad = Bootstrap {
+            opt: vec!["eth9".into()],
+            ..nb.clone()
+        };
+        assert!(reassign_roles(&s, &bad, &ex, "console").await.is_err());
+        let twice = Bootstrap {
+            opt: vec!["eth0".into()],
+            ..nb.clone()
+        };
+        assert!(reassign_roles(&s, &twice, &ex, "console").await.is_err());
+        let nowan = Bootstrap {
+            wan: vec![],
+            ..nb.clone()
+        };
+        assert!(reassign_roles(&s, &nowan, &ex, "console").await.is_err());
+        assert_eq!(s.interfaces_with_role("wan").await.unwrap(), vec!["eth1"]);
     }
 
     #[test]
