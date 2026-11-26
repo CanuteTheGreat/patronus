@@ -172,7 +172,10 @@ fn summary_of(first: &str) -> Option<String> {
         }
         rest = &rest[c.len_utf8()..];
     }
-    let rest = rest.split_once(char::is_whitespace).map(|(_, r)| r).unwrap_or("");
+    let rest = rest
+        .split_once(char::is_whitespace)
+        .map(|(_, r)| r)
+        .unwrap_or("");
     let mut r = rest.trim_start();
     loop {
         if let Some(x) = r.strip_prefix('(') {
@@ -195,7 +198,10 @@ fn summary_of(first: &str) -> Option<String> {
     if r.starts_with("->") || r.starts_with('{') || r.starts_with('[') {
         return None;
     }
-    let words = r.split_whitespace().filter(|w| w.chars().filter(|c| c.is_alphabetic()).count() >= 3).count();
+    let words = r
+        .split_whitespace()
+        .filter(|w| w.chars().filter(|c| c.is_alphabetic()).count() >= 3)
+        .count();
     (words >= 3).then(|| cap_first(r))
 }
 
@@ -299,7 +305,11 @@ pub fn build(scan: &Scan, version: &str) -> Result<Built, String> {
         let doc = fi.map(|f| f.doc.clone()).unwrap_or_default();
         let ctx_file = fi.map(|f| f.file.as_str()).unwrap_or(&s.file);
         let web_ctx = format!("crates/patronus-web/src/{ctx_file}");
-        let doc = if doc.starts_with("This lane's API routes") { String::new() } else { doc };
+        let doc = if doc.starts_with("This lane's API routes") {
+            String::new()
+        } else {
+            doc
+        };
         let (summary, description) = if doc.is_empty() {
             (
                 humanize(if s.is_closure {
@@ -314,7 +324,17 @@ pub fn build(scan: &Scan, version: &str) -> Result<Built, String> {
             let first = summary_of(first.trim()).unwrap_or_default();
             let sum = shorten(&first);
             if sum.is_empty() {
-                (fallback_summary(if s.is_closure { "inline handler" } else { &s.handler }, &s.path), String::new())
+                (
+                    fallback_summary(
+                        if s.is_closure {
+                            "inline handler"
+                        } else {
+                            &s.handler
+                        },
+                        &s.path,
+                    ),
+                    String::new(),
+                )
             } else {
                 (sum, doc.clone())
             }

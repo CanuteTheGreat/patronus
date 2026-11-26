@@ -262,7 +262,8 @@ Last generated: 2026-11-17 (279 features).
 | TOTP two-factor login | pfS/OPN/UniFi/GL | tested | missing | missing | small; add `totp` to router FEATURES | P1 |
 | WebAuthn / passkeys | OPN(no)/UniFi(yes)/Meraki | missing | missing | missing | Add webauthn-rs, `webauthn_credentials` table, login step + enrol UI (M) | P2 |
 | REST API with API keys | pfS(pkg)/OPN/OWrt(ubus)/UniFi | tested | untested | untested | OK | P1 |
-| API documentation (OpenAPI / swagger) | pfS/OPN/UniFi | missing | missing | missing | Generate an OpenAPI document from the route table (S-M) | P2 |
+| API documentation (OpenAPI / swagger) | pfS/OPN/UniFi | tested | tested | tested | OpenAPI 3.1 generated from the routes (`docs/openapi.json`, `/api/docs`, CI route-coverage and page-coverage checks, `docs/API.md`). Response bodies of handlers that return a bare `Response` are untyped JSON in the document. | P2 |
+| Multi-language web UI (per-account language, system default, browser fallback) | pfS/OPN | tested | tested | tested | English + German; menu, sign-in, language card, API reference and the sign-in/account API messages are translated, other pages still English (`ci/i18n-baseline.json` counts what is left; `docs/I18N.md`). | P2 |
 | SSH admin access settings + authorized keys | pfS/OPN/OWrt/GL | missing | missing | missing | Port, listen, password auth, key list, user CA are being built by another work item | P0 |
 | Backup (download) + restore of whole config | pfS/OPN/OWrt/UniFi/GL | tested | untested | untested | Router Wi-Fi (ap.env) not covered | P0 |
 | Scheduled remote backups (SFTP, HTTPS PUT, FTPS) with encryption | pfS(pkg)/OPN/UniFi(cloud)/Meraki | tested | untested | untested | SFTP/FTPS code path not covered by the netlab (only HTTP PUT); no S3 or cloud-drive API; no retention/prune | P1 |
