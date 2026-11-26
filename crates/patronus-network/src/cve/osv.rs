@@ -237,7 +237,7 @@ pub fn build_from_zip(bytes: &[u8], source_url: &str, now: i64) -> Result<OsvDb,
     let mut unpacked = 0u64;
     for i in 0..zip.len().min(MAX_RECORDS) {
         let mut f = zip.by_index(i).map_err(|e| format!("zip entry {i}: {e}"))?;
-        if !f.name().ends_with(".json") || f.size() > MAX_RECORD {
+        if !f.name().is_ok_and(|n| n.ends_with(".json")) || f.size() > MAX_RECORD {
             continue;
         }
         unpacked += f.size();
