@@ -886,6 +886,7 @@ pub async fn tick(store: &ConfigStore) -> Result<Option<Report>> {
     let last_at = last.as_ref().map(|l| l.at).unwrap_or(0);
     let due = t - last_at >= s.scan_interval_secs as i64;
     let asked = requested > served;
+    tracing::info!(due, asked, requested, served, "CVE exposure: tick");
     if !(due || asked) {
         return Ok(None);
     }
@@ -976,6 +977,7 @@ pub fn spawn_task(
             if only_without_applyd && applyd_socket.exists() {
                 continue;
             }
+            tracing::info!("CVE exposure: engine round");
             match tick(&store).await {
                 Ok(_) => last_err.clear(),
                 Err(e) => {
