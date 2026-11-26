@@ -628,6 +628,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn monitoring_agents_open_their_port_on_the_lan_only() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth0", Some("wan")).await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default(), "off");
+        put(&s, "zabbix.enabled", "1").await;
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(
+            f.contains("input iifname \"eth1\" tcp dport 10050 accept"),
+            "{f}"
+        );
+        assert!(!f.contains("eth0"), "{f}");
+        put(&s, "zabbix.listen_port", "10060").await;
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(
+            f.contains("tcp dport 10060 accept") && !f.contains("10050"),
+            "{f}"
+        );
+        put(&s, "zabbix.enabled", "0").await;
+        assert_eq!(
+            svc_rules(&s).await.unwrap(),
+            VpnRules::default(),
+            "off again"
+        );
+    }
+
+    #[tokio::test]
     async fn guest_network_opens_only_dhcp_dns_ping_and_the_internet_leg() {
         let s = ConfigStore::open_in_memory().await.unwrap();
         s.set_interface_role("eth0", Some("wan")).await.unwrap();
