@@ -9,7 +9,9 @@
 //!   before the interface rules, non-quick ones after them.
 //! * A limiter is a named rate cap a rule can reference.
 
-use crate::nftables::{ifgroup_set_name, is_valid_alias_name, is_valid_interface_name, LimiterSpec};
+use crate::nftables::{
+    ifgroup_set_name, is_valid_alias_name, is_valid_interface_name, LimiterSpec,
+};
 use patronus_config::store::ConfigStore;
 use patronus_core::types::{ChainType, RuleDirection};
 use patronus_core::{Error, Result};
@@ -217,6 +219,57 @@ pub async fn delete_limiter(store: &ConfigStore, name: &str) -> Result<bool> {
     Ok(r.rows_affected() > 0)
 }
 
+/// The two limit knobs in `system_config`: (per-source set size, default
+/// overload timeout in seconds). Unset or unreadable values use the defaults.
+pub async fn limit_knobs(store: &ConfigStore) -> Result<(u32, u32)> {
+    use crate::nftables::{
+        DEFAULT_LIMIT_SET_SIZE, DEFAULT_OVERLOAD_SECS, LIMIT_SET_SIZE_KEY, OVERLOAD_SECS_KEY,
+    };
+    let get = |v: Option<String>, d: u32| {
+        v.and_then(|v| v.trim().parse::<u32>().ok())
+            .filter(|n| *n >= 1)
+            .unwrap_or(d)
+    };
+    Ok((
+        get(
+            store.load_system_config(LIMIT_SET_SIZE_KEY).await?,
+            DEFAULT_LIMIT_SET_SIZE,
+        ),
+        get(
+            store.load_system_config(OVERLOAD_SECS_KEY).await?,
+            DEFAULT_OVERLOAD_SECS,
+        ),
+    ))
+}
+
+/// Store the knobs (the caller re-applies). Bounds: 64..=4194304 entries,
+/// 1..=2592000 seconds (30 days).
+pub async fn save_limit_knobs(
+    store: &ConfigStore,
+    set_size: u32,
+    overload_secs: u32,
+) -> Result<()> {
+    if !(64..=4_194_304).contains(&set_size) {
+        return Err(Error::Firewall(format!(
+            "Invalid set_size {set_size}: 64 to 4194304 entries"
+        )));
+    }
+    if !(1..=2_592_000).contains(&overload_secs) {
+        return Err(Error::Firewall(format!(
+            "Invalid overload_secs {overload_secs}: 1 to 2592000 seconds"
+        )));
+    }
+    store
+        .save_system_config(crate::nftables::LIMIT_SET_SIZE_KEY, &set_size.to_string())
+        .await?;
+    store
+        .save_system_config(
+            crate::nftables::OVERLOAD_SECS_KEY,
+            &overload_secs.to_string(),
+        )
+        .await
+}
+
 /// Devices behind a member (`@role` resolved through `roles`).
 pub fn member_devices(member: &str, roles: &Roles) -> Vec<String> {
     match member.strip_prefix('@') {
@@ -334,7 +387,10 @@ pub fn selector_exprs(
 /// (chain, direction keyword) combinations a floating rule renders in.
 pub fn floating_hooks(dir: RuleDirection) -> Vec<(ChainType, &'static str)> {
     match dir {
-        RuleDirection::In => vec![(ChainType::Input, "iifname"), (ChainType::Forward, "iifname")],
+        RuleDirection::In => vec![
+            (ChainType::Input, "iifname"),
+            (ChainType::Forward, "iifname"),
+        ],
         RuleDirection::Out => vec![
             (ChainType::Output, "oifname"),
             (ChainType::Forward, "oifname"),
@@ -371,7 +427,9 @@ mod tests {
     fn group_script_follows_members_and_roles() {
         let s = groups_script(&[group("trusted", &["@lan", "wg0"])], &roles());
         assert!(s.contains("add set inet patronus ifgrp_trusted { type ifname;"));
-        assert!(s.contains("add element inet patronus ifgrp_trusted { \"eth1\", \"eth2\", \"wg0\" }"));
+        assert!(
+            s.contains("add element inet patronus ifgrp_trusted { \"eth1\", \"eth2\", \"wg0\" }")
+        );
         // empty group: the set still exists
         let s = groups_script(&[group("empty", &[])], &roles());
         assert!(s.contains("ifgrp_empty") && !s.contains("add element"));
@@ -417,8 +475,16 @@ mod tests {
             description: None,
         };
         assert!(validate_limiter(&l).is_ok());
-        assert!(validate_limiter(&Limiter { rate_kbit: 0, ..l.clone() }).is_err());
-        assert!(validate_limiter(&Limiter { name: "a b".into(), ..l }).is_err());
+        assert!(validate_limiter(&Limiter {
+            rate_kbit: 0,
+            ..l.clone()
+        })
+        .is_err());
+        assert!(validate_limiter(&Limiter {
+            name: "a b".into(),
+            ..l
+        })
+        .is_err());
     }
 
     #[test]

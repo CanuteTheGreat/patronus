@@ -50,6 +50,20 @@ tables with their sources and seconds left, `DELETE /api/firewall/overload/NAME`
 releases all, `DELETE /api/firewall/overload/NAME/ADDRESS` one source. Limits
 on a drop/reject rule are refused (400).
 
+The size of the per-source tables and the default overload timeout are
+settings (`GET/PUT /api/firewall/limit-settings`, keys `firewall.limit_set_size`
+default 65535 and `firewall.overload_secs` default 3600; Groups & limiters tab,
+"Limit tables"). A rule's own `overload_secs` wins.
+
+## Kernel capabilities
+
+Connection counting (`nft_connlimit`) and rate limiting (`nft_limit`) are
+probed once with `nft -c` (`GET /api/firewall/capabilities`). On a kernel
+without one (the Slate image has no connection counting) a rule that needs it
+is refused with the reason (400), the page greys out those fields with the
+reason, and a stored rule that needs it is skipped with a warning when the
+ruleset is rendered, instead of failing the whole load.
+
 ## Limiters
 
 `PUT /api/firewall/limiters/NAME {"rate_kbit", "burst_kb", "per_source"}`; a
@@ -59,6 +73,29 @@ It renders into a `lim_<hook>` chain at priority -10 so established flows are
 counted too (the normal chains accept established traffic early). The burst
 is at least 70 kB so a 64 kB GSO packet fits; a smaller bucket makes TCP crawl.
 A limiter that a rule uses cannot be deleted.
+
+## Security notes
+
+- Every name that reaches an nft script is validated: interface names (at most
+  15 characters, no quotes), group, limiter and overload names (a letter, then
+  letters, digits or `_`), numbers are typed. A category is only a label and
+  never reaches nft. Values read back from the store are validated again when
+  the ruleset is rendered.
+- A pass rule that cannot be rendered is skipped with a warning (never widened);
+  a block rule that cannot be rendered (for example one on a group that no
+  longer exists) refuses the whole ruleset, as every other block rule does.
+- Quick floating rules never come before the anti-lockout system rules.
+  Limiters apply to forwarded and outgoing traffic only: their chain runs
+  before the anti-lockout rule, so a limiter on traffic for the router itself
+  is refused. A source in an overload table is dropped on the interfaces of the
+  rule that fed it, after the system rules.
+- An overload table keys on the source address, so a source that can spoof
+  addresses (TCP SYNs from the WAN) could get a victim's address blocked until
+  its entry times out. Use overload tables on rules for networks you control
+  (LAN, VPN), keep the WAN source checks on, keep the timeout short, and release
+  an entry from the page when needed.
+- Group changes, limiter changes, overload releases, limit settings and rule
+  changes are recorded as configuration revisions and in the audit log.
 
 ## Categories
 

@@ -966,6 +966,38 @@ pub async fn get_capabilities() -> Response {
     Json(patronus_firewall::nftables::kernel_caps()).into_response()
 }
 
+#[derive(Debug, Deserialize)]
+pub struct LimitSettingsBody {
+    pub set_size: u32,
+    pub overload_secs: u32,
+}
+
+/// GET /api/firewall/limit-settings
+pub async fn get_limit_settings(State(state): State<AppState>) -> Response {
+    match state.firewall.limit_settings().await {
+        Ok((set_size, overload_secs)) => Json(serde_json::json!({
+            "set_size": set_size, "overload_secs": overload_secs,
+        }))
+        .into_response(),
+        Err(e) => err("Failed to read the limit settings", e),
+    }
+}
+
+/// PUT /api/firewall/limit-settings  {"set_size": 65535, "overload_secs": 3600}
+pub async fn put_limit_settings(
+    State(state): State<AppState>,
+    Json(b): Json<LimitSettingsBody>,
+) -> Response {
+    match state
+        .firewall
+        .set_limit_settings(b.set_size, b.overload_secs)
+        .await
+    {
+        Ok(_) => ok("Limit settings saved"),
+        Err(e) => err("Failed to save the limit settings", e),
+    }
+}
+
 /// GET /api/firewall/categories -- category names with their rule counts
 pub async fn list_categories(State(state): State<AppState>) -> Response {
     match state.firewall.categories().await {
@@ -1053,4 +1085,8 @@ pub fn router() -> axum::Router<AppState> {
         )
         .route("/firewall/categories", get(list_categories))
         .route("/firewall/capabilities", get(get_capabilities))
+        .route(
+            "/firewall/limit-settings",
+            get(get_limit_settings).put(put_limit_settings),
+        )
 }

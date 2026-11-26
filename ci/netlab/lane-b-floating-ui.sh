@@ -29,7 +29,7 @@ nl_api POST /firewall/rules '{"name":"ui-log-block","chain":"forward","action":"
 [ "$NL_CODE" = 200 ] || [ "$NL_CODE" = 201 ] || nl_fail "log rule: HTTP $NL_CODE $(cat "$NL_OUT")"
 for _ in 1 2 3 4 5 6; do C python3 "$NL_T/nl-conn.py" 198.51.100.20 9000 >/dev/null 2>&1 || true; done
 
-out=$(C env BASE_URL="$NL_UI" E2E_USER=admin E2E_PASSWORD="$NL_PASS" E2E_IFACES=rtr-lan,rtr-opt E2E_LOG=1 \
+out=$(C env BASE_URL="$NL_UI" E2E_USER=admin E2E_PASSWORD="$NL_PASS" E2E_IFACES=rtr-lan,rtr-opt E2E_LOG=1 E2E_SHOTS="${E2E_SHOTS:-}" \
       "$PW/bin/python" "$NL_T/firewall-floating-e2e.py" firefox 2>&1) && rc=0 || rc=$?
 echo "$out"
 [ "$rc" = 0 ] || nl_fail "the firewall floating/groups page e2e failed (exit $rc)"
