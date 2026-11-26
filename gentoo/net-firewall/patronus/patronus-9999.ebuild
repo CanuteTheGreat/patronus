@@ -33,7 +33,7 @@ IUSE="
 	+monitoring prometheus netflow collectd
 	+captive-portal
 	intrusion-detection suricata snort
-	+bruteforce
+	+bruteforce +cve
 	syslog igmp mdns nat64 l2tp upnp vrf web-proxy dynamic-routing sdwan
 	+vlan qos +tc
 	certificates acme certbot
@@ -78,6 +78,10 @@ REQUIRED_USE="
 # kernels without CONFIG_NF_CONNTRACK_PROCFS (no /proc/net/nf_conntrack).
 # (No comments inside RDEPEND: Portage would parse '#' as an atom.)
 RDEPEND="
+	cve? (
+		net-misc/curl
+		sys-apps/portage
+	)
 	acct-user/patronus
 	sys-auth/pambase
 	sys-libs/pam
@@ -255,6 +259,7 @@ src_configure() {
 		$(usex web-proxy "web-proxy" "")
 		$(usex intrusion-detection "intrusion-detection" "")
 		$(usex bruteforce "bruteforce" "")
+		$(usex cve "cve" "")
 		$(usex dynamic-routing "dynamic-routing" "")
 		$(usex sdwan "sdwan-edge" "")
 		$(usex ldap "ldap" "")
@@ -405,6 +410,7 @@ src_install() {
 		use web-proxy && webfeatures+=( web-proxy )
 		use intrusion-detection && webfeatures+=( intrusion-detection )
 		use bruteforce && webfeatures+=( bruteforce )
+		use cve && webfeatures+=( cve )
 		use dynamic-routing && webfeatures+=( dynamic-routing )
 		use sdwan && webfeatures+=( sdwan-edge )
 		# TLS backend and the live threat-feed / journald readers are optional web features now (the router tier
@@ -634,6 +640,7 @@ pkg_postinst() {
 	use ha && elog "  ✓ High Availability"
 	use intrusion-detection && elog "  ✓ IDS/IPS (Suricata)"
 	use bruteforce && elog "  ✓ Brute-force protection (SSH / web login bans)"
+	use cve && elog "  ✓ CVE exposure (Gentoo GLSA + crate advisories, security updates policy)"
 	use qos && elog "  ✓ Traffic Shaping/QoS"
 	use certificates && use acme && elog "  ✓ ACME/Let's Encrypt"
 	use geoip && elog "  ✓ GeoIP blocking"

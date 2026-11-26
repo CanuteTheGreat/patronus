@@ -5,6 +5,10 @@ use colored::Colorize;
 use std::path::PathBuf;
 
 mod commands;
+
+// The crates of this binary's Cargo.lock closure, read back by the CVE exposure scan.
+#[cfg(feature = "cve")]
+patronus_network::embed_dependency_list!();
 #[cfg(feature = "gitops")]
 use commands::gitops;
 use commands::{
@@ -168,6 +172,13 @@ enum Commands {
     Guard {
         #[command(subcommand)]
         action: GuardCommands,
+    },
+
+    /// Router CVE exposure: scan, advisory data, security updates
+    #[cfg(feature = "cve")]
+    Cve {
+        #[command(subcommand)]
+        action: CveCommands,
     },
 
     /// Web UI accounts (recovery on the box: lost second factor)
@@ -523,6 +534,36 @@ enum GuardCommands {
     },
 }
 
+#[cfg(feature = "cve")]
+#[derive(Subcommand)]
+enum CveCommands {
+    /// Last result: affected software, fixes, age of the advisory data
+    Status {
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Scan now (this process, not the engine); --fetch downloads the crate advisory data first
+    Scan {
+        #[arg(long)]
+        fetch: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Install the fixes the last scan found (what the nightly window does with policy "apply"); --dry-run only lists them
+    Apply {
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Change settings: KEY=VALUE ... (enabled, fetch, security_updates=off|notify|apply, window=HH:MM-HH:MM,
+    /// scan_interval_secs, osv_refresh_hours, osv_stale_days, glsa_stale_days, osv_url, osv_max_bytes, glsa_dir,
+    /// pkg_db, binaries, manifest_path, data_dir, portageq, emerge, apply_max_packages, history_days, ...)
+    Set {
+        #[arg(required = true)]
+        pairs: Vec<String>,
+    },
+}
+
 #[derive(Subcommand)]
 enum UsersCommands {
     /// List the web UI accounts (role, enabled, two-factor)
@@ -733,6 +774,8 @@ fn restore_default_sigpipe() {}
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     restore_default_sigpipe();
+    #[cfg(feature = "cve")]
+    patronus_network::cve::inventory::keep(PATRONUS_DEP_LIST);
     // Multi-call (embedded tier, feature `web-multicall`): invoked as
     // `patronus-web` (a link to this binary) it is the web UI server, so the
     // router image carries std, tokio, SQLite and the appliers once.
@@ -853,6 +896,16 @@ async fn main() -> anyhow::Result<()> {
                 commands::guard::unban(cli.db.as_deref(), &address).await?
             }
             GuardCommands::Set { pairs } => commands::guard::set(cli.db.as_deref(), &pairs).await?,
+        },
+
+        #[cfg(feature = "cve")]
+        Commands::Cve { action } => match action {
+            CveCommands::Status { json } => commands::cve::status(cli.db.as_deref(), json).await?,
+            CveCommands::Scan { fetch, json } => {
+                commands::cve::scan(cli.db.as_deref(), fetch, json).await?
+            }
+            CveCommands::Apply { dry_run } => commands::cve::apply(cli.db.as_deref(), dry_run).await?,
+            CveCommands::Set { pairs } => commands::cve::set(cli.db.as_deref(), &pairs).await?,
         },
 
         Commands::Users { action } => match action {
