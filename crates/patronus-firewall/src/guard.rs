@@ -48,11 +48,31 @@ pub const TABLE_NAME: &str = "patronus_guard";
 /// DNS policy (-12), guest (-15) and the main table (0).
 pub const PRIORITY: i32 = -20;
 /// Login sources the engine knows.
-pub const SOURCES: &[&str] = &["sshd", "dropbear", "web"];
+pub const SOURCES: &[&str] = &["sshd", "dropbear", "web", "openvpn", "strongswan", "ids"];
+/// Sources counted unless the operator chooses: banning on intrusion-detection alerts is opt-in
+/// (a noisy rule must not lock out a host nobody asked to ban).
+pub const DEFAULT_SOURCES: &[&str] = &["sshd", "dropbear", "web", "openvpn", "strongswan"];
+/// Alerts read from the intrusion-detection history per tick.
+const IDS_READ_PER_TICK: i64 = 5000;
+/// Counted failures kept at most (the newest), whatever the window.
+const MAX_FAILURE_ROWS: i64 = 100_000;
+/// What `guard.openvpn_log` means by default: the file the supervisor writes the
+/// OpenVPN server's output to (`<run dir>/patronus-daemon.openvpn-server.log`).
+pub const OPENVPN_LOG_AUTO: &str = "auto";
+/// Run directory of the daemon supervisor (`PATRONUS_RUN_DIR` overrides it, like the supervisor).
+const DEFAULT_RUN_DIR: &str = "/run/patronus";
+const OPENVPN_LOG_NAME: &str = "patronus-daemon.openvpn-server.log";
 /// Log files tried, in order, when `guard.log_files` is `auto` and the journal is not used.
 pub const AUTO_LOG_FILES: &[&str] = &["/var/log/auth.log", "/var/log/secure", "/var/log/messages"];
 /// Syslog tags whose messages may count.
 const SSH_TAGS: &[&str] = &["sshd", "sshd-session", "sshd-auth", "dropbear"];
+/// OpenVPN's syslog tag is `openvpn` (or `ovpn-<name>` from the distro units).
+const OPENVPN_TAGS: &[&str] = &["openvpn"];
+const OPENVPN_TAG_PREFIX: &str = "ovpn-";
+/// strongSwan: `charon` (starter/classic) and `charon-systemd`.
+const SWAN_TAGS: &[&str] = &["charon", "charon-systemd"];
+/// Forgotten IKE_SAs are dropped from the peer map beyond this many entries.
+const SWAN_MAP_MAX: usize = 4096;
 /// Bytes read from one log file per tick (a flood is read over several ticks).
 const MAX_READ_PER_TICK: u64 = 1 << 20;
 
@@ -86,6 +106,17 @@ pub struct Settings {
     pub log_files: Vec<String>,
     /// `auto` (systemd hosts), `on`, `off`.
     pub journal: String,
+    /// Extra syslog tags whose lines may count for the VPN sources (a daemon started
+    /// with its own `--syslog NAME`).
+    pub log_tags: Vec<String>,
+    /// IDS source: alerts of this severity or more serious (1 = high .. 4) count.
+    pub ids_severity: u8,
+    /// IDS source: `any` (every alert) or `blocked` (only what the IPS dropped).
+    pub ids_action: String,
+    /// IDS source: counted alerts of one address within `find_secs` before a ban.
+    pub ids_max_alerts: u32,
+    /// OpenVPN output file: `auto` or an absolute path.
+    pub openvpn_log: String,
     pub history_days: u32,
     pub history_max_rows: u32,
     pub tick_secs: u64,
@@ -95,7 +126,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             enabled: false,
-            sources: SOURCES.iter().map(|s| s.to_string()).collect(),
+            sources: DEFAULT_SOURCES.iter().map(|s| s.to_string()).collect(),
             max_failures: 5,
             find_secs: 600,
             ban_secs: 900,
@@ -107,6 +138,11 @@ impl Default for Settings {
             ipv6_prefix: 64,
             log_files: Vec::new(),
             journal: "auto".into(),
+            log_tags: Vec::new(),
+            ids_severity: 1,
+            ids_action: "any".into(),
+            ids_max_alerts: 10,
+            openvpn_log: OPENVPN_LOG_AUTO.into(),
             history_days: 30,
             history_max_rows: 5000,
             tick_secs: 2,
@@ -131,6 +167,11 @@ pub struct SettingsIn {
     pub ipv6_prefix: Option<u8>,
     pub log_files: Option<Vec<String>>,
     pub journal: Option<String>,
+    pub log_tags: Option<Vec<String>>,
+    pub ids_severity: Option<u8>,
+    pub ids_action: Option<String>,
+    pub ids_max_alerts: Option<u32>,
+    pub openvpn_log: Option<String>,
     pub history_days: Option<u32>,
     pub history_max_rows: Option<u32>,
     pub tick_secs: Option<u64>,
@@ -220,6 +261,15 @@ impl Settings {
         num!(history_days, 1, 3650, "history retention (days)");
         num!(history_max_rows, 100, 1_000_000, "history size");
         num!(tick_secs, 1, 300, "check interval");
+        num!(ids_severity, 1, 4, "IDS alert severity");
+        num!(ids_max_alerts, 1, 100_000, "IDS alert count");
+        if let Some(v) = &i.ids_action {
+            let v = v.trim().to_ascii_lowercase();
+            if !["any", "blocked"].contains(&v.as_str()) {
+                return Err(bad(format!("IDS action {v:?} (any or blocked)")));
+            }
+            s.ids_action = v;
+        }
         if let Some(v) = i.escalate {
             s.escalate = v;
         }
@@ -257,6 +307,38 @@ impl Settings {
             }
             s.journal = v;
         }
+        if let Some(v) = &i.log_tags {
+            let mut out: Vec<String> = Vec::new();
+            for x in v
+                .iter()
+                .map(|x| x.trim())
+                .filter(|x| !x.is_empty() && *x != "auto")
+            {
+                if x.len() > 64
+                    || !x
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"._@-".contains(&b))
+                {
+                    return Err(bad(format!("syslog tag {x:?}")));
+                }
+                if !out.iter().any(|o| o == x) {
+                    out.push(x.to_string());
+                }
+            }
+            s.log_tags = out;
+        }
+        if let Some(v) = &i.openvpn_log {
+            let v = v.trim();
+            if v.is_empty() || v == OPENVPN_LOG_AUTO {
+                s.openvpn_log = OPENVPN_LOG_AUTO.into();
+            } else if valid_log_path(v) {
+                s.openvpn_log = v.to_string();
+            } else {
+                return Err(bad(format!(
+                    "OpenVPN log file {v:?} (auto or an absolute path)"
+                )));
+            }
+        }
         if s.ban_max_secs < s.ban_secs {
             return Err(bad("longest ban: shorter than the first ban"));
         }
@@ -289,6 +371,18 @@ impl Settings {
                 },
             ),
             ("guard.journal", self.journal.clone()),
+            (
+                "guard.log_tags",
+                if self.log_tags.is_empty() {
+                    "auto".into()
+                } else {
+                    self.log_tags.join(",")
+                },
+            ),
+            ("guard.openvpn_log", self.openvpn_log.clone()),
+            ("guard.ids_severity", self.ids_severity.to_string()),
+            ("guard.ids_action", self.ids_action.clone()),
+            ("guard.ids_max_alerts", self.ids_max_alerts.to_string()),
             ("guard.history_days", self.history_days.to_string()),
             ("guard.history_max_rows", self.history_max_rows.to_string()),
             ("guard.tick_secs", self.tick_secs.to_string()),
@@ -328,6 +422,11 @@ pub async fn load(store: &ConfigStore) -> Result<Settings> {
     i.allowlist = g("guard.allowlist").map(|v| list(&v));
     i.log_files = g("guard.log_files").map(|v| list(&v));
     i.journal = g("guard.journal");
+    i.log_tags = g("guard.log_tags").map(|v| list(&v));
+    i.openvpn_log = g("guard.openvpn_log");
+    i.ids_action = g("guard.ids_action");
+    parse!(ids_severity, "guard.ids_severity");
+    parse!(ids_max_alerts, "guard.ids_max_alerts");
     parse!(max_failures, "guard.max_failures");
     parse!(find_secs, "guard.find_secs");
     parse!(ban_secs, "guard.ban_secs");
@@ -372,6 +471,11 @@ pub async fn load(store: &ConfigStore) -> Result<Settings> {
             try1!(ipv6_prefix);
             try1!(log_files);
             try1!(journal);
+            try1!(log_tags);
+            try1!(openvpn_log);
+            try1!(ids_severity);
+            try1!(ids_action);
+            try1!(ids_max_alerts);
             try1!(history_days);
             try1!(history_max_rows);
             try1!(tick_secs);
@@ -409,6 +513,13 @@ pub struct Attempt {
 /// The text before the message must be empty (a file sshd writes itself, `-E`) or a
 /// syslog-style prefix whose tag (`host sshd[123]:`) is one of the SSH daemons.
 fn tag_ok(prefix: &str) -> bool {
+    tag_in(prefix, SSH_TAGS, None, &[])
+}
+
+/// The syslog tag of a `... host tag[pid]:` prefix is one of `builtin`, starts with `pfx`,
+/// or is one of the operator's `extra` tags. An empty prefix (a file the daemon writes
+/// itself) passes.
+fn tag_in(prefix: &str, builtin: &[&str], pfx: Option<&str>, extra: &[String]) -> bool {
     let p = prefix.trim_end();
     if p.is_empty() {
         return true;
@@ -418,7 +529,39 @@ fn tag_ok(prefix: &str) -> bool {
     };
     let tag = p.rsplit(' ').next().unwrap_or("");
     let tag = tag.split('[').next().unwrap_or("");
-    SSH_TAGS.contains(&tag)
+    builtin.contains(&tag)
+        || pfx.is_some_and(|x| tag.len() > x.len() && tag.starts_with(x))
+        || extra.iter().any(|e| e == tag)
+}
+
+/// `2026-11-26 06:44:54`, `Nov 26 06:44:54`, `Tue Nov 26 06:44:54 2026`: nothing else.
+fn looks_like_time(p: &str) -> bool {
+    const NAMES: &[&str] = &[
+        "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let toks: Vec<&str> = p.split_whitespace().collect();
+    !toks.is_empty()
+        && toks.len() <= 6
+        && toks.iter().all(|t| {
+            NAMES.contains(t)
+                || (t.bytes().any(|b| b.is_ascii_digit())
+                    && t.bytes()
+                        .all(|b| b.is_ascii_digit() || b":-.+TZ,".contains(&b)))
+        })
+}
+
+/// What may stand before a VPN daemon's message: nothing, a timestamp (the file the
+/// daemon's output goes to) or a syslog prefix whose tag is that daemon's.
+fn vpn_prefix_ok(prefix: &str, builtin: &[&str], pfx: Option<&str>, extra: &[String]) -> bool {
+    let p = prefix.trim();
+    if p.is_empty() {
+        return true;
+    }
+    if p.ends_with(':') {
+        return tag_in(p, builtin, pfx, extra);
+    }
+    looks_like_time(p)
 }
 
 fn strip_suffixes(mut t: &str) -> &str {
@@ -446,8 +589,11 @@ fn openssh_tail(t: &str) -> Option<(&str, IpAddr)> {
 
 /// `<ip>:<port>` or `[<ip>]:<port>` at the very end (Dropbear).
 fn dropbear_addr(t: &str) -> Option<IpAddr> {
-    let t = t.trim_end();
-    let a = t.rsplit_once(" from ")?.1;
+    addr_port(t.trim_end().rsplit_once(" from ")?.1)
+}
+
+/// `<ip>:<port>` or `[<ip>]:<port>`.
+fn addr_port(a: &str) -> Option<IpAddr> {
     if let Some(rest) = a.strip_prefix('[') {
         let (ip, port) = rest.split_once("]:")?;
         port.parse::<u16>().ok()?;
@@ -465,6 +611,14 @@ fn dropbear_addr(t: &str) -> Option<IpAddr> {
 /// writes before the `Failed password for invalid user` of the same guess would count
 /// it twice, and a failed public key is what every client with several keys produces.
 pub fn parse_line(line: &str) -> Option<Attempt> {
+    parse_line_with(line, &[])
+}
+
+/// `parse_line` with the operator's extra syslog tags for the VPN sources.
+pub fn parse_line_with(line: &str, extra_tags: &[String]) -> Option<Attempt> {
+    if let Some(a) = parse_openvpn(line, extra_tags) {
+        return Some(a);
+    }
     const OPENSSH: &[&str] = &[
         "Failed password for ",
         "Failed keyboard-interactive/pam for ",
@@ -508,6 +662,132 @@ pub fn parse_line(line: &str) -> Option<Attempt> {
         }
     }
     None
+}
+
+/// Failed logins of the OpenVPN server that need a round trip with the peer first (a
+/// TLS session under tls-crypt exists), so the source address cannot be forged by a
+/// UDP packet: a certificate the CA did not sign, a refused user name/password. Timeouts
+/// and tls-crypt/HMAC failures are NOT counted: anyone can spoof those from a victim's address.
+const OPENVPN_PHRASES: &[&str] = &[
+    " VERIFY ERROR: ",
+    " TLS Auth Error: Auth Username/Password verification failed for peer",
+    " Auth Username/Password verification failed for peer",
+];
+
+/// The address in the first token of an OpenVPN message: `<ip>:<port>`, `[<ip>]:<port>`,
+/// optionally behind `<common name>/` and `[AF_INET]`.
+fn openvpn_addr(tok: &str) -> Option<IpAddr> {
+    let t = tok.rsplit_once('/').map_or(tok, |x| x.1);
+    let t = t
+        .strip_prefix("[AF_INET6]")
+        .or_else(|| t.strip_prefix("[AF_INET]"))
+        .unwrap_or(t);
+    addr_port(t)
+}
+
+fn parse_openvpn(line: &str, extra: &[String]) -> Option<Attempt> {
+    for k in OPENVPN_PHRASES {
+        let Some(i) = line.find(k) else { continue };
+        let head = line[..i].trim_end();
+        let (prefix, tok) = match head.rsplit_once(' ') {
+            Some((p, t)) => (p, t),
+            None => ("", head),
+        };
+        if !vpn_prefix_ok(prefix, OPENVPN_TAGS, Some(OPENVPN_TAG_PREFIX), extra) {
+            continue;
+        }
+        if let Some(addr) = openvpn_addr(tok) {
+            return Some(Attempt {
+                source: "openvpn",
+                addr,
+                user: String::new(),
+            });
+        }
+    }
+    None
+}
+
+/// Incremental reader of log lines. SSH and OpenVPN messages carry the address
+/// themselves; strongSwan's failures do not, so the address of every IKE_SA is learned
+/// from the daemon's own `received packet: from <ip>[<port>]` line (`<name|id>` tags
+/// every line of one SA) and used when that SA's login fails.
+#[derive(Debug, Default)]
+pub struct LineParser {
+    extra_tags: Vec<String>,
+    swan_peers: HashMap<u64, IpAddr>,
+}
+
+impl LineParser {
+    pub fn new(extra_tags: &[String]) -> Self {
+        Self {
+            extra_tags: extra_tags.to_vec(),
+            swan_peers: HashMap::new(),
+        }
+    }
+
+    pub fn set_tags(&mut self, tags: &[String]) {
+        if self.extra_tags != tags {
+            self.extra_tags = tags.to_vec();
+        }
+    }
+
+    pub fn feed(&mut self, line: &str) -> Option<Attempt> {
+        parse_line_with(line, &self.extra_tags).or_else(|| self.strongswan(line))
+    }
+
+    /// `[<tid>]<GRP>] <name|uniqueid> message` (charon with thread numbers, or without).
+    fn strongswan(&mut self, line: &str) -> Option<Attempt> {
+        let (grp, i) = ["[NET] <", "[ENC] <", "[IKE] <"]
+            .iter()
+            .filter_map(|m| line.find(m).map(|i| (*m, i)))
+            .min_by_key(|(_, i)| *i)?;
+        let before = line[..i].trim_end_matches(|c: char| c.is_ascii_digit());
+        if !before.is_empty() && !before.ends_with(' ') {
+            return None;
+        }
+        if !vpn_prefix_ok(before, SWAN_TAGS, None, &self.extra_tags) {
+            return None;
+        }
+        let rest = &line[i + grp.len()..];
+        let (tag, msg) = rest.split_once("> ")?;
+        let uid: u64 = tag.rsplit('|').next()?.parse().ok()?;
+        match grp {
+            "[NET] <" => {
+                let from = msg.strip_prefix("received packet: from ")?;
+                let (ip, _) = from.split_once(" to ")?;
+                let ip = ip.rsplit_once('[').map_or(ip, |x| x.0);
+                if let Ok(ip) = ip.parse::<IpAddr>() {
+                    if self.swan_peers.len() >= SWAN_MAP_MAX {
+                        self.swan_peers.clear();
+                    }
+                    self.swan_peers.insert(uid, ip);
+                }
+                None
+            }
+            "[ENC] <" => {
+                let m = msg.strip_prefix("generating IKE_AUTH response ")?;
+                if !m.contains("N(AUTH_FAILED)") {
+                    return None;
+                }
+                self.swan_peers.get(&uid).map(|a| Attempt {
+                    source: "strongswan",
+                    addr: *a,
+                    user: String::new(),
+                })
+            }
+            _ => {
+                // a wrong EAP password; each guess logs one such line
+                if !msg.starts_with("EAP-MS-CHAPv2 verification failed") {
+                    return None;
+                }
+                self.swan_peers.get(&uid).map(|a| Attempt {
+                    source: "strongswan",
+                    addr: *a,
+                    user: String::new(),
+                })
+            }
+        }
+    }
 }
 
 fn clean_user(u: &str) -> String {
@@ -563,6 +843,67 @@ pub fn exempt(addr: IpAddr, s: &Settings, lan_nets: &[IpNetwork]) -> bool {
     s.exempt_lan && in_any(addr, lan_nets)
 }
 
+/// `ip -o addr show`: the one-line form every iproute2 and BusyBox `ip` has (BusyBox has no `-j`).
+/// Lines: `2: br-lan    inet 10.0.2.15/24 brd 10.0.2.255 scope global br-lan`.
+pub fn parse_ip_addr_oneline(text: &str) -> Vec<(String, IpNetwork)> {
+    text.lines()
+        .filter_map(|l| {
+            let mut t = l.split_whitespace();
+            let _idx = t.next()?;
+            let dev = t.next()?.trim_end_matches(':');
+            let dev = dev.split('@').next().unwrap_or(dev).to_string();
+            let fam = t.next()?;
+            if fam != "inet" && fam != "inet6" {
+                return None;
+            }
+            let (ip, len) = t.next()?.split_once('/')?;
+            let n = IpNetwork::new(ip.parse().ok()?, len.parse().ok()?).ok()?;
+            Some((dev, n))
+        })
+        .collect()
+}
+
+/// The kernel's addresses as (device, address/prefix): JSON where `ip` has it, else the one-line form.
+async fn kernel_addresses() -> Vec<(String, IpNetwork)> {
+    tokio::task::spawn_blocking(|| {
+        let run = |args: &[&str]| {
+            std::process::Command::new("ip")
+                .args(args)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        };
+        if let Some(j) = run(&["-j", "addr", "show"]) {
+            let v: serde_json::Value = serde_json::from_str(&j).unwrap_or_default();
+            if v.is_array() {
+                let mut out = Vec::new();
+                for link in v.as_array().into_iter().flatten() {
+                    let name = link["ifname"].as_str().unwrap_or("").to_string();
+                    for a in link["addr_info"].as_array().into_iter().flatten() {
+                        if let (Some(l), Some(p)) = (a["local"].as_str(), a["prefixlen"].as_u64()) {
+                            if let Some(n) = l
+                                .parse::<IpAddr>()
+                                .ok()
+                                .zip(u8::try_from(p).ok())
+                                .and_then(|(ip, p)| IpNetwork::new(ip, p).ok())
+                            {
+                                out.push((name.clone(), n));
+                            }
+                        }
+                    }
+                }
+                return out;
+            }
+        }
+        run(&["-o", "addr", "show"])
+            .map(|t| parse_ip_addr_oneline(&t))
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 /// Subnets of the router's non-WAN interfaces as the kernel has them now.
 pub async fn lan_networks(store: &ConfigStore) -> Vec<IpNetwork> {
     let roles = store.interface_roles().await.unwrap_or_default();
@@ -574,18 +915,30 @@ pub async fn lan_networks(store: &ConfigStore) -> Vec<IpNetwork> {
     if devs.is_empty() {
         return Vec::new();
     }
-    let out = tokio::task::spawn_blocking(|| {
-        std::process::Command::new("ip")
-            .args(["-j", "addr", "show"])
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-    })
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or_default();
-    parse_ip_addr_json(&out, &devs)
+    let mut nets: Vec<IpNetwork> = Vec::new();
+    for (dev, n) in kernel_addresses().await {
+        if !devs.contains(&dev) {
+            continue;
+        }
+        if let Ok(net) = IpNetwork::new(n.network(), n.prefix()) {
+            if !nets.contains(&net) {
+                nets.push(net);
+            }
+        }
+    }
+    nets
+}
+
+/// Every address `ip -j addr show` lists: the router's own, never banned on IDS alerts (an alert
+/// about the router's own traffic must not cut the router off from itself).
+pub fn parse_local_addrs(json: &str) -> Vec<IpAddr> {
+    let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+    v.as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|l| l["addr_info"].as_array().into_iter().flatten())
+        .filter_map(|a| a["local"].as_str()?.parse().ok())
+        .collect()
 }
 
 /// Networks of `devs` in `ip -j addr show` output.
@@ -844,14 +1197,23 @@ pub async fn record(
         .execute(pool)
         .await
         .map_err(db("guard failure"))?;
-    let n: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM guard_failures WHERE address = ? AND at > ?")
-            .bind(&key)
-            .bind(at - s.find_secs as i64)
-            .fetch_one(pool)
-            .await
-            .map_err(db("guard count"))?;
-    if n < i64::from(s.max_failures) {
+    // intrusion-detection alerts and failed logins are counted apart, each against its own limit
+    let is_ids = a.source == "ids";
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM guard_failures WHERE address = ? AND at > ? AND (source = 'ids') = ?",
+    )
+    .bind(&key)
+    .bind(at - s.find_secs as i64)
+    .bind(is_ids)
+    .fetch_one(pool)
+    .await
+    .map_err(db("guard count"))?;
+    let limit = if is_ids {
+        s.ids_max_alerts
+    } else {
+        s.max_failures
+    };
+    if n < i64::from(limit) {
         return Ok(None);
     }
     let prior: i64 = sqlx::query_scalar(
@@ -865,23 +1227,42 @@ pub async fn record(
     let offence = u32::try_from(prior + 1).unwrap_or(u32::MAX);
     let secs = ban_length(s, offence);
     let users: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT username FROM guard_failures WHERE address = ? AND at > ? AND username != '' LIMIT 5",
+        "SELECT DISTINCT username FROM guard_failures WHERE address = ? AND at > ? AND username != '' AND (source = 'ids') = ? LIMIT 5",
     )
     .bind(&key)
     .bind(at - s.find_secs as i64)
+    .bind(is_ids)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
-    let reason = format!(
-        "{n} failed {} logins in {}{}",
-        label(a.source),
-        human_secs(s.find_secs),
-        if users.is_empty() {
-            String::new()
-        } else {
-            format!(" (users: {})", users.join(", "))
-        }
-    );
+    let reason = if is_ids {
+        format!(
+            "{n} intrusion-detection alerts (severity {} or worse{}) in {}{}",
+            s.ids_severity,
+            if s.ids_action == "blocked" {
+                ", dropped"
+            } else {
+                ""
+            },
+            human_secs(s.find_secs),
+            if users.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", users.join("; "))
+            }
+        )
+    } else {
+        format!(
+            "{n} failed {} logins in {}{}",
+            label(a.source),
+            human_secs(s.find_secs),
+            if users.is_empty() {
+                String::new()
+            } else {
+                format!(" (users: {})", users.join(", "))
+            }
+        )
+    };
     let id = sqlx::query(
         "INSERT INTO guard_bans (address, source, reason, failures, offence, banned_at, expires_at)
          VALUES (?,?,?,?,?,?,?)",
@@ -923,6 +1304,9 @@ pub async fn record(
 
 pub fn label(source: &str) -> &'static str {
     match source {
+        "ids" => "intrusion detection",
+        "openvpn" => "OpenVPN",
+        "strongswan" => "IPsec (strongSwan)",
         "sshd" => "SSH",
         "dropbear" => "SSH (Dropbear)",
         "web" => "web UI",
@@ -951,6 +1335,14 @@ pub async fn prune(store: &ConfigStore, s: &Settings, now: i64) -> Result<()> {
         .execute(pool)
         .await
         .map_err(db("prune failures"))?;
+    // a flood of alerts or failures inside the window cannot grow the table without bound
+    sqlx::query(
+        "DELETE FROM guard_failures WHERE id <= (SELECT COALESCE(MAX(id), 0) FROM guard_failures) - ?",
+    )
+    .bind(MAX_FAILURE_ROWS)
+    .execute(pool)
+    .await
+    .map_err(db("prune failures"))?;
     sqlx::query("DELETE FROM guard_reports WHERE at <= ?")
         .bind(now - 3600)
         .execute(pool)
@@ -1112,11 +1504,39 @@ pub struct Engine {
     was_enabled: bool,
     /// the "off" state was made true once (table removed) since the engine started
     off_checked: bool,
+    /// reads the files' lines (the journal task has its own)
+    parser: LineParser,
+    /// last `ids_alerts` row looked at (None = not looked yet; history is never banned for)
+    ids_cursor: Option<i64>,
+    /// the router's own addresses, refreshed once a minute
+    local: (i64, Vec<IpAddr>),
 }
 
 struct Journal {
     child: tokio::process::Child,
-    rx: tokio::sync::mpsc::Receiver<String>,
+    rx: tokio::sync::mpsc::Receiver<Attempt>,
+    /// the tags it was started with (restart when they change)
+    tags: Vec<String>,
+}
+
+/// `-t` tags the journal reader follows for these settings.
+fn journal_tags(s: &Settings) -> Vec<String> {
+    let mut t: Vec<String> = Vec::new();
+    if s.source_on("sshd") || s.source_on("dropbear") {
+        t.extend(SSH_TAGS.iter().map(|x| x.to_string()));
+    }
+    if s.source_on("strongswan") {
+        t.extend(SWAN_TAGS.iter().map(|x| x.to_string()));
+    }
+    if s.source_on("openvpn") {
+        t.extend(OPENVPN_TAGS.iter().map(|x| x.to_string()));
+    }
+    if syslog_sources(s) || s.source_on("openvpn") {
+        t.extend(s.log_tags.iter().cloned());
+    }
+    t.sort();
+    t.dedup();
+    t
 }
 
 impl Drop for Journal {
@@ -1129,34 +1549,67 @@ fn systemd_running() -> bool {
     Path::new("/run/systemd/system").exists()
 }
 
+/// Sources whose lines reach the system log (OpenVPN's own output goes to its file).
+fn syslog_sources(s: &Settings) -> bool {
+    s.source_on("sshd") || s.source_on("dropbear") || s.source_on("strongswan")
+}
+
+/// Does journald receive what daemons write to `/dev/log`? On a systemd host it owns that
+/// socket (a symlink into /run/systemd/journal). On an image whose busybox syslogd owns it
+/// (the router tier's systemd variant) the journal never sees Dropbear or charon: read the file.
+fn journal_gets_syslog() -> bool {
+    match std::fs::symlink_metadata("/dev/log") {
+        Ok(m) if m.file_type().is_symlink() => std::fs::read_link("/dev/log")
+            .map(|p| p.to_string_lossy().contains("journal"))
+            .unwrap_or(true),
+        Ok(_) => false,
+        Err(_) => true,
+    }
+}
+
 fn journal_wanted(s: &Settings) -> bool {
-    let want_ssh = s.source_on("sshd") || s.source_on("dropbear");
-    want_ssh
-        && match s.journal.as_str() {
-            "on" => true,
-            "off" => false,
-            _ => systemd_running() && s.log_files.is_empty(),
-        }
+    let want = syslog_sources(s) || (s.source_on("openvpn") && !s.log_tags.is_empty());
+    want && match s.journal.as_str() {
+        "on" => true,
+        "off" => false,
+        _ => systemd_running() && s.log_files.is_empty() && journal_gets_syslog(),
+    }
 }
 
 /// The files to follow: explicit ones, or (automatic, journal not used) the first
 /// auth log that exists.
 pub fn log_files(s: &Settings, journal: bool) -> Vec<PathBuf> {
-    if !(s.source_on("sshd") || s.source_on("dropbear")) {
-        return Vec::new();
+    let mut out: Vec<PathBuf> = Vec::new();
+    if syslog_sources(s) {
+        if !s.log_files.is_empty() {
+            out.extend(s.log_files.iter().map(PathBuf::from));
+        } else if !journal {
+            out.extend(
+                AUTO_LOG_FILES
+                    .iter()
+                    .map(PathBuf::from)
+                    .find(|p| p.exists()),
+            );
+        }
     }
-    if !s.log_files.is_empty() {
-        return s.log_files.iter().map(PathBuf::from).collect();
+    if s.source_on("openvpn") {
+        let p = openvpn_log_path(s);
+        if !out.contains(&p) {
+            out.push(p);
+        }
     }
-    if journal {
-        return Vec::new();
+    out
+}
+
+/// The file the OpenVPN server's output is in.
+pub fn openvpn_log_path(s: &Settings) -> PathBuf {
+    if s.openvpn_log != OPENVPN_LOG_AUTO {
+        return PathBuf::from(&s.openvpn_log);
     }
-    AUTO_LOG_FILES
-        .iter()
+    std::env::var_os("PATRONUS_RUN_DIR")
         .map(PathBuf::from)
-        .find(|p| p.exists())
-        .into_iter()
-        .collect()
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_RUN_DIR))
+        .join(OPENVPN_LOG_NAME)
 }
 
 fn read_new(path: &Path, t: &mut Tail, first: bool) -> Vec<String> {
@@ -1194,24 +1647,17 @@ fn read_new(path: &Path, t: &mut Tail, first: bool) -> Vec<String> {
     lines
 }
 
-fn start_journal() -> Option<Journal> {
+fn start_journal(tags: Vec<String>, extra: Vec<String>) -> Option<Journal> {
+    let mut args: Vec<String> = ["-f", "-n", "0", "-o", "short", "--no-pager"]
+        .iter()
+        .map(|x| x.to_string())
+        .collect();
+    for t in &tags {
+        args.push("-t".into());
+        args.push(t.clone());
+    }
     let mut child = tokio::process::Command::new("journalctl")
-        .args([
-            "-f",
-            "-n",
-            "0",
-            "-o",
-            "short",
-            "--no-pager",
-            "-t",
-            "sshd",
-            "-t",
-            "sshd-session",
-            "-t",
-            "sshd-auth",
-            "-t",
-            "dropbear",
-        ])
+        .args(&args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true)
@@ -1222,14 +1668,15 @@ fn start_journal() -> Option<Journal> {
     let (tx, rx) = tokio::sync::mpsc::channel(10_000);
     tokio::spawn(async move {
         use tokio::io::AsyncBufReadExt;
+        let mut parser = LineParser::new(&extra);
         let mut lines = tokio::io::BufReader::new(out).lines();
         while let Ok(Some(l)) = lines.next_line().await {
-            if parse_line(&l).is_some() {
-                let _ = tx.try_send(l);
+            if let Some(a) = parser.feed(&l) {
+                let _ = tx.try_send(a);
             }
         }
     });
-    Some(Journal { child, rx })
+    Some(Journal { child, rx, tags })
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -1249,6 +1696,66 @@ impl Engine {
             self.lan = (now, lan_networks(store).await);
         }
         self.lan.1.clone()
+    }
+
+    async fn local_addrs(&mut self, now: i64) -> Vec<IpAddr> {
+        if now - self.local.0 >= 60 || self.local.0 == 0 {
+            self.local = (
+                now,
+                kernel_addresses()
+                    .await
+                    .into_iter()
+                    .map(|(_, n)| n.ip())
+                    .collect(),
+            );
+        }
+        self.local.1.clone()
+    }
+
+    /// Alerts the intrusion-detection history gained since the last look, as login-style
+    /// failures of their source address: those of the configured severity (and action), not from
+    /// the router itself. Without the history table (no IDS) there is nothing to read.
+    async fn ids_attempts(&mut self, store: &ConfigStore, s: &Settings, now: i64) -> Vec<Attempt> {
+        let Ok(pool) = store.pool() else {
+            return Vec::new();
+        };
+        let Some(cursor) = self.ids_cursor else {
+            // first look: the alerts that are already there are history
+            if let Ok(max) = sqlx::query_scalar::<_, Option<i64>>("SELECT MAX(id) FROM ids_alerts")
+                .fetch_one(pool)
+                .await
+            {
+                self.ids_cursor = Some(max.unwrap_or(0));
+            }
+            return Vec::new();
+        };
+        let Ok(rows) = sqlx::query(
+            "SELECT id, src_ip, severity, action, signature FROM ids_alerts WHERE id > ? ORDER BY id LIMIT ?",
+        )
+        .bind(cursor)
+        .bind(IDS_READ_PER_TICK)
+        .fetch_all(pool)
+        .await
+        else {
+            return Vec::new();
+        };
+        let Some(last) = rows.last().map(|r| r.get::<i64, _>("id")) else {
+            return Vec::new();
+        };
+        self.ids_cursor = Some(last);
+        let local = self.local_addrs(now).await;
+        rows.iter()
+            .filter(|r| r.get::<i64, _>("severity") <= i64::from(s.ids_severity))
+            .filter(|r| s.ids_action != "blocked" || r.get::<String, _>("action") == "blocked")
+            .filter_map(|r| {
+                let addr: IpAddr = r.get::<String, _>("src_ip").parse().ok()?;
+                (!local.contains(&addr)).then(|| Attempt {
+                    source: "ids",
+                    addr,
+                    user: clean_user(&r.get::<String, _>("signature")),
+                })
+            })
+            .collect()
     }
 
     async fn fingerprint(store: &ConfigStore) -> (i64, i64, i64) {
@@ -1275,19 +1782,26 @@ impl Engine {
             self.was_enabled = false;
             self.journal = None;
             self.tails.clear();
+            self.ids_cursor = None;
             return Ok(rep);
         }
         let now = now();
         // inputs
         let use_journal = journal_wanted(&s);
+        let tags = journal_tags(&s);
+        if self.journal.as_ref().is_some_and(|j| j.tags != tags) {
+            self.journal = None;
+        }
+        self.parser.set_tags(&s.log_tags);
         if use_journal && self.journal.is_none() {
-            self.journal = start_journal();
+            self.journal = start_journal(tags, s.log_tags.clone());
         } else if !use_journal {
             self.journal = None;
         }
         let files = log_files(&s, use_journal);
         self.tails.retain(|p, _| files.contains(p));
         let mut lines: Vec<String> = Vec::new();
+        let mut journal_attempts: Vec<Attempt> = Vec::new();
         for p in &files {
             let first = !self.tails.contains_key(p);
             let t = self.tails.entry(p.clone()).or_insert(Tail {
@@ -1314,8 +1828,8 @@ impl Engine {
             lines.extend(got);
         }
         if let Some(j) = self.journal.as_mut() {
-            while let Ok(l) = j.rx.try_recv() {
-                lines.push(l);
+            while let Ok(a) = j.rx.try_recv() {
+                journal_attempts.push(a);
             }
             if let Ok(Some(_)) = j.child.try_wait() {
                 tracing::warn!("brute-force protection: journalctl ended, restarting it");
@@ -1324,7 +1838,8 @@ impl Engine {
         }
         let mut attempts: Vec<Attempt> = lines
             .iter()
-            .filter_map(|l| parse_line(l))
+            .filter_map(|l| self.parser.feed(l))
+            .chain(journal_attempts)
             .filter(|a| s.source_on(a.source))
             .collect();
         // reports from patronus-web
@@ -1358,6 +1873,12 @@ impl Engine {
                 .execute(pool)
                 .await
                 .map_err(db("guard reports"))?;
+        }
+        if s.source_on("ids") {
+            let got = self.ids_attempts(store, &s, now).await;
+            attempts.extend(got);
+        } else {
+            self.ids_cursor = None;
         }
         // decisions
         let lan = if attempts.is_empty() {
@@ -1533,6 +2054,220 @@ mod tests {
             assert_eq!(got.addr, ip(a), "{l}");
             assert_eq!(got.user, u, "{l}");
         }
+    }
+
+    const OPENVPN_LOG: &str = include_str!("../tests/fixtures/openvpn-2.6-server.txt");
+    const CHARON_LOG: &str = include_str!("../tests/fixtures/charon-6.0-responder.txt");
+
+    fn feed_all(p: &mut LineParser, text: &str) -> Vec<Attempt> {
+        text.lines().filter_map(|l| p.feed(l)).collect()
+    }
+
+    #[test]
+    fn openvpn_real_server_log() {
+        // OpenVPN 2.6.19 output of a server that saw a certificate from an unknown CA, a refused
+        // password and tls-crypt failures (see the fixture). Only the first two count.
+        let got = feed_all(&mut LineParser::default(), OPENVPN_LOG);
+        let want: Vec<(&str, &str)> = got.iter().map(|a| (a.source, "x")).collect();
+        assert_eq!(want.len(), 2, "{got:?}");
+        assert!(got
+            .iter()
+            .all(|a| a.source == "openvpn" && a.addr == ip("10.77.0.3")));
+    }
+
+    #[test]
+    fn openvpn_messages() {
+        let cases = [
+            "2026-11-26 06:44:54 10.77.0.3:48076 VERIFY ERROR: depth=0, error=unable to get local issuer certificate: CN=bad, serial=1",
+            "Tue Nov 26 06:44:54 2026 192.0.2.5:1 VERIFY ERROR: depth=0, error=certificate has expired: CN=bob",
+            "192.0.2.5:1 TLS Auth Error: Auth Username/Password verification failed for peer",
+            "Nov 26 06:44:54 rtr openvpn[812]: bob/192.0.2.5:1194 TLS Auth Error: Auth Username/Password verification failed for peer",
+            "Nov 26 06:44:54 rtr ovpn-office[812]: [UNDEF]/192.0.2.5:5 Auth Username/Password verification failed for peer",
+            "Nov 26 06:44:54 rtr openvpn[812]: [2001:db8::7]:4000 VERIFY ERROR: depth=1",
+            "2026-11-26 06:44:54 [AF_INET6]2001:db8::7:4000 VERIFY ERROR: depth=1",
+        ];
+        for (l, a) in cases.iter().zip([
+            "10.77.0.3",
+            "192.0.2.5",
+            "192.0.2.5",
+            "192.0.2.5",
+            "192.0.2.5",
+            "2001:db8::7",
+            "2001:db8::7",
+        ]) {
+            let got = parse_line(l).unwrap_or_else(|| panic!("no match: {l}"));
+            assert_eq!((got.source, got.addr), ("openvpn", ip(a)), "{l}");
+        }
+        // a daemon of the operator's own tag
+        let l = "Nov 26 06:44:54 rtr my-vpn[1]: 192.0.2.5:1 VERIFY ERROR: depth=0";
+        assert_eq!(parse_line(l), None);
+        assert_eq!(
+            parse_line_with(l, &["my-vpn".to_string()]).unwrap().addr,
+            ip("192.0.2.5")
+        );
+    }
+
+    #[test]
+    fn openvpn_forgeries_and_noise_do_not_count() {
+        for l in [
+            // timeouts and tls-crypt failures can be forged from a victim's address
+            "2026-11-26 06:45:14 TLS Error: tls-crypt unwrapping failed from [AF_INET]10.77.0.3:38841",
+            "2026-11-26 06:44:54 10.77.0.3:48076 TLS Error: TLS key negotiation failed to occur within 60 seconds",
+            "2026-11-26 06:44:54 10.77.0.3:48076 TLS Error: TLS handshake failed",
+            "2026-11-26 06:44:54 10.77.0.3:48076 VERIFY OK: depth=0, CN=client",
+            // another program, another tag
+            "Nov 26 06:44:54 rtr nginx[3]: 192.0.2.5:1 VERIFY ERROR: depth=0",
+            "Nov 26 06:44:54 rtr kernel: 192.0.2.5:1 VERIFY ERROR: depth=0",
+            // text before the address that no logger writes
+            "GET /x 192.0.2.5:1 VERIFY ERROR: depth=0",
+            "hello 192.0.2.5:1 VERIFY ERROR: depth=0",
+            // not an address / no port
+            "2026-11-26 06:44:54 192.0.2.5 VERIFY ERROR: depth=0",
+            "2026-11-26 06:44:54 name:1 VERIFY ERROR: depth=0",
+            "2026-11-26 06:44:54 VERIFY ERROR: depth=0",
+        ] {
+            assert_eq!(parse_line(l), None, "{l}");
+        }
+        // the phrase repeated inside a certificate name: the address before the FIRST phrase wins
+        let l = "2026-11-26 06:44:54 10.77.0.3:1 VERIFY ERROR: depth=0, error=x: CN=a 6.6.6.6:9 VERIFY ERROR: y";
+        assert_eq!(parse_line(l).unwrap().addr, ip("10.77.0.3"));
+    }
+
+    #[test]
+    fn strongswan_real_responder_log() {
+        // strongSwan 6.0 charon-systemd (stderr logger, level 1): three wrong EAP passwords, one
+        // wrong pre-shared key, every one from 10.77.0.3
+        let got = feed_all(&mut LineParser::default(), CHARON_LOG);
+        assert_eq!(got.len(), 4, "{got:?}");
+        assert!(got
+            .iter()
+            .all(|a| a.source == "strongswan" && a.addr == ip("10.77.0.3")));
+    }
+
+    #[test]
+    fn strongswan_needs_the_peer_of_that_sa() {
+        let mut p = LineParser::default();
+        // no packet seen for SA 7: nobody to blame
+        assert!(p
+            .feed("08[ENC] <psk|7> generating IKE_AUTH response 1 [ N(AUTH_FAILED) ]")
+            .is_none());
+        assert!(p
+            .feed("08[NET] <7> received packet: from 203.0.113.9[500] to 10.0.0.1[500] (464 bytes)")
+            .is_none());
+        // another SA's failure does not blame SA 7's peer
+        assert!(p
+            .feed("09[ENC] <psk|8> generating IKE_AUTH response 1 [ N(AUTH_FAILED) ]")
+            .is_none());
+        // the same SA, syslog framing with thread number, then without
+        let a = p
+            .feed("Nov 26 06:44:54 rtr charon[41]: 08[ENC] <psk|7> generating IKE_AUTH response 1 [ N(AUTH_FAILED) ]")
+            .unwrap();
+        assert_eq!((a.source, a.addr), ("strongswan", ip("203.0.113.9")));
+        let a = p
+            .feed("Nov 26 06:44:54 rtr charon-systemd[41]: [ENC] <psk|7> generating IKE_AUTH response 1 [ N(AUTH_FAILED) ]")
+            .unwrap();
+        assert_eq!(a.addr, ip("203.0.113.9"));
+        // IPv6 peer; a new packet for the same id (id reuse after a daemon restart) moves it
+        p.feed(
+            "01[NET] <7> received packet: from 2001:db8::9[4500] to [2001:db8::1][4500] (80 bytes)",
+        );
+        let a = p
+            .feed("01[IKE] <eap|7> EAP-MS-CHAPv2 verification failed, retry (2)")
+            .unwrap();
+        assert_eq!(a.addr, ip("2001:db8::9"));
+        // a successful exchange, other messages and forged framing do not count
+        for l in [
+            "01[ENC] <psk|7> generating IKE_AUTH response 1 [ IDr AUTH SA TSi TSr N(AUTH_LIFETIME) ]",
+            "01[ENC] <psk|7> generating INFORMATIONAL request 4 [ N(AUTH_FAILED) ]",
+            "Nov 26 06:44:54 rtr nginx[3]: 01[ENC] <psk|7> generating IKE_AUTH response 1 [ N(AUTH_FAILED) ]",
+            "Nov 26 06:44:54 rtr kernel: 01[IKE] <eap|7> EAP-MS-CHAPv2 verification failed",
+            "GET /?x=01[ENC] <psk|7> generating IKE_AUTH response 1 [ N(AUTH_FAILED) ]",
+            "01[IKE] <eap|7> received EAP identity 'EAP-MS-CHAPv2 verification failed'",
+        ] {
+            assert!(p.feed(l).is_none(), "{l}");
+        }
+    }
+
+    #[test]
+    fn busybox_one_line_addresses() {
+        // BusyBox `ip -o addr show` (the router tier has no `-j`) and iproute2's
+        let t = "1: lo    inet 127.0.0.1/8 scope host lo\\       valid_lft forever preferred_lft forever\n\
+                 2: br-lan    inet 192.168.1.1/24 brd 192.168.1.255 scope global br-lan\\       valid_lft forever\n\
+                 2: br-lan    inet6 fe80::1/64 scope link \\       valid_lft forever\n\
+                 5: veth0@if4    inet 10.9.9.1/30 scope global veth0\n\
+                 6: eth1    link/ether 00:11:22:33:44:55 brd ff:ff:ff:ff:ff:ff\n";
+        let got = parse_ip_addr_oneline(t);
+        let names: Vec<(&str, String)> = got
+            .iter()
+            .map(|(d, n)| (d.as_str(), n.to_string()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("lo", "127.0.0.1/8".to_string()),
+                ("br-lan", "192.168.1.1/24".to_string()),
+                ("br-lan", "fe80::1/64".to_string()),
+                ("veth0", "10.9.9.1/30".to_string()),
+            ]
+        );
+        assert!(parse_ip_addr_oneline("garbage\n\n").is_empty());
+    }
+
+    #[test]
+    fn vpn_settings_validate() {
+        let d = Settings::default();
+        let s = d
+            .merged(&SettingsIn {
+                log_tags: Some(vec!["my-vpn".into(), "ovpn_x@1".into(), "my-vpn".into()]),
+                openvpn_log: Some("/var/log/openvpn/server.log".into()),
+                sources: Some(vec!["openvpn".into(), "strongswan".into()]),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(s.log_tags, ["my-vpn", "ovpn_x@1"]);
+        assert_eq!(
+            openvpn_log_path(&s),
+            PathBuf::from("/var/log/openvpn/server.log")
+        );
+        for bad_in in [
+            SettingsIn {
+                log_tags: Some(vec!["a b".into()]),
+                ..Default::default()
+            },
+            SettingsIn {
+                log_tags: Some(vec!["x]: ".into()]),
+                ..Default::default()
+            },
+            SettingsIn {
+                openvpn_log: Some("relative.log".into()),
+                ..Default::default()
+            },
+            SettingsIn {
+                openvpn_log: Some("/x/../etc/passwd".into()),
+                ..Default::default()
+            },
+        ] {
+            assert!(d.merged(&bad_in).is_err(), "{bad_in:?}");
+        }
+        // the default points at the supervisor's file; the VPN sources add their inputs
+        assert!(d.source_on("openvpn") && d.source_on("strongswan"));
+        let files = log_files(&d, true);
+        assert!(
+            files.iter().any(|f| f.ends_with(OPENVPN_LOG_NAME)),
+            "{files:?}"
+        );
+        assert_eq!(
+            journal_tags(&d),
+            [
+                "charon",
+                "charon-systemd",
+                "dropbear",
+                "openvpn",
+                "sshd",
+                "sshd-auth",
+                "sshd-session"
+            ]
+        );
     }
 
     #[test]
@@ -1764,6 +2499,153 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("not found"));
+    }
+
+    async fn add_alert(st: &ConfigStore, src: &str, severity: i64, action: &str, sig: &str) {
+        sqlx::query(
+            "INSERT INTO ids_alerts (ts, src_ip, severity, action, signature) VALUES (?,?,?,?,?)",
+        )
+        .bind(now())
+        .bind(src)
+        .bind(severity)
+        .bind(action)
+        .bind(sig)
+        .execute(st.pool().unwrap())
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn ids_alerts_ban_by_severity_apart_from_failed_logins() {
+        let (_d, st) = store().await;
+        // the history table of the IDS (migration of the intrusion-detection lane)
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS ids_alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL,
+             src_ip TEXT NOT NULL DEFAULT '', severity INTEGER NOT NULL DEFAULT 3,
+             action TEXT NOT NULL DEFAULT 'allowed', signature TEXT NOT NULL DEFAULT '')",
+        )
+        .execute(st.pool().unwrap())
+        .await
+        .unwrap();
+        let s = save(
+            &st,
+            &SettingsIn {
+                enabled: Some(true),
+                sources: Some(vec!["ids".into(), "sshd".into()]),
+                max_failures: Some(3),
+                ids_max_alerts: Some(3),
+                ids_severity: Some(2),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        // alerts before the first look are history: nobody is banned for them
+        for _ in 0..5 {
+            add_alert(&st, "192.0.2.77", 1, "allowed", "old").await;
+        }
+        let mut e = Engine::default();
+        assert!(e.ids_attempts(&st, &s, now()).await.is_empty());
+        assert_eq!(e.ids_cursor, Some(5));
+        for _ in 0..3 {
+            add_alert(&st, "203.0.113.9", 1, "allowed", "ET EXPLOIT x").await;
+        }
+        // too low a severity, not an address, the router itself: none of them count
+        for _ in 0..5 {
+            add_alert(&st, "198.51.100.4", 3, "allowed", "ET INFO y").await;
+        }
+        add_alert(&st, "not-an-ip", 1, "allowed", "z").await;
+        add_alert(&st, "127.0.0.1", 1, "allowed", "z").await;
+        // 2 alerts + 2 failed logins of one address: each below its own limit of 3
+        for _ in 0..2 {
+            add_alert(&st, "203.0.113.20", 2, "blocked", "ET SCAN").await;
+        }
+        let got = e.ids_attempts(&st, &s, now()).await;
+        let addrs: Vec<String> = got.iter().map(|a| a.addr.to_string()).collect();
+        assert_eq!(
+            addrs.iter().filter(|a| *a == "203.0.113.9").count(),
+            3,
+            "{addrs:?}"
+        );
+        assert!(!addrs.contains(&"198.51.100.4".to_string()), "{addrs:?}");
+        let mut bans = Vec::new();
+        for a in &got {
+            if a.addr.is_loopback() {
+                continue;
+            }
+            if let Some(b) = record(&st, &s, a, now()).await.unwrap() {
+                bans.push(b);
+            }
+        }
+        let fa = Attempt {
+            source: "sshd",
+            addr: ip("203.0.113.20"),
+            user: "root".into(),
+        };
+        for _ in 0..2 {
+            assert!(record(&st, &s, &fa, now()).await.unwrap().is_none());
+        }
+        assert_eq!(bans.len(), 1, "{bans:?}");
+        assert_eq!(bans[0].address, "203.0.113.9");
+        assert_eq!(bans[0].source, "ids");
+        assert!(
+            bans[0].reason.contains("3 intrusion-detection alerts"),
+            "{}",
+            bans[0].reason
+        );
+        assert!(
+            bans[0].reason.contains("ET EXPLOIT x"),
+            "{}",
+            bans[0].reason
+        );
+        // only what the IPS dropped
+        let s2 = save(
+            &st,
+            &SettingsIn {
+                ids_action: Some("blocked".into()),
+                ids_severity: Some(4),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        add_alert(&st, "203.0.113.30", 1, "allowed", "a").await;
+        add_alert(&st, "203.0.113.31", 3, "blocked", "b").await;
+        let got = e.ids_attempts(&st, &s2, now()).await;
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].addr, ip("203.0.113.31"));
+        // no IDS table at all: nothing to read, no error
+        let (_d2, st2) = store().await;
+        let mut e2 = Engine::default();
+        assert!(e2.ids_attempts(&st2, &s, now()).await.is_empty());
+        assert_eq!(e2.ids_cursor, None);
+        // settings are validated
+        assert!(s
+            .merged(&SettingsIn {
+                ids_action: Some("sometimes".into()),
+                ..Default::default()
+            })
+            .is_err());
+        assert!(s
+            .merged(&SettingsIn {
+                ids_severity: Some(0),
+                ..Default::default()
+            })
+            .is_err());
+        assert!(s
+            .merged(&SettingsIn {
+                ids_max_alerts: Some(0),
+                ..Default::default()
+            })
+            .is_err());
+        // opt-in: the default does not include it
+        assert!(!Settings::default().source_on("ids"));
+        assert_eq!(
+            parse_local_addrs(
+                r#"[{"ifname":"eth0","addr_info":[{"local":"192.0.2.1","prefixlen":24},{"local":"2001:db8::1","prefixlen":64}]}]"#
+            ),
+            vec![ip("192.0.2.1"), ip("2001:db8::1")]
+        );
     }
 
     #[tokio::test]
