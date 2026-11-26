@@ -146,6 +146,12 @@ that are not finished are listed separately under
   with host overrides, domain overrides and a DNS block list (manual
   entries plus downloaded hosts/domain lists); LAN clients resolve the
   overrides and blocked names come back NXDOMAIN. [C25]
+- The DNS page also carries a catalog of free filter lists (StevenBlack, OISD,
+  Hagezi, Phishing Army, URLhaus and more, each with its licence), loaded as
+  Unbound RPZ zones with scheduled refresh, per-list status and blocked-answer
+  counts, an allow list (name, wildcard, regular expression) and a query log
+  with Block and Allow buttons; routers with little RAM get the same lists as
+  dnsmasq entries, capped by the board (docs/DNS-FILTERING.md). [C1204]
 - The NTP page serves time to the LAN with chrony; dynamic DNS publishes
   the WAN address to a provider and re-checks it every 5 minutes. [C26]
 - LAN service configuration survives a reboot (`patronus apply` rewrites

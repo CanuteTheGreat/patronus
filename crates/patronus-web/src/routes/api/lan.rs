@@ -750,6 +750,110 @@ mod dns_routes {
             .map(|r| ok_json(json!({ "applied": r })))
             .unwrap_or_else(err)
     }
+    // ---- DNS filtering ----
+    use patronus_network::dnsfilter as dnsf;
+
+    async fn filter_overview(State(state): State<AppState>) -> Response {
+        state
+            .lan
+            .dns_filter_overview()
+            .await
+            .map(ok_json)
+            .unwrap_or_else(err)
+    }
+    async fn filter_add_list(
+        State(state): State<AppState>,
+        Json(i): Json<dnsf::ListInput>,
+    ) -> Response {
+        state
+            .lan
+            .dns_filter_add_list(i)
+            .await
+            .map(created)
+            .unwrap_or_else(err)
+    }
+    async fn filter_put_list(
+        State(state): State<AppState>,
+        Path(id): Path<i64>,
+        Json(i): Json<dnsf::ListInput>,
+    ) -> Response {
+        state
+            .lan
+            .dns_filter_update_list(id, i)
+            .await
+            .map(|_| done())
+            .unwrap_or_else(err)
+    }
+    async fn filter_del_list(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+        state
+            .lan
+            .dns_filter_delete_list(id)
+            .await
+            .map(|_| done())
+            .unwrap_or_else(err)
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct RefreshInput {
+        #[serde(default)]
+        id: Option<i64>,
+    }
+    async fn filter_refresh(
+        State(state): State<AppState>,
+        body: Option<Json<RefreshInput>>,
+    ) -> Response {
+        let id = body.and_then(|b| b.0.id);
+        state
+            .lan
+            .dns_filter_refresh(id)
+            .await
+            .map(|r| ok_json(json!({ "applied": r })))
+            .unwrap_or_else(err)
+    }
+    async fn filter_settings(
+        State(state): State<AppState>,
+        Json(i): Json<dnsf::FilterSettingsInput>,
+    ) -> Response {
+        state
+            .lan
+            .dns_filter_save_settings(i)
+            .await
+            .map(|_| done())
+            .unwrap_or_else(err)
+    }
+    async fn filter_add_allow(
+        State(state): State<AppState>,
+        Json(i): Json<dnsf::AllowInput>,
+    ) -> Response {
+        state
+            .lan
+            .dns_filter_add_allow(i)
+            .await
+            .map(created)
+            .unwrap_or_else(err)
+    }
+    async fn filter_del_allow(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+        state
+            .lan
+            .dns_filter_delete_allow(id)
+            .await
+            .map(|_| done())
+            .unwrap_or_else(err)
+    }
+    async fn filter_log(
+        State(state): State<AppState>,
+        axum::extract::Query(q): axum::extract::Query<dnsf::LogQuery>,
+    ) -> Response {
+        dnsf::search_log(state.lan.store(), &q)
+            .await
+            .map(|rows| ok_json(json!({ "rows": rows })))
+            .unwrap_or_else(|e| err(anyhow::anyhow!("{e}")))
+    }
+    async fn filter_clear_log(State(state): State<AppState>) -> Response {
+        dnsf::clear_log(state.lan.store())
+            .await
+            .map(|n| ok_json(json!({ "deleted": n })))
+            .unwrap_or_else(|e| err(anyhow::anyhow!("{e}")))
+    }
     async fn ddns_list(State(state): State<AppState>) -> Response {
         state
             .lan
@@ -804,6 +908,17 @@ mod dns_routes {
             .route("/dns/hosts", post(add_host))
             .route("/dns/domains", post(add_domain))
             .route("/dns/blocklist", post(add_block))
+            .route("/dns-filter", get(filter_overview))
+            .route("/dns-filter/lists", post(filter_add_list))
+            .route(
+                "/dns-filter/lists/:id",
+                put(filter_put_list).delete(filter_del_list),
+            )
+            .route("/dns-filter/refresh", post(filter_refresh))
+            .route("/dns-filter/settings", put(filter_settings))
+            .route("/dns-filter/allow", post(filter_add_allow))
+            .route("/dns-filter/allow/:id", delete(filter_del_allow))
+            .route("/dns-filter/log", get(filter_log).delete(filter_clear_log))
             .route("/dns/:table/:id", delete(del))
             .route("/ddns", get(ddns_list).post(ddns_add))
             .route("/ddns/update", post(ddns_update))
