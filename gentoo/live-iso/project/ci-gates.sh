@@ -6,13 +6,15 @@
 # sentence, nothing applied), then LAN pool + reservation + static WAN, a REBOOT, and: dnsmasq running, a second machine on the LAN gets
 # the reserved address, the static default route is back, the system dhcpcd does not manage the Patronus ports. Both inits run the same
 # scenario (tools/vmtest/scenarios/installed_firstrun.py never names a service manager).
-# aarch64 runs under TCG with no time left in the job (see ci-matrix.sh), so the gate is x86_64 only.
-if [ "$ARCH" = x86_64 ]; then
-  name=installed-firstrun
+# installed-pfsense-import (vmtest, x86_64): a config.xml written by the scenario (WAN/LAN/OPT + VLAN, alias, rules, port forward,
+# reservation, host override, one unmappable section) -- the CLI plan writes nothing, web plan + apply, kernel state, REBOOT.
+# aarch64 runs under TCG with no time left in the job (see ci-matrix.sh), so the gates are x86_64 only.
+vmtest_gate() {   # NAME SCENARIO DEADLINE
+  local name=$1 scenario=$2 deadline=$3 rc
   echo "::group::vmtest $name"
   REPO_ROOT=$(cd "$HERE/../../.." && pwd)
-  ( cd "$REPO_ROOT/tools/vmtest" && VMTEST_CACHE=${VMTEST_CACHE:-/tmp/vmtest-cache} with_deadline 5400 \
-      python3 -u -m vmtest run scenarios/installed_firstrun.py --arg iso="$ISO" --out "$EVI/$name" ) 2>&1 | tee "$EVI/test-$name.log" | tail -40
+  ( cd "$REPO_ROOT/tools/vmtest" && VMTEST_CACHE=${VMTEST_CACHE:-/tmp/vmtest-cache} with_deadline "$deadline" \
+      python3 -u -m vmtest run "scenarios/$scenario" --arg iso="$ISO" --out "$EVI/$name" ) 2>&1 | tee "$EVI/test-$name.log" | tail -40
   rc=${PIPESTATUS[0]}
   echo "::endgroup::"
   find "$EVI/$name" \( -name '*.qcow2' -o -name '*.raw' -o -name answers.img \) -delete 2>/dev/null || true
@@ -20,4 +22,8 @@ if [ "$ARCH" = x86_64 ]; then
     failed_list="$failed_list $name"
     [ -z "$failed_step" ] && fail "vmtest-$name" "$(grep -E '^(\[FAIL\]|FAILED)' "$EVI/test-$name.log" | head -1)"
   fi
+}
+if [ "$ARCH" = x86_64 ]; then
+  vmtest_gate installed-firstrun installed_firstrun.py 5400
+  vmtest_gate installed-pfsense-import installed_pfsense_import.py 4200
 fi
