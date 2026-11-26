@@ -2470,3 +2470,117 @@ fn config_diff_hides_secret_columns() {
     assert!(!text.contains("H1") && !text.contains("H2"), "{text}");
     assert!(text.contains("(hidden)"));
 }
+
+#[cfg(feature = "import")]
+#[tokio::test]
+async fn config_import_previews_applies_and_undoes_a_refused_import() {
+    fn xml(lan: &str) -> String {
+        format!(
+            r#"<?xml version="1.0"?>
+<pfsense>
+  <system><hostname>fw1</hostname><domain>example.lan</domain></system>
+  <interfaces>
+    <wan><enable/><if>em0</if><ipaddr>dhcp</ipaddr></wan>
+    <lan><enable/><if>em1</if><ipaddr>{lan}</ipaddr><subnet>24</subnet></lan>
+  </interfaces>
+</pfsense>"#
+        )
+    }
+    async fn lan_addrs(t: &T) -> String {
+        let cfg = patronus_network::netconf::NetConfig::load(&t.state.config_store)
+            .await
+            .unwrap();
+        format!(
+            "{:?}",
+            cfg.interfaces
+                .iter()
+                .find(|i| i.name == "eth1")
+                .map(|i| &i.ipv4)
+        )
+    }
+    let t = setup().await;
+    let c = t.admin().await;
+    let uri =
+        |step: &str| format!("/api/system/import/pfsense/{step}?maps=em0%3Deth0%2Cem1%3Deth1");
+    // preview: the plan, nothing written
+    let (s, b, _) = t
+        .raw(
+            Method::POST,
+            &uri("plan"),
+            Some(&c),
+            Some(xml("192.168.7.1")),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(b.contains("192.168.7.1") && b.contains("eth1"), "{b}");
+    assert!(!lan_addrs(&t).await.contains("192.168.7.1"));
+    // bad input is the user's error, unknown kinds too
+    let (s, _, _) = t
+        .raw(
+            Method::POST,
+            "/api/system/import/pfsense/plan",
+            Some(&c),
+            Some("<sonicwall/>".into()),
+        )
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _, _) = t
+        .raw(
+            Method::POST,
+            "/api/system/import/fortigate/plan",
+            Some(&c),
+            Some(xml("10.0.0.1")),
+        )
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    // operators may preview, not import
+    let (s, _) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/users",
+            Some(json!({"username":"viewer4","password":"Viewer-Passw0rd-4","role":"operator"})),
+        )
+        .await;
+    assert!(s.is_success());
+    let (_, vc, _) = t.login("viewer4", "Viewer-Passw0rd-4", None).await;
+    let (s, _, _) = t
+        .raw(
+            Method::POST,
+            &uri("apply"),
+            vc.as_deref(),
+            Some(xml("192.168.7.1")),
+        )
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    // import: written and applied
+    let before = t.restore_fake.applies.load(Ordering::SeqCst);
+    let (s, b, _) = t
+        .raw(
+            Method::POST,
+            &uri("apply"),
+            Some(&c),
+            Some(xml("192.168.7.1")),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(lan_addrs(&t).await.contains("192.168.7.1"), "{b}");
+    assert!(t.restore_fake.applies.load(Ordering::SeqCst) > before);
+    // an applier refuses the next import: the previous configuration is back
+    t.restore_fake.fail.store(true, Ordering::SeqCst);
+    let (s, b, _) = t
+        .raw(Method::POST, &uri("apply"), Some(&c), Some(xml("10.9.9.1")))
+        .await;
+    t.restore_fake.fail.store(false, Ordering::SeqCst);
+    assert_eq!(s, StatusCode::CONFLICT, "{b}");
+    assert!(
+        b.contains("undone") && b.contains("firewall refused it"),
+        "{b}"
+    );
+    let now = lan_addrs(&t).await;
+    assert!(
+        now.contains("192.168.7.1") && !now.contains("10.9.9.1"),
+        "{now}"
+    );
+    let _ = std::fs::remove_dir_all(&t.dir);
+}

@@ -101,7 +101,7 @@ Last generated: 2026-11-17 (279 features).
 | Transparent bridging firewall (filter bridged L2 traffic) | pfS/OPN/OWrt | missing | missing | missing | Bridge-family filtering is a deliberate non-feature; add nft `bridge` family table if wanted. | P2 |
 | Static port / outbound NAT exemptions, NAT64 and VPN exemptions | pfS/OPN | partial | untested | untested | Add `no_nat` + `static_port` NatType options. | P2 |
 | Rule hit counters / per-rule traffic statistics in UI | pfS/OPN/UniFi | missing | missing | missing | Add `counter` to rendered rules + read back via `nft -j list` for the Rules tab (S). | P1 |
-| Import firewall config from OpenWrt (UCI) / other products | OWrt/pfS(config.xml)/OPN | in progress | in progress | in progress | `patronus import pfsense FILE --plan` reads pfSense/OPNsense config.xml (interfaces, VLANs, PPPoE, aliases, rules, NAT, DHCP static maps, DNS overrides, WireGuard, IKEv2 PSK IPsec; the rest listed in plain words, docs/IMPORT-PFSENSE.md), unit-tested. Not yet: console-menu / first-run page entry, installed-image vmtest. | P1 |
+| Import firewall config from OpenWrt (UCI) / other products | OWrt/pfS(config.xml)/OPN | in progress | in progress | in progress | `patronus import pfsense FILE --plan` reads pfSense/OPNsense config.xml (interfaces, VLANs, PPPoE, aliases, rules, NAT, DHCP static maps, DNS overrides, WireGuard, IKEv2 PSK IPsec; the rest listed in plain words, docs/IMPORT-PFSENSE.md), unit-tested; the same importer (crate patronus-import) behind System > Import (`/import`, linked from the first-run wizard): preview, then import and apply with automatic undo, pfSense/OPNsense config.xml and OpenWrt backups. Not yet: console-menu entry, installed-image vmtest. | P1 |
 
 ## Interfaces, routing, multi-WAN and HA
 

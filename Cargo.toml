@@ -15,6 +15,7 @@ members = [
     "crates/patronus-vpn",
     "crates/patronus-diagnostics",
     "crates/patronus-gitops",
+    "crates/patronus-import",
     "crates/patronus-ai",
     "crates/patronus-cni",
     "crates/patronus-secrets",

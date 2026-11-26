@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}Import a configuration - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Import a configuration</h1>
+    <p class="page-subtitle">Moving from pfSense, OPNsense or OpenWrt? Load the old router's configuration file and Patronus takes
+        over its interfaces, VLANs, PPPoE, gateways and routes, aliases, firewall and NAT rules, DHCP and DNS, WireGuard, OpenVPN
+        and IPsec. Preview first: nothing changes until you press Import. Anything that has no Patronus equivalent is listed, never
+        silently dropped. <a href="/system">Back to System</a></p>
+</div>
+{% if !available %}
+<div class="card">
+    <p class="text-sm" role="status">This build has no configuration importer (it was built without USE=uci-import).</p>
+</div>
+{% else %}
+<div class="card">
+    <form id="imp-form" onsubmit="return false">
+        <div class="form-group">
+            <label for="imp-kind">The old router</label>
+            <select id="imp-kind" class="form-control">
+                <option value="pfsense">pfSense or OPNsense (config.xml: Diagnostics &gt; Backup &amp; Restore &gt; Download)</option>
+                <option value="openwrt">OpenWrt (System &gt; Backup / Flash Firmware &gt; Generate archive)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="imp-file">Configuration file</label>
+            <input id="imp-file" class="form-control" type="file" accept=".xml,.tar.gz,.tgz,application/xml,application/gzip" required>
+        </div>
+        <div class="form-group">
+            <label for="imp-maps">Port names (optional)</label>
+            <textarea id="imp-maps" class="form-control" rows="2" aria-describedby="imp-maps-help"
+                placeholder="em0=enp1s0, em1=enp2s0"></textarea>
+            <p id="imp-maps-help" class="text-sm text-muted">The old box's port or interface names differ from this one's
+                (for example <code>igb0</code> or <code>lan</code> on the old box, <code>enp2s0</code> here). Write
+                <code>OLD=NEW</code> pairs separated by commas; the preview shows which names still need one.</p>
+        </div>
+        <p>
+            <button class="btn btn-secondary" type="button" id="imp-preview" onclick="impRun('plan')">Preview</button>
+            {% if is_admin %}<button class="btn btn-primary" type="button" id="imp-apply" onclick="impRun('apply')" disabled>Import and apply</button>{% endif %}
+        </p>
+    </form>
+    <p class="text-sm text-muted">Importing keeps the current configuration as a revision (System &gt; History can put it back), and
+        undoes everything by itself if part of it cannot be applied. If the import changes this router's LAN address, open the web
+        interface again at the new address.</p>
+    <div id="imp-state" class="text-sm" role="status" aria-live="polite"></div>
+    <pre id="imp-out" class="text-sm" tabindex="0" role="region" aria-label="Import plan" hidden
+        style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:32rem;overflow:auto"></pre>
+</div>
+<script>
+    let impPlanned = null;
+    function impKey() {
+        const f = document.getElementById('imp-file').files[0];
+        return f ? [document.getElementById('imp-kind').value, f.name, f.size, f.lastModified, document.getElementById('imp-maps').value].join('|') : null;
+    }
+    ['imp-kind', 'imp-file', 'imp-maps'].forEach(id => document.getElementById(id).addEventListener('input', () => {
+        const b = document.getElementById('imp-apply'); if (b) b.disabled = impKey() !== impPlanned;
+    }));
+    async function impRun(step) {
+        const st = document.getElementById('imp-state'), out = document.getElementById('imp-out');
+        const f = document.getElementById('imp-file').files[0];
+        if (!f) { st.textContent = 'Choose the configuration file first.'; document.getElementById('imp-file').focus(); return; }
+        if (step === 'apply' && !confirm('Import this configuration into Patronus and apply it now?')) return;
+        const kind = document.getElementById('imp-kind').value;
+        const maps = document.getElementById('imp-maps').value.trim();
+        const url = '/api/system/import/' + encodeURIComponent(kind) + '/' + step + (maps ? '?maps=' + encodeURIComponent(maps) : '');
+        st.textContent = step === 'plan' ? 'Reading the file...' : 'Importing and applying...';
+        let r, j = {};
+        try {
+            r = await fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'content-type': 'application/octet-stream'}, body: f});
+            try { j = await r.json(); } catch (_) {}
+        } catch (e) { st.textContent = 'Could not reach the router: ' + e; return; }
+        if (!r.ok) { st.textContent = j.error || ('Failed (HTTP ' + r.status + ').'); return; }
+        out.hidden = false;
+        if (step === 'plan') {
+            impPlanned = impKey();
+            const b = document.getElementById('imp-apply'); if (b) b.disabled = false;
+            st.textContent = 'Preview ready: nothing has been changed yet.';
+            out.textContent = j.plan;
+        } else {
+            st.textContent = 'Imported and applied.';
+            out.textContent = j.plan + '\n\nWritten:\n  ' + (j.written || []).join('\n  ') + '\n\nApplied:\n  ' + ((j.applied || []).join('\n  ') || '(nothing to change)');
+        }
+        out.focus();
+    }
+</script>
+{% endif %}
+{% endblock %}

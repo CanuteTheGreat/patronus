@@ -16,8 +16,8 @@
 //! [`PfPlan`] carries them next to it and [`apply`] writes them before it calls
 //! [`import_uci::apply`] (which loads the network configuration again and keeps them).
 
-use super::import_uci::{self, IfacePlan, Plan, PoolPlan, StaticPlan};
-use super::import_uci::{GroupPlan, GwPlan, RoutePlan, WgPeerPlan, WgPlan};
+use crate::uci::{self as import_uci, IfacePlan, Plan, PoolPlan, StaticPlan};
+use crate::uci::{GroupPlan, GwPlan, RoutePlan, WgPeerPlan, WgPlan};
 use anyhow::{bail, Context, Result};
 use patronus_core::types::{
     ChainType, FirewallAction, FirewallRule, IpVersion, NatRule, NatType, PortSpec, Protocol,
@@ -31,7 +31,6 @@ use patronus_network::netconf::{
 use roxmltree::{Document, Node};
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, Ipv4Addr};
-use std::path::PathBuf;
 
 const COMMENT: &str = "imported from a pfSense/OPNsense config.xml";
 
@@ -2421,25 +2420,6 @@ pub async fn apply(store: &patronus_config::store::ConfigStore, p: &PfPlan) -> R
 // ---------------------------------------------------------------------------
 // entry point
 // ---------------------------------------------------------------------------
-
-/// `patronus import pfsense FILE [--plan] [--map OLD=NEW]... [--yes]`.
-pub async fn run(db: Option<PathBuf>, file: PathBuf, maps: Vec<String>, yes: bool) -> Result<()> {
-    let maps = import_uci::parse_maps(&maps)?;
-    let xml = std::fs::read_to_string(&file).with_context(|| format!("read {}", file.display()))?;
-    let plan = build_plan(&xml, &maps)?;
-    print!("{}", render(&plan, !yes));
-    if !yes {
-        println!("\nplan only, nothing written; add --yes to write it into the config store");
-        return Ok(());
-    }
-    let store = super::apply::open_store(db.as_deref()).await?;
-    println!("\nstore:");
-    for l in apply(&store, &plan).await? {
-        println!("  {l}");
-    }
-    println!("\nreview with `patronus apply --dry-run`, then `patronus apply`");
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {
