@@ -122,10 +122,7 @@ async fn standard_tier_affected_with_update_and_crate_hit() {
 #[tokio::test(flavor = "multi_thread")]
 async fn no_update_when_the_tree_has_nothing_better() {
     let l = lab(&[("dev-python/joblib", "1.1.0-r1")]);
-    script(
-        Path::new(&l.s.portageq),
-        "echo dev-python/joblib-1.1.0-r1",
-    );
+    script(Path::new(&l.s.portageq), "echo dev-python/joblib-1.1.0-r1");
     let r = scan(&l.s, now()).await;
     let g = r.findings.iter().find(|f| f.source == "glsa").unwrap();
     assert_eq!(g.update, "none");
@@ -328,10 +325,7 @@ async fn settings_round_trip_and_policy_apply_in_the_window() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failing_emerge_is_logged_and_not_retried_at_once() {
     let l = lab(&[("dev-python/joblib", "1.1.0-r1")]);
-    script(
-        Path::new(&l.s.emerge),
-        "echo conflict >&2; exit 1",
-    );
+    script(Path::new(&l.s.emerge), "echo conflict >&2; exit 1");
     let store = ConfigStore::open_in_memory().await.unwrap();
     assert!(!apply_updates(&store, &l.s, &[">=dev-python/joblib-1.2.0".into()]).await);
     let log = log_history(&store, 5).await.unwrap();
