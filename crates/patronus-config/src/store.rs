@@ -104,6 +104,9 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "traffic_daily",
     "system_events",
     "firewall_log",
+    // IPsec connect/disconnect clicks waiting for the next apply (lane f): transient, deleted once
+    // carried out (and dropped unused after an hour)
+    "ipsec_requests",
 ];
 
 /// Revisions kept by [`ConfigStore::snapshot`] (older ones are pruned).

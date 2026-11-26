@@ -125,21 +125,25 @@
         Leave the key empty to have one generated (shown once).</p>
     {% if connections.is_empty() %}<p class="empty">No IPsec tunnels configured.</p>{% else %}
     <table class="lan" id="ipsec-connections">
-        <thead><tr><th>Name</th><th>Local</th><th>Remote gateway</th><th>Local networks</th><th>Remote networks</th><th>Start</th><th>State</th><th><span class="sr-only">Actions</span></th></tr></thead>
+        <thead><tr><th>Name</th><th>Local</th><th>Remote gateway</th><th>Local networks</th><th>Remote networks</th><th>Start</th><th>State</th><th>Traffic (in / out)</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for c in connections %}
         <tr data-ipsec="{{ c.name }}">
             <td><b>{{ c.name }}</b>{% if !c.enabled %} <span class="bad">disabled</span>{% endif %}{% if !c.description.is_empty() %}<br><span class="text-sm text-muted">{{ c.description }}</span>{% endif %}</td>
             <td class="mono">{% if c.local_address.is_empty() %}any{% else %}{{ c.local_address }}{% endif %}</td>
             <td class="mono">{{ c.remote_address }}</td>
-            <td class="mono">{{ c.local_ts }}</td>
-            <td class="mono">{{ c.remote_ts }}</td>
+            <td class="mono">{% if c.mode == "route" %}<span class="badge">route-based</span> {{ c.xfrm_name }}{% if !c.tunnel_address.is_empty() %} ({{ c.tunnel_address }}){% endif %}{% else %}{{ c.local_ts }}{% endif %}</td>
+            <td class="mono">{% if c.mode == "route" %}routes decide{% else %}{{ c.remote_ts }}{% endif %}</td>
             <td>{{ c.start_action }}</td>
-            <td class="ipsec-state">{% if c.established %}<span class="ok">{{ c.state }}</span>{% else %}<span class="text-muted">{{ c.state }}</span>{% endif %}</td>
-            <td>{% if can_modify %}<button class="btn btn-secondary btn-sm" onclick="editIpsec(this)" data-id="{{ c.id }}" data-name="{{ c.name }}"
+            <td class="ipsec-state">{% if c.established %}<span class="ok">{{ c.state }}</span>{% else %}<span class="text-muted">{{ c.state }}</span>{% endif %}{% if c.mode == "route" %}<br><span class="text-sm {% if c.xfrm_up %}ok{% else %}text-muted{% endif %}">{{ c.xfrm_name }} {% if c.xfrm_up %}up{% else %}down{% endif %}</span>{% endif %}</td>
+            <td class="mono text-sm">{% if c.bytes_in.is_empty() %}<span class="text-muted">no SA</span>{% else %}{{ c.bytes_in }} / {{ c.bytes_out }}{% endif %}</td>
+            <td>{% if can_modify %}{% if c.enabled %}<button class="btn btn-secondary btn-sm" onclick="ipsecCtl('{{ c.id }}', 'connect')" {% if c.remote_address == "%any" %}disabled title="This tunnel only responds"{% endif %}>Connect</button>
+                <button class="btn btn-secondary btn-sm" onclick="ipsecCtl('{{ c.id }}', 'disconnect')">Disconnect</button>{% endif %}
+                <button class="btn btn-secondary btn-sm" onclick="editIpsec(this)" data-id="{{ c.id }}" data-name="{{ c.name }}"
                     data-local="{{ c.local_address }}" data-remote="{{ c.remote_address }}" data-localid="{{ c.local_id }}" data-remoteid="{{ c.remote_id }}"
                     data-lts="{{ c.local_ts }}" data-rts="{{ c.remote_ts }}" data-start="{{ c.start_action }}" data-enabled="{{ c.enabled }}"
-                    data-description="{{ c.description }}">Edit</button>
+                    data-description="{{ c.description }}" data-mode="{{ c.mode }}" data-ifid="{{ c.if_id }}"
+                    data-taddr="{{ c.tunnel_address }}" data-mtu="{{ c.mtu }}" data-xdev="{{ c.xfrm_dev }}">Edit</button>
                 <button class="btn btn-danger btn-sm" onclick="del('/api/vpn/ipsec/connections/{{ c.id }}', 'Delete IPsec tunnel {{ c.name }}?')">Delete</button>{% endif %}</td>
         </tr>
         {% endfor %}
@@ -154,8 +158,13 @@
         <label>Local identity <input name="local_id" placeholder="(local address)"></label>
         <label>Remote identity <input name="remote_id" placeholder="(remote gateway)"></label>
         <label>Pre-shared key <input name="psk" type="password" placeholder="empty = generate / keep" autocomplete="new-password"></label>
-        <label>Local networks <input name="local_ts" placeholder="192.168.1.0/24" required></label>
-        <label>Remote networks <input name="remote_ts" placeholder="10.2.0.0/16" required></label>
+        <label>Mode <select name="mode" id="ipsec-mode" onchange="ipsecMode()"><option value="policy">policy-based (traffic selectors)</option><option value="route">route-based (XFRM interface, routes / OSPF)</option></select></label>
+        <label>Local networks <input name="local_ts" placeholder="192.168.1.0/24 (route-based: empty = any)"></label>
+        <label>Remote networks <input name="remote_ts" placeholder="10.2.0.0/16 (route-based: empty = any)"></label>
+        <label class="ipsec-route">Interface id <input name="if_id" type="number" min="1" placeholder="empty = next free"></label>
+        <label class="ipsec-route">Tunnel address <input name="tunnel_address" placeholder="169.254.10.1/30"></label>
+        <label class="ipsec-route">MTU <input name="mtu" type="number" min="576" max="9000" placeholder="default"></label>
+        <label class="ipsec-route">Attach to device <input name="xfrm_dev" placeholder="lo"></label>
         <label>Start <select name="start_action"><option value="start">start (initiate)</option><option value="trap">trap (on traffic)</option><option value="none">none (respond only)</option></select></label>
         <label>Enabled <input type="checkbox" name="enabled" checked></label>
         <label>Description <input name="description"></label>
@@ -257,6 +266,52 @@
     {% endif %}
 </div>
 
+{% if has_ipsec %}{% if ipsec_error.is_empty() && !ipsec_not_running %}
+<div class="card">
+    <div class="card-header"><h2 class="card-title">IPsec security policies ({{ policies.len() }})</h2></div>
+    {% if policies.is_empty() %}
+    <p class="empty" id="ipsec-no-policies">No IPsec security policies in the kernel.</p>
+    {% else %}
+    <table class="lan" id="ipsec-policies">
+        <thead><tr><th>Source</th><th>Destination</th><th>Direction</th><th>Peer (tunnel endpoints)</th><th>Protocol</th><th>Interface id</th></tr></thead>
+        <tbody>
+        {% for p in policies %}
+        <tr>
+            <td class="mono">{{ p.src }}</td><td class="mono">{{ p.dst }}</td><td>{{ p.dir }}</td>
+            <td class="mono">{{ p.peer_src }} &rarr; {{ p.peer_dst }}</td>
+            <td>{{ p.proto }} {{ p.mode }}</td>
+            <td>{% match p.if_id %}{% when Some with (i) %}{{ i }}{% when None %}<span class="text-muted">-</span>{% endmatch %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">XFRM interfaces ({{ xfrm_ifaces.len() }})</h2></div>
+    {% if xfrm_ifaces.is_empty() %}
+    <p class="empty" id="ipsec-no-xfrm">No route-based IPsec tunnel is up: no XFRM interface exists.</p>
+    {% else %}
+    <table class="lan" id="ipsec-xfrm">
+        <thead><tr><th>Interface</th><th>State</th><th>Interface id</th><th>Addresses</th><th>MTU</th><th>Received bytes</th><th>Sent bytes</th></tr></thead>
+        <tbody>
+        {% for i in xfrm_ifaces %}
+        <tr>
+            <td><strong>{{ i.name }}</strong></td>
+            <td>{% if i.up %}<span class="ok">up</span>{% else %}<span class="text-muted">down</span>{% endif %}</td>
+            <td>{% match i.if_id %}{% when Some with (v) %}{{ v }}{% when None %}-{% endmatch %}</td>
+            <td class="mono">{% for a in i.addresses %}{{ a }} {% endfor %}</td>
+            <td>{% match i.mtu %}{% when Some with (m) %}{{ m }}{% when None %}-{% endmatch %}</td>
+            <td>{{ i.rx_bytes }}</td><td>{{ i.tx_bytes }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+{% endif %}{% endif %}
+
 <div class="card">
     <div class="card-header"><h2 class="card-title">OpenVPN</h2></div>
     <p class="empty">OpenVPN is not managed or monitored by Patronus: this build has no OpenVPN engine, so it cannot create, start or show OpenVPN tunnels. Use WireGuard or IPsec above for site-to-site and road-warrior access; a daemon you run yourself is not tracked here.</p>
@@ -312,7 +367,8 @@
         ev.preventDefault();
         const f = ev.target, o = formJson(f), ed = f.elements['_editing'].value;
         delete o._editing;
-        if (ed) for (const k of ['local_address', 'local_id', 'remote_id']) if (!f.elements[k].value) o[k] = '';
+        if (ed) for (const k of ['local_address', 'local_id', 'remote_id', 'tunnel_address', 'xfrm_dev']) if (!f.elements[k].value) o[k] = '';
+        if (o.mode !== 'route' && (!o.local_ts || !o.remote_ts)) { alert('Policy-based tunnels need local and remote networks.'); return false; }
         const r = await fetch(ed ? '/api/vpn/ipsec/connections/' + ed : '/api/vpn/ipsec/connections', {
             method: ed ? 'PUT' : 'POST', credentials: 'same-origin',
             headers: {'content-type': 'application/json'}, body: JSON.stringify(o),
@@ -432,7 +488,22 @@
         f.elements['local_ts'].value = d.lts; f.elements['remote_ts'].value = d.rts;
         f.elements['start_action'].value = d.start; f.elements['enabled'].checked = d.enabled === 'true';
         f.elements['description'].value = d.description;
+        f.elements['mode'].value = d.mode || 'policy'; f.elements['if_id'].value = d.ifid;
+        f.elements['tunnel_address'].value = d.taddr; f.elements['mtu'].value = d.mtu;
+        f.elements['xfrm_dev'].value = d.xdev; ipsecMode();
         editing(f, d.id, 'ipsec-submit', 'Save tunnel ' + d.name);
+    }
+    function ipsecMode() {
+        const route = document.getElementById('ipsec-mode').value === 'route';
+        for (const l of document.querySelectorAll('#ipsec-form .ipsec-route')) l.style.display = route ? '' : 'none';
+    }
+    ipsecMode();
+    async function ipsecCtl(id, action) {
+        const r = await fetch('/api/vpn/ipsec/connections/' + id + '/' + action, {method: 'POST', credentials: 'same-origin'});
+        let j = {};
+        try { j = await r.json(); } catch (_) {}
+        if (!r.ok) { alert('Not done: ' + (j.error || r.status)); return; }
+        location.reload();
     }
 </script>
 {% endblock %}

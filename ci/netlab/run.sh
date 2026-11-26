@@ -67,6 +67,21 @@ if [ -n "${PATRONUS_OLD_DIR:-}" ]; then
 fi
 names=$(for s in "$@"; do basename "$s"; done | tr '\n' ' ')
 
+# lane J Tailscale (lane-j-tailscale.sh) needs the tailscale client and a Headscale control server (no internet login
+# in CI); only installed when that scenario is selected. Vendor apt repository + the Headscale release package.
+TS_INSTALL=
+case " $names " in *lane-j-tailscale*)
+  TS_INSTALL='
+. /etc/os-release
+curl -fsSL "https://pkgs.tailscale.com/stable/$ID/$VERSION_CODENAME.noarmor.gpg" -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+curl -fsSL "https://pkgs.tailscale.com/stable/$ID/$VERSION_CODENAME.tailscale-keyring.list" -o /etc/apt/sources.list.d/tailscale.list
+apt-get update -qq && apt-get install -y -qq --no-install-recommends tailscale >/dev/null
+HSV=$(curl -fsSIL -o /dev/null -w "%{url_effective}" https://github.com/juanfont/headscale/releases/latest | sed "s|.*/tag/v||")
+HSA=$(dpkg --print-architecture)
+curl -fsSL -o /tmp/headscale.deb "https://github.com/juanfont/headscale/releases/download/v$HSV/headscale_${HSV}_linux_$HSA.deb"
+apt-get install -y -qq /tmp/headscale.deb >/dev/null || dpkg -i /tmp/headscale.deb
+'
+  ;; esac
 cat > "$OUT/inner.sh" <<INNER
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -105,6 +120,7 @@ for i in 1 2 3; do
   sleep 15
 done
 [ "\$pw_ok" = 1 ] || rm -rf /opt/pw
+$TS_INSTALL
 export NETLAB_POWER_CUTS=${NETLAB_POWER_CUTS:-4}
 $OLD_ENV
 echo "--- netlab container: \$(uname -m), kernel \$(uname -r)"
