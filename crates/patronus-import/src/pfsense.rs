@@ -283,6 +283,46 @@ impl B {
 // entry: parse + build
 // ---------------------------------------------------------------------------
 
+/// Port maps chosen by role when the user named none: the old box's `wan`, `lan` and `optN` ports
+/// (`<interfaces><wan><if>em0</if>`) go to the ports that carry the same role on this box
+/// (`roles` = (device, role) from the config store). A VLAN or PPPoE port of the old box is left
+/// alone (its parent is mapped instead), and `explicit` maps always win. Returns only the added maps.
+pub fn role_maps(
+    xml: &str,
+    roles: &[(String, String)],
+    explicit: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let Ok(doc) = Document::parse(xml) else {
+        return out;
+    };
+    let Some(ifs) = kid(doc.root_element(), "interfaces") else {
+        return out;
+    };
+    for n in elems(ifs) {
+        let role = n.tag_name().name();
+        let Some(old_if) = txt(n, "if") else { continue };
+        if old_if.contains('.')
+            || old_if.contains("_vlan")
+            || [
+                "pppoe", "ovpn", "tun_wg", "wg", "gif", "gre", "lagg", "bridge",
+            ]
+            .iter()
+            .any(|p| old_if.starts_with(p))
+            || explicit.contains_key(&old_if)
+            || out.contains_key(&old_if)
+        {
+            continue;
+        }
+        if let Some((dev, _)) = roles.iter().find(|(_, r)| r == role) {
+            if dev != &old_if {
+                out.insert(old_if, dev.clone());
+            }
+        }
+    }
+    out
+}
+
 /// Parse `xml` and build the plan. `maps` is `--map OLD=NEW` (see [`import_uci::parse_maps`]).
 pub fn build_plan(xml: &str, maps: &BTreeMap<String, String>) -> Result<PfPlan> {
     let doc = Document::parse(xml).context("config.xml is not well-formed XML")?;
@@ -2599,6 +2639,34 @@ mod tests {
 
     fn maps() -> BTreeMap<String, String> {
         import_uci::parse_maps(&["em0=eth0".into(), "em1=eth1".into()]).unwrap()
+    }
+
+    #[test]
+    fn unmapped_ports_follow_the_role_on_this_box() {
+        let xml = r#"<pfsense><interfaces>
+            <wan><if>em0</if></wan><lan><if>em1</if></lan><opt1><if>em2</if></opt1>
+            <opt2><if>em1.30</if></opt2><opt3><if>pppoe0</if></opt3><opt4><if>igb3</if></opt4>
+            </interfaces></pfsense>"#;
+        let roles: Vec<(String, String)> =
+            [("enp0s1", "wan"), ("enp0s2", "lan"), ("enp0s3", "opt1")]
+                .iter()
+                .map(|(d, r)| (d.to_string(), r.to_string()))
+                .collect();
+        let explicit = import_uci::parse_maps(&["em1=br-lan".into()]).unwrap();
+        let auto = role_maps(xml, &roles, &explicit);
+        assert_eq!(auto.get("em0").map(String::as_str), Some("enp0s1"));
+        assert_eq!(auto.get("em2").map(String::as_str), Some("enp0s3"));
+        assert!(!auto.contains_key("em1"), "an explicit map wins");
+        assert!(!auto.contains_key("em1.30") && !auto.contains_key("pppoe0"));
+        assert!(
+            !auto.contains_key("igb3"),
+            "no opt4 on this box: left as it is"
+        );
+        assert!(role_maps("not xml", &roles, &explicit).is_empty());
+        // the plan uses them: the LAN VLAN rides on the mapped parent
+        let mut all = explicit.clone();
+        all.extend(auto);
+        assert_eq!(all.len(), 3);
     }
 
     fn plan() -> PfPlan {
