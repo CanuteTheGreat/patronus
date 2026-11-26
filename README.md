@@ -70,7 +70,9 @@ that are not finished are listed separately under
   firewall, to the router and through it; repeat offenders get longer bans,
   IPv6 sources are banned per /64, your own LAN and an allow list are never
   banned, bans survive a reboot and can be lifted from the page or the CLI.
-  See docs/BRUTE-FORCE.md. [C151]
+  See docs/BRUTE-FORCE.md. [C151] It also reads failed OpenVPN and strongSwan
+  logins and, on request, intrusion-detection alerts (an address that keeps
+  triggering them), and is part of the access-point and Slate router images. [C1260]
 - Firewall log viewer: packets that a logging rule (or a threat feed, or the
   default policy) drops or accepts are recorded with the rule that caught them;
   search by rule, action, address, port, interface or text, follow it live. [C59]
