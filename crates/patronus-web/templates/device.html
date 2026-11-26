@@ -6,7 +6,7 @@
 {% include "lan_head.html" %}
 <style>
     .dev-note { color: var(--muted); font-size: .85em; margin: 4px 0 10px; }
-    .dev-warn { background: var(--warn-bg); color: var(--warn-fg); padding: 8px 10px; border-radius: 6px; margin: 8px 0; font-size: .9em; }
+    .dev-warn { margin: 8px 0; }
     .dev-key { font-family: var(--font-mono); font-size: .85em; word-break: break-all; }
     textarea.dev-key-in { width: 100%; min-height: 4em; box-sizing: border-box; font-family: var(--font-mono); }
 </style>
@@ -31,7 +31,7 @@
         <label class="addr-st">DNS servers <input name="dns" placeholder="the gateway" size="22"></label>
         <label>Undo unless confirmed within <select name="confirm_within"><option value="120">2 minutes</option><option value="300">5 minutes</option><option value="60">1 minute</option></select></label>
     </form>
-    {% if can_modify %}<button class="btn btn-primary" type="button" id="addr-save" onclick="addrSave()">Try the new address</button>{% endif %}
+    {% if can_modify %}<button class="ui-btn primary" type="button" id="addr-save" onclick="addrSave()">Try the new address</button>{% endif %}
     <div id="addr-pending"></div>
     <p class="dev-note">The new address runs next to the current one. Open this page at the new address and press Confirm
         there; if nobody confirms in time (a wrong address, gateway or prefix), the previous settings come back by
@@ -46,7 +46,7 @@
     <form class="lan-form" id="key-form" onsubmit="return false">
         <label>Account <select name="user"></select></label>
         <label style="flex:1 1 100%">Public key (one line: ssh-ed25519 AAAA... comment)<textarea class="dev-key-in" name="key"></textarea></label>
-        <button class="btn btn-secondary" type="button" onclick="keyAdd()">Add key</button>
+        <button class="ui-btn" type="button" onclick="keyAdd()">Add key</button>
     </form>
     {% endif %}
     <p class="dev-note">Keys let these accounts log in over SSH without a password. Only public keys are accepted
@@ -58,8 +58,8 @@
     <div class="card-header"><h2 class="card-title">Lights</h2></div>
     <p class="text-sm" id="leds-state"></p>
     {% if can_modify %}<div id="leds-buttons" style="display:none">
-        <button class="btn btn-secondary" type="button" id="leds-on" onclick="ledsSet(true)">Lights on</button>
-        <button class="btn btn-secondary" type="button" id="leds-off" onclick="ledsSet(false)">Lights off</button></div>{% endif %}
+        <button class="ui-btn" type="button" id="leds-on" onclick="ledsSet(true)">Lights on</button>
+        <button class="ui-btn" type="button" id="leds-off" onclick="ledsSet(false)">Lights off</button></div>{% endif %}
     <p class="dev-note">"Off" darkens every light of the device, at once and after every start (handy in a bedroom). "On"
         brings back the device's own status and activity lights.</p>
 </div>
@@ -71,7 +71,7 @@
         <label class="rs-wk">On <select name="day"><option value="sun">Sunday</option><option value="mon">Monday</option><option value="tue">Tuesday</option><option value="wed">Wednesday</option><option value="thu">Thursday</option><option value="fri">Friday</option><option value="sat">Saturday</option></select></label>
         <label class="rs-t">At <input name="time" type="time" value="04:30"></label>
     </form>
-    {% if can_modify %}<button class="btn btn-primary" type="button" onclick="rsSave()">Save</button>{% endif %}
+    {% if can_modify %}<button class="ui-btn primary" type="button" onclick="rsSave()">Save</button>{% endif %}
     <p class="text-sm" id="rs-state"></p>
     <p class="dev-note">Off unless you switch it on. A restart takes the device offline for about a minute; clients
         reconnect by themselves. The time is the device's own clock (UTC unless a time zone is set under System).</p>
@@ -93,7 +93,7 @@ function el(tag, props, ...kids) {
 }
 function msg(text, bad) {
     const m = document.getElementById('dev-msg'); m.innerHTML = '';
-    if (text) m.appendChild(el('div', {class: bad ? 'alert-error' : 'dev-warn', text}));
+    if (text) m.appendChild(el('div', {class: bad ? 'ui-banner crit' : 'ui-banner info dev-warn', role: bad ? 'alert' : 'status', text}));
 }
 async function api(method, url, body) {
     const r = await fetch(url, {method, credentials: 'same-origin',
@@ -107,7 +107,7 @@ async function api(method, url, body) {
 async function loadKeys() {
     const box = document.getElementById('keys'); box.innerHTML = '';
     if (!CAN_MODIFY) { box.appendChild(el('p', {class: 'dev-note', text: 'Only administrators see the SSH keys.'})); return; }
-    let d; try { d = await api('GET', '/api/device/ssh-keys'); } catch (e) { box.appendChild(el('p', {class: 'alert-error', text: e.message})); return; }
+    let d; try { d = await api('GET', '/api/device/ssh-keys'); } catch (e) { box.appendChild(el('p', {class: 'ui-banner crit', text: e.message})); return; }
     const sel = document.querySelector('#key-form [name=user]'); if (sel) sel.innerHTML = '';
     for (const u of d.users) {
         if (sel) sel.appendChild(el('option', {value: u.user, text: u.user}));
@@ -116,7 +116,7 @@ async function loadKeys() {
         const tb = el('tbody'); t.appendChild(tb);
         if (!u.keys.length) tb.appendChild(el('tr', {}, el('td', {colspan: '4', class: 'empty', text: 'No keys.'})));
         for (const k of u.keys) tb.appendChild(el('tr', {class: 'key-row'}, el('td', {text: k.type}), el('td', {class: 'dev-key', text: k.fingerprint}), el('td', {text: k.comment}),
-            el('td', {}, k.fingerprint ? el('button', {class: 'btn btn-danger btn-sm', type: 'button', text: 'Remove', onclick: async () => {
+            el('td', {}, k.fingerprint ? el('button', {class: 'ui-btn danger sm', type: 'button', text: 'Remove', onclick: async () => {
                 if (!confirm('Remove this key from ' + u.user + '? It can no longer log in with it.')) return;
                 try { await api('DELETE', '/api/device/ssh-keys/' + encodeURIComponent(u.user) + '/' + encodeURIComponent(k.fingerprint)); msg('Key removed.', false); }
                 catch (e) { msg('Not removed: ' + e.message, true); }
@@ -189,13 +189,13 @@ function addrShow(d) {
         const news = (p.new || '').trim().split(/\s+/).filter(Boolean).map(a => a.split('/')[0]);
         const here = location.hostname.replace(/^\[|\]$/g, '');
         const onNew = news.includes(here);
-        box.appendChild(el('div', {class: 'dev-warn', id: 'addr-trial', text: 'Waiting for confirmation: ' + p.left + ' s left. New address: ' + (news.join(', ') || 'not up yet') + '. ' +
+        box.appendChild(el('div', {class: 'ui-banner warn dev-warn', id: 'addr-trial', text: 'Waiting for confirmation: ' + p.left + ' s left. New address: ' + (news.join(', ') || 'not up yet') + '. ' +
             (onNew ? 'You are on the new address: confirm to keep it.' : 'Open this page at the new address and confirm there (https://' + (news[0] || '...') + '/device); otherwise the previous settings come back.')}));
-        if (onNew && CAN_MODIFY) box.appendChild(el('button', {class: 'btn btn-primary', type: 'button', id: 'addr-confirm', text: 'Confirm the new address', onclick: async () => {
+        if (onNew && CAN_MODIFY) box.appendChild(el('button', {class: 'ui-btn primary', type: 'button', id: 'addr-confirm', text: 'Confirm the new address', onclick: async () => {
             try { await api('POST', '/api/device/address/confirm'); msg('New address kept.', false); } catch (e) { msg('Not confirmed: ' + e.message, true); }
             loadAddr();
         }}));
-        if (news.length && !onNew) box.appendChild(el('a', {class: 'btn btn-secondary', href: 'https://' + news[0] + '/device', text: 'Open the new address'}));
+        if (news.length && !onNew) box.appendChild(el('a', {class: 'ui-btn', href: 'https://' + news[0] + '/device', text: 'Open the new address'}));
         clearTimeout(ADDR_TIMER); ADDR_TIMER = setTimeout(loadAddr, 5000);
     }
 }
