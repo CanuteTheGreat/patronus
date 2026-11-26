@@ -69,6 +69,8 @@ REQUIRED_USE="
 	dnsmasq? ( !bind )
 "
 
+# DHCP failover (USE=ha with the Kea backend): Kea's own libdhcp_ha.so and libdhcp_lease_cmds.so ship in
+# net-misc/kea, so USE=ha needs no extra package for it.
 # DHCP server (USE=dhcp): Kea (USE=kea; RA via radvd) or dnsmasq (DHCPv4/v6,
 # RA and relay in one daemon). Relays always use dnsmasq. Patronus writes the
 # config these packages' own init scripts read (/etc/kea, /etc/dnsmasq.conf,

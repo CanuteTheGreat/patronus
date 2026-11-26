@@ -420,6 +420,15 @@ impl Applier for OpenVpnApplier {
             });
             return Ok(rep);
         }
+        if let Some(why) = crate::ha_follow_hold(store, "openvpn").await? {
+            // HA: the server follows the virtual IP; it starts on MASTER
+            let was = self.sup.stop(svc::DAEMON_SERVICE, INSTANCE).await?;
+            rep.applied(format!(
+                "OpenVPN server {} ({why})",
+                if was { "stopped" } else { "held down" }
+            ));
+            return Ok(rep);
+        }
         pool(&s.s("tunnel_net"))?;
         ensure_pki(store).await?;
         let bin =

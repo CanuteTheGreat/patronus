@@ -733,6 +733,19 @@ impl Applier for IpsecApplier {
         let up = self.charon_up();
         let have = !on.is_empty() || !rw.is_empty();
         if have {
+            if let Some(why) = crate::ha_follow_hold(store, "ipsec").await? {
+                // HA: IPsec follows the virtual IP: configuration written, charon down
+                if up {
+                    self.env.services.stop(svc)?;
+                }
+                rep.applied(format!(
+                    "IPsec {} ({why})",
+                    if up { "stopped" } else { "held down" }
+                ));
+                return Ok(rep);
+            }
+        }
+        if have {
             // start charon if needed; never restart a running one (that
             // would drop every SA): new/changed/deleted connections are
             // (un)loaded with swanctl --load-all

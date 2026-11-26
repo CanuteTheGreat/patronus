@@ -42,6 +42,47 @@
     </form>
 </div>
 
+<div class="card" id="ha-dhcp-card">
+    <div class="card-header"><h2 class="card-title">DHCP failover</h2></div>
+    <p class="text-sm text-muted">Both nodes serve the same DHCP pools with Kea's high-availability hook: every lease is copied
+        to the peer as it is granted, so when one node fails the other renews the same addresses within the lease time and
+        keeps handing out new ones. Clients get the LAN virtual IP as default gateway and DNS server while HA is on. The peer
+        address defaults to the sync peer. Needs the Kea DHCP backend (dnsmasq has no failover protocol and is refused).
+        Set one node to <b>primary</b> and the other to <b>secondary</b>.</p>
+    <p id="ha-dhcp-state" class="text-sm">Loading...</p>
+    <form class="lan-form" id="ha-dhcp-form" onsubmit="return saveDhcpHa(event)">
+        <label>DHCP failover <input type="checkbox" name="dhcp_failover"></label>
+        <label>Mode <select name="dhcp_mode"><option value="hot-standby">hot-standby (one node answers)</option><option value="load-balancing">load-balancing (both answer)</option></select></label>
+        <label>This node is the <select name="dhcp_role"><option value="primary">primary</option><option value="secondary">secondary</option></select></label>
+        <label>Peer address (empty = sync peer, else VRRP peer) <input name="dhcp_peer" data-keep-empty="1"></label>
+        <label>This node's address towards the peer (empty = automatic) <input name="dhcp_local" data-keep-empty="1"></label>
+        <label>DHCPv4 failover port <input name="dhcp_port4" type="number" min="1024" max="65535"></label>
+        <label>DHCPv6 failover port <input name="dhcp_port6" type="number" min="1024" max="65535"></label>
+        <label>Heartbeat every (ms) <input name="dhcp_heartbeat_ms" type="number" min="200" max="600000"></label>
+        <label>Take over the peer's leases after it was silent for (ms) <input name="dhcp_max_response_delay_ms" type="number" min="500" max="3600000"></label>
+        <label>Unanswered clients before takeover (0 = at once) <input name="dhcp_max_unacked" type="number" min="0"></label>
+        <label>Copy every lease to the peer as it is granted <input type="checkbox" name="dhcp_send_lease_updates"></label>
+        {% if can_modify %}<button class="btn btn-primary btn-sm" type="submit">Save and apply</button>{% endif %}
+    </form>
+</div>
+
+<div class="card" id="ha-follow-card">
+    <div class="card-header"><h2 class="card-title">Services that follow the virtual IP</h2></div>
+    <p class="text-sm text-muted">These services run only on the node that holds the virtual IP, so VPN peers always reach the node
+        that owns the address they dial. The configuration is kept on both nodes; the other node holds the service down and starts
+        it when it becomes MASTER.</p>
+    <table class="lan" id="ha-follow">
+        <thead><tr><th>Service</th><th>Follows the VIP</th><th>Running on this node</th><th>Why not</th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <form class="lan-form" id="ha-follow-form" onsubmit="return saveFollow(event)">
+        <label>WireGuard <input type="checkbox" name="wireguard"></label>
+        <label>OpenVPN <input type="checkbox" name="openvpn"></label>
+        <label>IPsec <input type="checkbox" name="ipsec"></label>
+        {% if can_modify %}<button class="btn btn-primary btn-sm" type="submit">Save and apply</button>{% endif %}
+    </form>
+</div>
+
 <div class="card" id="ha-vips-card">
     <div class="card-header"><h2 class="card-title">Virtual IPs</h2></div>
     <p class="text-sm text-muted"><b>carp</b>: the address fails over between the HA nodes (VRRP); clients use it as
@@ -83,6 +124,33 @@
         f['enabled'].checked = s.enabled; f['priority'].value = s.priority; f['preempt'].checked = s.preempt;
         f['peer'].value = s.peer || ''; f['password'].value = s.password || '';
         f['sync'].checked = s.sync; f['sync_interface'].value = s.sync_interface || ''; f['sync_peer'].value = s.sync_peer || '';
+        const df = document.getElementById('ha-dhcp-form').elements;
+        df['dhcp_failover'].checked = s.dhcp_failover; df['dhcp_mode'].value = s.dhcp_mode; df['dhcp_role'].value = s.dhcp_role;
+        df['dhcp_peer'].value = s.dhcp_peer || ''; df['dhcp_local'].value = s.dhcp_local || '';
+        for (const k of ['dhcp_port4', 'dhcp_port6', 'dhcp_heartbeat_ms', 'dhcp_max_response_delay_ms', 'dhcp_max_unacked']) df[k].value = s[k];
+        df['dhcp_send_lease_updates'].checked = s.dhcp_send_lease_updates;
+        const dh = st.dhcp || {};
+        let dt;
+        if (!s.enabled) dt = 'High availability is off, so DHCP runs on this node alone.';
+        else if (!dh.active) dt = 'DHCP failover is not in effect: ' + (dh.reason || 'no DHCP pool is served by Kea here') + '.';
+        else {
+            const fam = [];
+            if (dh.dhcp4) fam.push('DHCPv4 ' + (dh.dhcp4.state || 'not answering'));
+            if (dh.dhcp6) fam.push('DHCPv6 ' + (dh.dhcp6.state || 'not answering'));
+            dt = 'DHCP failover (' + dh.mode + ', this node is the ' + dh.role + ', peer ' + dh.peer + '): ' + fam.join('; ') + '.';
+        }
+        document.getElementById('ha-dhcp-state').textContent = dt;
+        const ff = document.getElementById('ha-follow-form').elements;
+        for (const k of ['wireguard', 'openvpn', 'ipsec']) ff[k].checked = (s.follow_services || []).includes(k);
+        const ftb = document.querySelector('#ha-follow tbody'); ftb.textContent = '';
+        for (const k of ['wireguard', 'openvpn', 'ipsec']) {
+            const row = (st.follow || []).find(x => x.service === k);
+            const tr = document.createElement('tr'); tr.dataset.follow = k;
+            for (const x of [k, row ? 'yes' : 'no', row ? (row.running_here ? 'yes' : 'no (held)') : '-', row && row.held ? row.held : '']) {
+                const td = document.createElement('td'); td.textContent = x; tr.appendChild(td);
+            }
+            ftb.appendChild(tr);
+        }
         const el = document.getElementById('ha-state');
         let t = st.installed === false ? 'keepalived is not installed (emerge sys-cluster/keepalived). ' : '';
         if (!s.enabled) t += 'High availability is off on this node.';
@@ -113,6 +181,22 @@
         const body = {enabled: f['enabled'].checked, priority: Number(f['priority'].value), preempt: f['preempt'].checked,
             peer: f['peer'].value, sync: f['sync'].checked, sync_interface: f['sync_interface'].value, sync_peer: f['sync_peer'].value};
         if (f['password'].value) body.password = f['password'].value;
+        if (await api('PUT', '/api/ha/settings', body)) loadHa();
+        return false;
+    }
+    async function saveDhcpHa(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements;
+        const body = {dhcp_failover: f['dhcp_failover'].checked, dhcp_mode: f['dhcp_mode'].value, dhcp_role: f['dhcp_role'].value,
+            dhcp_peer: f['dhcp_peer'].value, dhcp_local: f['dhcp_local'].value, dhcp_send_lease_updates: f['dhcp_send_lease_updates'].checked};
+        for (const k of ['dhcp_port4', 'dhcp_port6', 'dhcp_heartbeat_ms', 'dhcp_max_response_delay_ms', 'dhcp_max_unacked']) body[k] = Number(f[k].value);
+        if (await api('PUT', '/api/ha/settings', body)) loadHa();
+        return false;
+    }
+    async function saveFollow(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements;
+        const body = {follow_services: ['wireguard', 'openvpn', 'ipsec'].filter(k => f[k].checked)};
         if (await api('PUT', '/api/ha/settings', body)) loadHa();
         return false;
     }

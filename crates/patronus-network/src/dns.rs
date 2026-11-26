@@ -719,11 +719,26 @@ async fn served(
         .collect();
     nets.sort();
     nets.dedup();
-    Ok(Served {
-        addrs: mine.iter().map(|a| a.addr).collect(),
-        devs,
-        nets,
-    })
+    // HA: the resolver answers on the virtual IP too (unbound binds it with
+    // ip-freebind before it exists), and the list is the same on MASTER and
+    // BACKUP: live VIPs are dropped from the scan and re-added from the config
+    let vips: Vec<(String, std::net::IpAddr)> = crate::ha_carp_vips(store)
+        .await?
+        .into_iter()
+        .filter(|(d, _)| devs.contains(d))
+        .map(|(d, n)| (d, n.ip()))
+        .collect();
+    let mut addrs: Vec<IpAddr> = mine
+        .iter()
+        .filter(|a| !vips.iter().any(|(d, ip)| *d == a.ifname && *ip == a.addr))
+        .map(|a| a.addr)
+        .collect();
+    for (_, ip) in &vips {
+        if !addrs.contains(ip) {
+            addrs.push(*ip);
+        }
+    }
+    Ok(Served { addrs, devs, nets })
 }
 
 fn rr(addr: &IpAddr) -> &'static str {

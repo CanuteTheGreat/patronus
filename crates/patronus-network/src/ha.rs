@@ -271,7 +271,37 @@ pub struct Settings {
     pub sync_peer: Option<String>,
     /// advertise the lowest priority so the peer takes over (persistent maintenance mode)
     pub maintenance: bool,
+    /// DHCP failover between the two nodes (Kea `libdhcp_ha.so`; needs the Kea backend)
+    pub dhcp_failover: bool,
+    /// `hot-standby` (one node answers, the other takes over) or `load-balancing`
+    pub dhcp_mode: String,
+    /// this node's role in the Kea HA pair: `primary` or `secondary`
+    pub dhcp_role: String,
+    /// the peer's address for the lease/heartbeat channel (default: the sync peer, else the VRRP peer)
+    pub dhcp_peer: Option<String>,
+    /// this node's own address for that channel (default: its address on the sync interface, else on the VIP interface)
+    pub dhcp_local: Option<String>,
+    /// TCP port of the DHCPv4 HA listener
+    pub dhcp_port4: u16,
+    /// TCP port of the DHCPv6 HA listener
+    pub dhcp_port6: u16,
+    /// Kea heartbeat interval, milliseconds
+    pub dhcp_heartbeat_ms: u32,
+    /// how long the peer may stay silent before this node takes over its leases, milliseconds
+    pub dhcp_max_response_delay_ms: u32,
+    /// clients without an answer that make Kea declare the partner down
+    pub dhcp_max_unacked: u32,
+    /// replicate every lease change to the peer as it happens
+    pub dhcp_send_lease_updates: bool,
+    /// services that run only on the MASTER (they follow the virtual IP):
+    /// any of `wireguard`, `openvpn`, `ipsec`
+    pub follow_services: Vec<String>,
 }
+
+/// Services the VIP can move: they start on MASTER and stop on BACKUP/FAULT.
+pub const FOLLOW_SERVICES: [&str; 3] = ["wireguard", "openvpn", "ipsec"];
+pub const DHCP_MODES: [&str; 2] = ["hot-standby", "load-balancing"];
+pub const DHCP_ROLES: [&str; 2] = ["primary", "secondary"];
 
 impl Default for Settings {
     fn default() -> Self {
@@ -285,6 +315,18 @@ impl Default for Settings {
             sync_interface: None,
             sync_peer: None,
             maintenance: false,
+            dhcp_failover: true,
+            dhcp_mode: "hot-standby".into(),
+            dhcp_role: "primary".into(),
+            dhcp_peer: None,
+            dhcp_local: None,
+            dhcp_port4: 8000,
+            dhcp_port6: 8001,
+            dhcp_heartbeat_ms: 10_000,
+            dhcp_max_response_delay_ms: 60_000,
+            dhcp_max_unacked: 10,
+            dhcp_send_lease_updates: true,
+            follow_services: FOLLOW_SERVICES.iter().map(|s| s.to_string()).collect(),
         }
     }
 }
@@ -309,6 +351,30 @@ pub struct SettingsInput {
     pub sync_peer: Option<String>,
     #[serde(default)]
     pub maintenance: Option<bool>,
+    #[serde(default)]
+    pub dhcp_failover: Option<bool>,
+    #[serde(default)]
+    pub dhcp_mode: Option<String>,
+    #[serde(default)]
+    pub dhcp_role: Option<String>,
+    #[serde(default)]
+    pub dhcp_peer: Option<String>,
+    #[serde(default)]
+    pub dhcp_local: Option<String>,
+    #[serde(default)]
+    pub dhcp_port4: Option<u16>,
+    #[serde(default)]
+    pub dhcp_port6: Option<u16>,
+    #[serde(default)]
+    pub dhcp_heartbeat_ms: Option<u32>,
+    #[serde(default)]
+    pub dhcp_max_response_delay_ms: Option<u32>,
+    #[serde(default)]
+    pub dhcp_max_unacked: Option<u32>,
+    #[serde(default)]
+    pub dhcp_send_lease_updates: Option<bool>,
+    #[serde(default)]
+    pub follow_services: Option<Vec<String>>,
 }
 
 fn opt(s: Option<String>) -> Option<String> {
@@ -332,6 +398,47 @@ pub async fn settings(store: &ConfigStore) -> Result<Settings> {
         sync_interface: opt(g("sync_interface")),
         sync_peer: opt(g("sync_peer")),
         maintenance: g("maintenance").is_some_and(|v| lan::flag(&v)),
+        dhcp_failover: g("dhcp_failover")
+            .map(|v| lan::flag(&v))
+            .unwrap_or(d.dhcp_failover),
+        dhcp_mode: g("dhcp_mode")
+            .filter(|v| DHCP_MODES.contains(&v.as_str()))
+            .unwrap_or(d.dhcp_mode),
+        dhcp_role: g("dhcp_role")
+            .filter(|v| DHCP_ROLES.contains(&v.as_str()))
+            .unwrap_or(d.dhcp_role),
+        dhcp_peer: opt(g("dhcp_peer")),
+        dhcp_local: opt(g("dhcp_local")),
+        dhcp_port4: g("dhcp_port4")
+            .and_then(|v| v.parse().ok())
+            .filter(|p| *p >= 1024)
+            .unwrap_or(d.dhcp_port4),
+        dhcp_port6: g("dhcp_port6")
+            .and_then(|v| v.parse().ok())
+            .filter(|p| *p >= 1024)
+            .unwrap_or(d.dhcp_port6),
+        dhcp_heartbeat_ms: g("dhcp_heartbeat_ms")
+            .and_then(|v| v.parse().ok())
+            .filter(|v| (200..=600_000).contains(v))
+            .unwrap_or(d.dhcp_heartbeat_ms),
+        dhcp_max_response_delay_ms: g("dhcp_max_response_delay_ms")
+            .and_then(|v| v.parse().ok())
+            .filter(|v| (500..=3_600_000).contains(v))
+            .unwrap_or(d.dhcp_max_response_delay_ms),
+        dhcp_max_unacked: g("dhcp_max_unacked")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(d.dhcp_max_unacked),
+        dhcp_send_lease_updates: g("dhcp_send_lease_updates")
+            .map(|v| lan::flag(&v))
+            .unwrap_or(d.dhcp_send_lease_updates),
+        follow_services: match g("follow_services") {
+            Some(v) => v
+                .split(',')
+                .map(|x| x.trim().to_string())
+                .filter(|x| FOLLOW_SERVICES.contains(&x.as_str()))
+                .collect(),
+            None => d.follow_services,
+        },
     })
 }
 
@@ -423,6 +530,88 @@ pub async fn save_settings(store: &ConfigStore, i: &SettingsInput) -> Result<Set
     if let Some(m) = i.maintenance {
         s.maintenance = m;
     }
+    if let Some(v) = i.dhcp_failover {
+        s.dhcp_failover = v;
+    }
+    if let Some(v) = &i.dhcp_mode {
+        let v = v.trim().to_ascii_lowercase();
+        if !DHCP_MODES.contains(&v.as_str()) {
+            return Err(invalid(format!(
+                "DHCP failover mode {v:?}: {}",
+                DHCP_MODES.join(" or ")
+            )));
+        }
+        s.dhcp_mode = v;
+    }
+    if let Some(v) = &i.dhcp_role {
+        let v = v.trim().to_ascii_lowercase();
+        if !DHCP_ROLES.contains(&v.as_str()) {
+            return Err(invalid(format!(
+                "DHCP failover role {v:?}: {}",
+                DHCP_ROLES.join(" or ")
+            )));
+        }
+        s.dhcp_role = v;
+    }
+    if let Some(p) = &i.dhcp_peer {
+        s.dhcp_peer = if p.trim().is_empty() {
+            None
+        } else {
+            Some(check_ip("DHCP failover peer address", p)?)
+        };
+    }
+    if let Some(p) = &i.dhcp_local {
+        s.dhcp_local = if p.trim().is_empty() {
+            None
+        } else {
+            Some(check_ip("DHCP failover local address", p)?)
+        };
+    }
+    for (what, v, slot) in [
+        ("DHCPv4 failover port", i.dhcp_port4, &mut s.dhcp_port4),
+        ("DHCPv6 failover port", i.dhcp_port6, &mut s.dhcp_port6),
+    ] {
+        if let Some(p) = v {
+            if p < 1024 {
+                return Err(invalid(format!("{what}: 1024-65535")));
+            }
+            *slot = p;
+        }
+    }
+    if let Some(v) = i.dhcp_heartbeat_ms {
+        if !(200..=600_000).contains(&v) {
+            return Err(invalid("DHCP failover heartbeat: 200-600000 ms"));
+        }
+        s.dhcp_heartbeat_ms = v;
+    }
+    if let Some(v) = i.dhcp_max_response_delay_ms {
+        if !(500..=3_600_000).contains(&v) {
+            return Err(invalid("DHCP failover takeover delay: 500-3600000 ms"));
+        }
+        s.dhcp_max_response_delay_ms = v;
+    }
+    if let Some(v) = i.dhcp_max_unacked {
+        s.dhcp_max_unacked = v;
+    }
+    if let Some(v) = i.dhcp_send_lease_updates {
+        s.dhcp_send_lease_updates = v;
+    }
+    if let Some(l) = &i.follow_services {
+        let mut out = Vec::new();
+        for x in l {
+            let x = x.trim().to_ascii_lowercase();
+            if !FOLLOW_SERVICES.contains(&x.as_str()) {
+                return Err(invalid(format!(
+                    "follow service {x:?}: {}",
+                    FOLLOW_SERVICES.join(", ")
+                )));
+            }
+            if !out.contains(&x) {
+                out.push(x);
+            }
+        }
+        s.follow_services = out;
+    }
     if s.sync && (s.sync_interface.is_none() || s.sync_peer.is_none()) {
         return Err(invalid(
             "state sync: needs the sync interface and the peer's address on it",
@@ -444,6 +633,24 @@ pub async fn save_settings(store: &ConfigStore, i: &SettingsInput) -> Result<Set
         ),
         ("ha.sync_peer", s.sync_peer.clone().unwrap_or_default()),
         ("ha.maintenance", (s.maintenance as u8).to_string()),
+        ("ha.dhcp_failover", (s.dhcp_failover as u8).to_string()),
+        ("ha.dhcp_mode", s.dhcp_mode.clone()),
+        ("ha.dhcp_role", s.dhcp_role.clone()),
+        ("ha.dhcp_peer", s.dhcp_peer.clone().unwrap_or_default()),
+        ("ha.dhcp_local", s.dhcp_local.clone().unwrap_or_default()),
+        ("ha.dhcp_port4", s.dhcp_port4.to_string()),
+        ("ha.dhcp_port6", s.dhcp_port6.to_string()),
+        ("ha.dhcp_heartbeat_ms", s.dhcp_heartbeat_ms.to_string()),
+        (
+            "ha.dhcp_max_response_delay_ms",
+            s.dhcp_max_response_delay_ms.to_string(),
+        ),
+        ("ha.dhcp_max_unacked", s.dhcp_max_unacked.to_string()),
+        (
+            "ha.dhcp_send_lease_updates",
+            (s.dhcp_send_lease_updates as u8).to_string(),
+        ),
+        ("ha.follow_services", s.follow_services.join(",")),
     ] {
         lan::set_setting(store, k, &v).await?;
     }
@@ -523,7 +730,13 @@ pub fn render_keepalived(
                 "    authentication {{\n        auth_type PASS\n        auth_pass {}\n    }}\n",
                 s.password
             ));
-            if let Some(peer) = &s.peer {
+            // unicast VRRP only on a VIP whose subnet holds the peer's address;
+            // a VIP on another network (the WAN next to a LAN peer) uses multicast
+            let peer = s.peer.as_ref().filter(|p| {
+                p.parse::<IpAddr>()
+                    .is_ok_and(|ip| g.iter().any(|v| v.net.contains(ip)))
+            });
+            if let Some(peer) = peer {
                 let src = local_for(dev, false).ok_or_else(|| {
                     Error::Config(format!(
                         "HA: {dev} has no IPv4 address of its own to send unicast VRRP from"
@@ -626,7 +839,17 @@ General {{
 /// The script keepalived runs on every state change: record the state and
 /// drive conntrackd (commit/flush/resync/bulk on MASTER; shorten timers and
 /// ask the peer for a resync on BACKUP/FAULT).
-pub fn render_notify() -> String {
+pub fn render_notify(follow: &[String]) -> String {
+    // services that follow the virtual IP are re-applied on every transition
+    // (`patronus ha-event` runs exactly those appliers; each asks the HA
+    // state file whether it may run); serialized, in the background so the
+    // VRRP state machine never waits for it
+    let follow_block = if follow.is_empty() {
+        String::new()
+    } else {
+        "if command -v patronus >/dev/null 2>&1; then\n    ( flock -w 120 9; patronus ha-event \"$STATE\" ) 9>\"$DIR/ha-event.lock\" >/dev/null 2>&1 &\nfi\n"
+            .to_string()
+    };
     format!(
         "#!/bin/sh
 # {marker} (HA). keepalived calls: ha-notify.sh GROUP|INSTANCE NAME STATE PRIORITY
@@ -642,9 +865,10 @@ if [ -x {ct_bin} ] && grep -q '^Sync' {ct_conf} 2>/dev/null; then
         BACKUP|FAULT) $CT -t; $CT -n ;;
     esac
 fi
-logger -t patronus-ha \"HA state: $STATE\" 2>/dev/null
+{follow_block}logger -t patronus-ha \"HA state: $STATE\" 2>/dev/null
 exit 0
 ",
+        follow_block = follow_block,
         marker = lan::MARKER,
         ct_bin = CONNTRACKD_BIN,
         ct_conf = CONNTRACKD_CONF,
@@ -824,6 +1048,19 @@ impl HaApplier {
         Ok(())
     }
 
+    /// Re-apply WireGuard/OpenVPN/IPsec so they match the HA state (real
+    /// system only: a test environment never touches the host's VPNs).
+    async fn followers(&self, store: &ConfigStore, rep: &mut ApplyReport) {
+        if self.env.root != std::path::Path::new("/") {
+            return;
+        }
+        for line in crate::ha_follow::apply_followers(store).await {
+            if line.contains(": FAILED ") {
+                rep.warn(line);
+            }
+        }
+    }
+
     fn file(path: &'static str, content: String, mode: u32) -> ManagedFile {
         ManagedFile {
             path,
@@ -920,6 +1157,8 @@ impl Applier for HaApplier {
             if rep.applied.is_empty() {
                 rep.applied("high availability is off (keepalived/conntrackd untouched)");
             }
+            // services that were held down on a BACKUP node run again
+            self.followers(store, &mut rep).await;
             return Ok(rep);
         };
         if !self.env.has_binary(KEEPALIVED_BIN) {
@@ -936,12 +1175,13 @@ impl Applier for HaApplier {
                     .into(),
             ));
         }
+        let follow = settings(store).await?.follow_services;
         lan::ensure_dir(&self.env, "/etc/patronus", 0o750, None);
         lan::ensure_dir(&self.env, "/etc/keepalived", 0o755, None);
         lan::ensure_dir(&self.env, "/etc/conntrackd", 0o755, None);
         if lan::install(
             &self.env,
-            &Self::file(NOTIFY_SCRIPT, render_notify(), 0o750),
+            &Self::file(NOTIFY_SCRIPT, render_notify(&follow), 0o750),
         )? {
             rep.applied(format!("wrote {NOTIFY_SCRIPT}"));
         }
@@ -990,6 +1230,8 @@ impl Applier for HaApplier {
                 &mut rep,
             )?;
         }
+        // a changed follow list / VIP set takes effect now, not at the next transition
+        self.followers(store, &mut rep).await;
         Ok(rep)
     }
 
@@ -1000,7 +1242,7 @@ impl Applier for HaApplier {
             Some((ka, ct)) => {
                 let mut o = format!(
                     "## {KEEPALIVED_CONF}\n{ka}\n## {NOTIFY_SCRIPT}\n{}",
-                    render_notify()
+                    render_notify(&settings(store).await?.follow_services)
                 );
                 if let Some(ct) = ct {
                     o.push_str(&format!("\n## {CONNTRACKD_CONF}\n{ct}"));
@@ -1021,6 +1263,18 @@ impl Applier for HaApplier {
                 .any(|a| a.ifname == v.dev && a.addr == v.net.ip())
         };
         let (state, since) = read_state(&self.env);
+        // services that run only on the MASTER, and why one is held
+        let mut follow = Vec::new();
+        for svc in &s.follow_services {
+            let state_file = self.env.path(STATE_FILE);
+            let held = crate::ha_follow::follow_hold(store, svc, Some(&state_file)).await?;
+            follow.push(json!({"service": svc, "running_here": held.is_none(), "held": held}));
+        }
+        #[cfg(feature = "dhcp")]
+        let kea = crate::dhcp::backend(store, &self.env).await? == crate::dhcp::Backend::Kea;
+        #[cfg(not(feature = "dhcp"))]
+        let kea = false;
+        let dhcp = crate::ha_follow::dhcp_status(store, &self.env, kea).await?;
         let vips: Vec<Value> = carp
             .iter()
             .map(|v| (v, "carp"))
@@ -1042,6 +1296,8 @@ impl Applier for HaApplier {
             "vips": vips,
             "peer": s.peer,
             "sync": s.sync,
+            "follow": follow,
+            "dhcp": dhcp,
         }))
     }
 }
@@ -1174,7 +1430,7 @@ mod tests {
         ] {
             assert!(c.contains(want), "{want}: {c}");
         }
-        let n = render_notify();
+        let n = render_notify(&["wireguard".to_string()]);
         assert!(
             n.starts_with("#!/bin/sh")
                 && n.contains(" -c; ")
@@ -1183,6 +1439,24 @@ mod tests {
             "{n}"
         );
         assert!(n.contains("/run/patronus"));
+        // services that follow the VIP are re-applied on every transition
+        assert!(n.contains("patronus ha-event \"$STATE\""), "{n}");
+        assert!(!render_notify(&[]).contains("ha-event"));
+    }
+
+    #[test]
+    fn a_vip_on_another_subnet_than_the_peer_uses_multicast_vrrp() {
+        let vips = [
+            rv("lan-gw", "eth1", "192.168.50.254/24", 51),
+            rv("wan-vip", "eth0", "203.0.113.254/24", 52),
+        ];
+        let c = render_keepalived(&settings_on(), &vips, "fw1", &[], &local).unwrap();
+        let wan = c.split("vrrp_instance PAT_eth0_52").nth(1).unwrap();
+        let wan = wan.split("vrrp_instance").next().unwrap();
+        assert!(!wan.contains("unicast_peer"), "WAN instance: {wan}");
+        let lan = c.split("vrrp_instance PAT_eth1_51").nth(1).unwrap();
+        let lan = lan.split("vrrp_instance").next().unwrap();
+        assert!(lan.contains("unicast_peer"), "LAN instance: {lan}");
     }
 
     #[test]

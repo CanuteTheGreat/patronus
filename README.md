@@ -257,6 +257,12 @@ that are not finished are listed separately under
   with VRRP (keepalived), preemption and a maintenance mode, connection-state
   sync (conntrackd) so a failover keeps established connections, and alias
   addresses; configured from the HA page or `/api/ha`. [C42]
+- DHCP failover and services that follow the virtual IP (USE=ha with the Kea
+  backend): both nodes serve the same pools with Kea's HA hook (hot-standby or
+  load-balancing), every lease is copied to the peer, a client renews the same
+  address from the other node after a failover, clients get the LAN virtual IP
+  as gateway, and WireGuard, OpenVPN and IPsec run only on the node that holds
+  the virtual IP. The dnsmasq backend is refused with a reason. [C87]
 - Traffic shaping (USE=qos): CAKE, fq_codel or a rate limit per interface from
   the Traffic shaping page, applied with `tc` and re-applied at boot. [C45]
 - External login: people on a RADIUS server (PAP, answers verified with the

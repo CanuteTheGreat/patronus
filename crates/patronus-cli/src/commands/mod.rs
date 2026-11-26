@@ -15,6 +15,8 @@ pub mod firstboot;
 pub mod gitops;
 #[cfg(feature = "guest")]
 pub mod guest;
+#[cfg(feature = "ha")]
+pub mod ha;
 #[cfg(feature = "uci-import")]
 pub mod import_uci;
 pub mod init;

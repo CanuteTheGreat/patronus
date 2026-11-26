@@ -79,6 +79,16 @@ enum Commands {
         ddns_disabled: bool,
     },
 
+    /// Called by keepalived's notify script on every VRRP transition (USE=ha):
+    /// start or stop the services that follow the virtual IP (WireGuard,
+    /// OpenVPN, IPsec) according to the new state
+    #[cfg(feature = "ha")]
+    #[command(name = "ha-event", hide = true)]
+    HaEvent {
+        /// MASTER, BACKUP or FAULT (informational: the state file decides)
+        state: String,
+    },
+
     /// Called by hostapd (through `hostapd_cli -a`) when a station joins with
     /// a Patronus key id: a pending Wi-Fi device learns its MAC (USE=wifi-ap)
     #[cfg(feature = "wifi-ap")]
@@ -819,6 +829,11 @@ async fn main() -> anyhow::Result<()> {
             }
             WifiChanCommands::Status => commands::wifi::chan_status(cli.db).await?,
         },
+
+        #[cfg(feature = "ha")]
+        Commands::HaEvent { state } => {
+            commands::ha::event(cli.db, state).await?;
+        }
 
         #[cfg(feature = "wifi-ap")]
         Commands::WifiEvent { iface, mac, keyid } => {

@@ -844,9 +844,29 @@ mod ha_impl {
 
         pub async fn save_ha_settings(&self, i: ha::SettingsInput) -> anyhow::Result<()> {
             let _g = self.edit.lock().await;
+            #[cfg(feature = "dhcp")]
+            if i.dhcp_failover == Some(true) {
+                // refuse early, with the reason, instead of silently running two DHCP servers
+                let env = patronus_network::lan::LanEnv::system();
+                let backend = patronus_network::dhcp::backend(&self.store, &env)
+                    .await
+                    .map_err(e)?;
+                let has_pools = !patronus_network::dhcp::list_pools(&self.store)
+                    .await
+                    .map_err(e)?
+                    .is_empty();
+                if backend == patronus_network::dhcp::Backend::Dnsmasq && has_pools {
+                    return Err(anyhow::anyhow!(
+                        "Invalid DHCP failover: the dnsmasq DHCP backend has no failover protocol and \
+                         does not share leases between the nodes; switch the DHCP backend to Kea first"
+                    ));
+                }
+            }
             let snap = self.begin("change HA settings").await?;
             ha::save_settings(&self.store, &i).await.map_err(e)?;
-            self.commit("HA settings", snap, &["ha"]).await
+            // the DHCP failover pair and the services that follow the VIP are
+            // part of the same change (HA's own applier re-applies the VPN services)
+            self.commit("HA settings", snap, &["ha", "dhcp"]).await
         }
 
         pub async fn save_vip(&self, id: Option<i64>, i: ha::VipInput) -> anyhow::Result<i64> {

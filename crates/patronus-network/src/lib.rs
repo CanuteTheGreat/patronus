@@ -91,6 +91,53 @@ pub mod shaping;
 
 #[cfg(feature = "ha")]
 pub mod ha;
+#[cfg(feature = "ha")]
+pub mod ha_follow;
+
+/// The carp virtual IPs when HA is on: `(device, address/prefix)`. Services
+/// that must answer on the VIP (DHCP options, DNS) read these instead of
+/// the live addresses, so their config is the same on MASTER and BACKUP
+/// and a failover never rewrites it. Empty in a build without `USE=ha`.
+#[allow(dead_code)]
+pub(crate) async fn ha_carp_vips(
+    store: &patronus_config::ConfigStore,
+) -> patronus_core::Result<Vec<(String, ipnetwork::IpNetwork)>> {
+    #[cfg(feature = "ha")]
+    {
+        if !ha::settings(store).await?.enabled {
+            return Ok(Vec::new());
+        }
+        Ok(ha::resolve_vips(store)
+            .await?
+            .0
+            .into_iter()
+            .map(|v| (v.dev, v.net))
+            .collect())
+    }
+    #[cfg(not(feature = "ha"))]
+    {
+        let _ = store;
+        Ok(Vec::new())
+    }
+}
+
+/// `Some(reason)` when HA says service `svc` (wireguard, openvpn, ipsec)
+/// must not run on this node now (it follows the virtual IP and this node
+/// is not MASTER). Always `None` in a build without `USE=ha`.
+pub async fn ha_follow_hold(
+    store: &patronus_config::ConfigStore,
+    svc: &str,
+) -> patronus_core::Result<Option<String>> {
+    #[cfg(feature = "ha")]
+    {
+        ha_follow::follow_hold(store, svc, None).await
+    }
+    #[cfg(not(feature = "ha"))]
+    {
+        let _ = (store, svc);
+        Ok(None)
+    }
+}
 
 pub mod svc;
 pub mod wol;

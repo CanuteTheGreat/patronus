@@ -856,6 +856,7 @@ impl WireGuardApplier {
         iface: &WgInterface,
         peers: &[&WgPeer],
         k: &KernelState,
+        hold: Option<&str>,
         rep: &mut ApplyReport,
     ) -> Result<()> {
         let n = iface.name.as_str();
@@ -914,6 +915,16 @@ impl WireGuardApplier {
         if k.get(n).map(|l| l.mtu) != Some(mtu) {
             self.ip(&["link", "set", "dev", n, "mtu", &mtu.to_string()])
                 .await?;
+        }
+        if let Some(why) = hold {
+            // HA: the tunnel follows the virtual IP. Configured (key, peers,
+            // addresses) but down on the node that does not hold it; going
+            // down also drops the peer routes.
+            if k.get(n).is_some_and(|l| l.up) {
+                self.ip(&["link", "set", "dev", n, "down"]).await?;
+            }
+            rep.applied(format!("{n}: held down ({why})"));
+            return Ok(());
         }
         if !k.get(n).is_some_and(|l| l.up) {
             self.ip(&["link", "set", "dev", n, "up"]).await?;
@@ -1009,13 +1020,14 @@ impl Applier for WireGuardApplier {
                 }
             }
         }
+        let hold = crate::ha_follow_hold(store, "wireguard").await?;
         let mut failed = Vec::new();
         for i in ifaces.iter().filter(|i| i.enabled) {
             let ps: Vec<&WgPeer> = peers
                 .iter()
                 .filter(|p| p.interface == i.name && p.enabled)
                 .collect();
-            if let Err(e) = self.apply_one(i, &ps, &k, &mut rep).await {
+            if let Err(e) = self.apply_one(i, &ps, &k, hold.as_deref(), &mut rep).await {
                 failed.push(format!("{}: {e}", i.name));
             }
         }

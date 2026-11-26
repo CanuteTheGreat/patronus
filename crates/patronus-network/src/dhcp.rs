@@ -545,6 +545,10 @@ pub struct Resolved4 {
     pub pool: DhcpPool,
     pub dev: String,
     pub router: Ipv4Addr,
+    /// HA: the LAN virtual IP in this subnet. Clients get it as default gateway (and DNS
+    /// server) instead of the router's own address, so a renewal from the peer node
+    /// keeps a working gateway. The same on MASTER and BACKUP.
+    pub vip: Option<Ipv4Addr>,
     pub prefix: u8,
     pub subnet: String,
 }
@@ -561,6 +565,9 @@ pub async fn resolve_pools(
     rep: &mut ApplyReport,
 ) -> Result<Vec<Resolved4>> {
     let mut out = Vec::new();
+    let vips = crate::ha_carp_vips(store).await?;
+    // a live virtual IP is never "the router's address" (it moves with the VRRP state)
+    let is_vip = |a: &IfAddr| vips.iter().any(|(d, n)| *d == a.ifname && n.ip() == a.addr);
     for p in list_pools(store).await?.into_iter().filter(|p| p.enabled) {
         let devs = lan::resolve_iface(store, &p.interface).await?;
         if devs.is_empty() {
@@ -573,6 +580,7 @@ pub async fn resolve_pools(
         let hit = addrs.iter().find(|a| {
             devs.contains(&a.ifname)
                 && a.addr.is_ipv4()
+                && !is_vip(a)
                 && a.network().is_some_and(|n| {
                     n.contains(IpAddr::V4(p.range_start)) && n.contains(IpAddr::V4(p.range_end))
                 })
@@ -587,10 +595,20 @@ pub async fn resolve_pools(
                         a.ifname
                     ));
                 }
+                let vip = vips.iter().find_map(|(d, n)| match n.ip() {
+                    IpAddr::V4(v)
+                        if *d == a.ifname
+                            && a.network().is_some_and(|an| an.contains(IpAddr::V4(v))) =>
+                    {
+                        Some(v)
+                    }
+                    _ => None,
+                });
                 out.push(Resolved4 {
                     subnet: a.network().map(|n| n.to_string()).unwrap_or_default(),
                     dev: a.ifname.clone(),
                     router,
+                    vip,
                     prefix: a.prefix,
                     pool: p,
                 });
@@ -628,14 +646,14 @@ fn options4(r: &Resolved4, dns_on: bool, ntp_on: bool) -> Options4 {
     let dns = v4s(&r.pool.dns_servers);
     let ntp = v4s(&r.pool.ntp_servers);
     Options4 {
-        gateway: r.pool.gateway.unwrap_or(r.router),
+        gateway: r.pool.gateway.unwrap_or(r.vip.unwrap_or(r.router)),
         dns: if dns.is_empty() && dns_on {
-            vec![r.router]
+            vec![r.vip.unwrap_or(r.router)]
         } else {
             dns
         },
         ntp: if ntp.is_empty() && ntp_on {
-            vec![r.router]
+            vec![r.vip.unwrap_or(r.router)]
         } else {
             ntp
         },
@@ -672,8 +690,19 @@ pub fn render_kea4(
     dns_on: bool,
     ntp_on: bool,
     local_domain: Option<&str>,
+    ha_keys: Option<&Value>,
 ) -> String {
-    let mut ifaces: Vec<&str> = pools.iter().map(|r| r.dev.as_str()).collect();
+    // With a virtual IP on the interface Kea binds to the router's own address
+    // only (`dev/addr`): a socket bound to the VIP would die with it when the
+    // VIP moves to the peer, and the server identifier must be this node's own
+    // address (a renewal then goes to the node that really holds the lease).
+    let mut ifaces: Vec<String> = pools
+        .iter()
+        .map(|r| match r.vip {
+            Some(_) => format!("{}/{}", r.dev, r.router),
+            None => r.dev.clone(),
+        })
+        .collect();
     ifaces.sort();
     ifaces.dedup();
     let subnets: Vec<Value> = pools
@@ -742,6 +771,13 @@ pub fn render_kea4(
     if !classes.is_empty() {
         doc["Dhcp4"]["client-classes"] = json!(classes);
     }
+    // DHCP failover: Kea's HA hook (the pair's leases follow the clients)
+    if let (Some(k), Some(d)) = (
+        ha_keys.and_then(|k| k.as_object()),
+        doc["Dhcp4"].as_object_mut(),
+    ) {
+        d.extend(k.clone());
+    }
     format!(
         "{}{}\n",
         lan::header("//", "Kea DHCPv4 server"),
@@ -808,6 +844,57 @@ struct Plan {
     ntp_on: bool,
     /// `dns.local_domain`: default DHCP domain when a pool has none.
     local_domain: Option<String>,
+    /// Kea HA daemon keys per family when DHCP failover is in effect
+    ha4: Option<Value>,
+    ha6: Option<Value>,
+}
+
+/// DHCP failover: Kea HA daemon keys for (v4, v6), or why there are none.
+/// The dnsmasq backend refuses it (no failover protocol, leases are not
+/// shared): the pools keep serving on their own and the HA page says why.
+#[allow(unused_variables)]
+async fn ha_plan(
+    store: &ConfigStore,
+    env: &LanEnv,
+    backend: Backend,
+    v4: bool,
+    v6: bool,
+    rep: &mut ApplyReport,
+) -> Result<(Option<Value>, Option<Value>)> {
+    #[cfg(feature = "ha")]
+    {
+        use crate::ha_follow::kea_ha;
+        let s = crate::ha::settings(store).await?;
+        if !s.enabled || !s.dhcp_failover || crate::ha_carp_vips(store).await?.is_empty() {
+            return Ok((None, None));
+        }
+        if backend != Backend::Kea {
+            if v4 || v6 {
+                rep.warn(
+                    "DHCP failover refused: the dnsmasq backend has no failover protocol and \
+                     does not share leases between the nodes. Switch the DHCP backend to Kea \
+                     to get DHCP failover (until then both nodes would hand out the same \
+                     addresses)",
+                );
+            }
+            return Ok((None, None));
+        }
+        let h4 = if v4 {
+            kea_ha(store, env, false, rep).await?
+        } else {
+            None
+        };
+        let h6 = if v6 {
+            kea_ha(store, env, true, rep).await?
+        } else {
+            None
+        };
+        Ok((h4.map(|h| h.daemon_keys()), h6.map(|h| h.daemon_keys())))
+    }
+    #[cfg(not(feature = "ha"))]
+    {
+        Ok((None, None))
+    }
 }
 
 async fn plan(store: &ConfigStore, env: &LanEnv, rep: &mut ApplyReport) -> Result<Plan> {
@@ -887,6 +974,7 @@ async fn plan(store: &ConfigStore, env: &LanEnv, rep: &mut ApplyReport) -> Resul
             }
         }
     }
+    let (ha4, ha6) = ha_plan(store, env, backend, !v4.is_empty(), !v6.is_empty(), rep).await?;
     Ok(Plan {
         backend,
         ra_backend,
@@ -896,6 +984,8 @@ async fn plan(store: &ConfigStore, env: &LanEnv, rep: &mut ApplyReport) -> Resul
         relays,
         dns_on,
         ntp_on,
+        ha4,
+        ha6,
         local_domain: lan::setting_or(store, "dns.local_domain", "")
             .await
             .ok()
@@ -1130,7 +1220,13 @@ impl DhcpApplier {
                 KEA4_BIN,
                 ManagedFile {
                     path: KEA4_CONF,
-                    content: render_kea4(&p.v4, p.dns_on, p.ntp_on, p.local_domain.as_deref()),
+                    content: render_kea4(
+                        &p.v4,
+                        p.dns_on,
+                        p.ntp_on,
+                        p.local_domain.as_deref(),
+                        p.ha4.as_ref(),
+                    ),
                     mode: 0o640,
                     group: Some("dhcp"),
                     check: Some(vec![KEA4_BIN, "-t", "{}"]),
@@ -1142,7 +1238,7 @@ impl DhcpApplier {
                 dhcp6::KEA6_BIN,
                 ManagedFile {
                     path: dhcp6::KEA6_CONF,
-                    content: dhcp6::render_kea(&p.v6, p.dns_on),
+                    content: dhcp6::render_kea(&p.v6, p.dns_on, p.ha6.as_ref()),
                     mode: 0o640,
                     group: Some("dhcp"),
                     check: Some(vec![dhcp6::KEA6_BIN, "-t", "{}"]),
@@ -1169,8 +1265,8 @@ impl DhcpApplier {
     /// the daemon is no longer needed.
     fn idle_content(svc: &str, p: &Plan) -> String {
         match svc {
-            "kea-dhcp4" => render_kea4(&[], p.dns_on, p.ntp_on, None),
-            "kea-dhcp6" => dhcp6::render_kea(&[], p.dns_on),
+            "kea-dhcp4" => render_kea4(&[], p.dns_on, p.ntp_on, None, None),
+            "kea-dhcp6" => dhcp6::render_kea(&[], p.dns_on, None),
             _ => ra::render_radvd(&[], p.dns_on),
         }
     }
@@ -1640,7 +1736,7 @@ mod tests {
     #[test]
     fn kea_config_has_no_empty_client_classes_list() {
         // kea-dhcp4 refuses `"client-classes": []` (syntax error: unexpected ], expecting {)
-        let doc = render_kea4(&[], true, true, None);
+        let doc = render_kea4(&[], true, true, None, None);
         assert!(!doc.contains("client-classes"), "{doc}");
     }
 
@@ -1703,7 +1799,7 @@ mod tests {
         let r = resolve_pools(&s, &t.env.addrs().unwrap(), &mut ApplyReport::default())
             .await
             .unwrap();
-        let k = render_kea4(&r, true, false, Some("home.example"));
+        let k = render_kea4(&r, true, false, Some("home.example"), None);
         let body: String = k
             .lines()
             .filter(|l| !l.starts_with("//"))
@@ -1843,5 +1939,165 @@ mod tests {
             w.warnings.iter().any(|m| m.contains("prefix-relative")),
             "{w:?}"
         );
+    }
+
+    /// HA on: HA settings + a carp VIP on the LAN, a pool and a peer.
+    #[cfg(feature = "ha")]
+    async fn ha_seed(s: &ConfigStore, vip: &str) {
+        crate::ha::save_vip(
+            s,
+            None,
+            &crate::ha::VipInput {
+                name: Some("gw".into()),
+                interface: Some("@lan".into()),
+                address: Some(vip.into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        crate::ha::save_settings(
+            s,
+            &crate::ha::SettingsInput {
+                enabled: Some(true),
+                dhcp_peer: Some("192.168.50.3".into()),
+                dhcp_local: Some("192.168.50.1".into()),
+                dhcp_role: Some("secondary".into()),
+                dhcp_heartbeat_ms: Some(1000),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[cfg(feature = "ha")]
+    fn kea4_json(conf: &str) -> Value {
+        let body: String = conf
+            .lines()
+            .filter(|l| !l.starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        serde_json::from_str(&body).unwrap()
+    }
+
+    #[cfg(feature = "ha")]
+    #[tokio::test]
+    async fn kea_with_ha_loads_the_hook_and_hands_out_the_vip_as_gateway() {
+        let t = testutil::env(&[KEA4_BIN, dhcp6::KEA6_BIN, lan::DNSMASQ_BIN]);
+        let s = testutil::store().await;
+        seed(&s).await;
+        ha_seed(&s, "192.168.50.254/24").await;
+        let a = DhcpApplier::new(t.env.clone());
+        a.apply(&s).await.unwrap();
+        let j = kea4_json(&read(&t, KEA4_CONF));
+        let d = &j["Dhcp4"];
+        let ha = &d["hooks-libraries"][1]["parameters"]["high-availability"][0];
+        assert_eq!(d["hooks-libraries"][1]["library"], "libdhcp_ha.so");
+        assert_eq!(ha["this-server-name"], "patronus-secondary");
+        assert_eq!(ha["peers"][1]["url"], "http://192.168.50.1:8000/");
+        assert_eq!(ha["peers"][0]["url"], "http://192.168.50.3:8000/");
+        assert_eq!(ha["heartbeat-delay"], 1000);
+        // the VIP is the gateway (and the DNS server when the resolver runs), never the router's own address
+        let opts = d["subnet4"][0]["option-data"].as_array().unwrap();
+        let get = |n: &str| {
+            opts.iter()
+                .find(|o| o["name"] == n)
+                .map(|o| o["data"].clone())
+        };
+        assert_eq!(get("routers"), Some(json!("192.168.50.254")));
+        if let Some(dns) = get("domain-name-servers") {
+            assert_eq!(dns, json!("192.168.50.254"));
+        }
+        // Kea binds the router's own address: a socket on the VIP would die when the VIP moves
+        assert_eq!(
+            d["interfaces-config"]["interfaces"][0],
+            "rtr-lan/192.168.50.1"
+        );
+        // HA off: the same pool renders without the hook, bound to the whole interface
+        crate::ha::save_settings(
+            &s,
+            &crate::ha::SettingsInput {
+                dhcp_failover: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        a.apply(&s).await.unwrap();
+        let j = kea4_json(&read(&t, KEA4_CONF));
+        assert!(j["Dhcp4"].get("hooks-libraries").is_none(), "{j}");
+        let opts = j["Dhcp4"]["subnet4"][0]["option-data"].as_array().unwrap();
+        // VIP still configured with HA on: gateway stays the VIP even without failover
+        assert_eq!(opts[0]["data"], "192.168.50.254");
+    }
+
+    #[cfg(feature = "ha")]
+    #[tokio::test]
+    async fn a_live_vip_on_the_interface_is_never_taken_for_the_router_address() {
+        let mut t = testutil::env(&[KEA4_BIN, lan::DNSMASQ_BIN]);
+        // MASTER: the VIP sits on rtr-lan, listed first
+        t.env.addrs = std::sync::Arc::new(lan::StaticAddrs(vec![
+            IfAddr {
+                ifname: "rtr-lan".into(),
+                addr: "192.168.50.254".parse().unwrap(),
+                prefix: 24,
+            },
+            IfAddr {
+                ifname: "rtr-lan".into(),
+                addr: "192.168.50.1".parse().unwrap(),
+                prefix: 24,
+            },
+        ]));
+        let s = testutil::store().await;
+        seed(&s).await;
+        ha_seed(&s, "192.168.50.254/24").await;
+        let r = resolve_pools(&s, &t.env.addrs().unwrap(), &mut ApplyReport::default())
+            .await
+            .unwrap();
+        assert_eq!(r[0].router.to_string(), "192.168.50.1");
+        assert_eq!(r[0].vip.unwrap().to_string(), "192.168.50.254");
+        // BACKUP: no VIP on the interface, the same answer
+        t.env.addrs = std::sync::Arc::new(lan::StaticAddrs(vec![IfAddr {
+            ifname: "rtr-lan".into(),
+            addr: "192.168.50.1".parse().unwrap(),
+            prefix: 24,
+        }]));
+        let r2 = resolve_pools(&s, &t.env.addrs().unwrap(), &mut ApplyReport::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            render_kea4(&r, true, true, None, None),
+            render_kea4(&r2, true, true, None, None),
+            "a failover must not rewrite the DHCP config"
+        );
+    }
+
+    #[cfg(feature = "ha")]
+    #[tokio::test]
+    async fn the_dnsmasq_backend_refuses_dhcp_failover_with_a_reason() {
+        let t = testutil::env(&[lan::DNSMASQ_BIN]);
+        let s = testutil::store().await;
+        seed(&s).await;
+        lan::set_setting(&s, "dhcp.backend", "dnsmasq")
+            .await
+            .unwrap();
+        ha_seed(&s, "192.168.50.254/24").await;
+        let a = DhcpApplier::new(t.env.clone());
+        let rep = a.apply(&s).await.unwrap();
+        assert!(
+            rep.warnings
+                .iter()
+                .any(|w| w.contains("DHCP failover refused") && w.contains("dnsmasq")),
+            "{:?}",
+            rep.warnings
+        );
+        let st = crate::ha_follow::dhcp_status(&s, &t.env, false)
+            .await
+            .unwrap();
+        assert_eq!(st["active"], false);
+        assert!(st["reason"].as_str().unwrap().contains("dnsmasq"), "{st}");
+        // the pool still serves (alone), with the VIP as gateway
+        assert!(read(&t, lan::DNSMASQ_CONF).contains("192.168.50.254"));
     }
 }

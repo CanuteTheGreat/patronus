@@ -4,7 +4,11 @@
 //! - input: VRRP (IP protocol 112, IPv4 multicast 224.0.0.18 or unicast
 //!   from the peer, and IPv6) on the interfaces that carry a virtual IP;
 //! - input: connection-state sync (conntrackd, UDP 3780) from the sync
-//!   peer on the sync interface only.
+//!   peer on the sync interface only;
+//! - input: the DHCP failover channel (Kea HA lease updates and heartbeats,
+//!   TCP, default 8000 for DHCPv4 and 8001 for DHCPv6) from the peer only,
+//!   on the sync interface (or the virtual IP interfaces without a sync
+//!   network).
 
 use crate::nftables::TABLE;
 use patronus_config::store::ConfigStore;
@@ -81,6 +85,48 @@ pub async fn ha_rules(store: &ConfigStore) -> Result<Vec<String>> {
             }
         }
     }
+    // DHCP failover channel (the same defaults and key names as
+    // patronus_network::ha::Settings)
+    let dhcp_on = setting(store, "ha.dhcp_failover")
+        .await?
+        .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(true);
+    let dhcp_peer = setting(store, "ha.dhcp_peer").await?;
+    let sync_peer = setting(store, "ha.sync_peer").await?;
+    let vrrp_peer = setting(store, "ha.peer").await?;
+    let from_sync = dhcp_peer.is_none() && sync_peer.is_some();
+    let peer = dhcp_peer.or(sync_peer).or(vrrp_peer);
+    if let (true, Some(peer)) = (dhcp_on, peer) {
+        let mut ports = Vec::new();
+        for (key, default) in [("ha.dhcp_port4", 8000u16), ("ha.dhcp_port6", 8001u16)] {
+            let p = setting(store, key)
+                .await?
+                .and_then(|v| v.trim().parse::<u16>().ok())
+                .filter(|p| *p >= 1024)
+                .unwrap_or(default);
+            if !ports.contains(&p) {
+                ports.push(p);
+            }
+        }
+        let list = ports
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let on_devs: BTreeSet<String> =
+            match (from_sync, setting(store, "ha.sync_interface").await?) {
+                (true, Some(spec)) => devices(store, &spec).await.into_iter().collect(),
+                _ => devs.clone(),
+            };
+        if let Ok(ip) = peer.trim().parse::<IpAddr>() {
+            let fam = if ip.is_ipv6() { "ip6" } else { "ip" };
+            for d in on_devs.iter().filter(|d| safe_dev(d)) {
+                out.push(format!(
+                    "add rule {TABLE} input iifname \"{d}\" {fam} saddr {ip} tcp dport {{ {list} }} accept comment \"HA DHCP failover\""
+                ));
+            }
+        }
+    }
     Ok(out)
 }
 
@@ -123,6 +169,21 @@ mod tests {
                 .any(|l| l.contains("iifname \"eth2\" ip saddr 10.9.9.2 udp dport 3780 accept")),
             "{r:?}"
         );
+        // DHCP failover: the peer's address on the sync interface, the two Kea HA ports
+        put(&s, "ha.dhcp_port4", "8100").await;
+        let r = ha_rules(&s).await.unwrap();
+        assert!(
+            r.iter().any(|l| l.contains(
+                "iifname \"eth2\" ip saddr 10.9.9.2 tcp dport { 8100, 8001 } accept comment \"HA DHCP failover\""
+            )),
+            "{r:?}"
+        );
+        put(&s, "ha.dhcp_failover", "0").await;
+        assert!(!ha_rules(&s)
+            .await
+            .unwrap()
+            .iter()
+            .any(|l| l.contains("HA DHCP failover")));
         // a hostile device name never reaches nft
         sqlx::query(
             "UPDATE lan_settings SET value='eth2\" accept #' WHERE key='ha.sync_interface'",

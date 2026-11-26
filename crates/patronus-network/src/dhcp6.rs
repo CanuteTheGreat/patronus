@@ -196,6 +196,8 @@ pub struct Resolved6 {
     pub pool: Dhcp6Pool,
     pub dev: String,
     pub router: Ipv6Addr,
+    /// HA: the LAN virtual IP in this prefix; handed out instead of the router's own address
+    pub vip: Option<Ipv6Addr>,
     pub subnet: String,
 }
 
@@ -207,6 +209,8 @@ pub async fn resolve(
     rep: &mut ApplyReport,
 ) -> Result<Vec<Resolved6>> {
     let mut out = Vec::new();
+    let vips = crate::ha_carp_vips(store).await?;
+    let is_vip = |a: &IfAddr| vips.iter().any(|(d, n)| *d == a.ifname && n.ip() == a.addr);
     for p in list(store).await?.into_iter().filter(|p| p.enabled) {
         let devs = lan::resolve_iface(store, &p.interface).await?;
         if devs.is_empty() {
@@ -220,6 +224,7 @@ pub async fn resolve(
         let hit = addrs.iter().find(|a| {
             devs.contains(&a.ifname)
                 && a.is_global_v6()
+                && !is_vip(a)
                 && a.prefix == p.prefix_len
                 && (relative
                     || a.network()
@@ -228,10 +233,19 @@ pub async fn resolve(
         match hit {
             Some(a) => {
                 let IpAddr::V6(router) = a.addr else { continue };
+                let vip = vips.iter().find_map(|(d, n)| match n.ip() {
+                    IpAddr::V6(v)
+                        if *d == a.ifname && a.network().is_some_and(|an| an.contains(n.ip())) =>
+                    {
+                        Some(v)
+                    }
+                    _ => None,
+                });
                 out.push(Resolved6 {
                     subnet: a.network().map(|n| n.to_string()).unwrap_or_default(),
                     dev: a.ifname.clone(),
                     router,
+                    vip,
                     pool: p,
                 });
             }
@@ -266,14 +280,18 @@ fn dns_for(r: &Resolved6, dns_on: bool) -> Vec<String> {
             .map(|a| a.to_string())
             .collect()
     } else if dns_on {
-        vec![r.router.to_string()]
+        vec![r.vip.unwrap_or(r.router).to_string()]
     } else {
         vec![]
     }
 }
 
 /// `/etc/kea/kea-dhcp6.conf` for the resolved pools.
-pub fn render_kea(pools: &[Resolved6], dns_on: bool) -> String {
+///
+/// `ha_keys`: the daemon-level keys of Kea HA (`hooks-libraries`,
+/// `multi-threading`, see `ha_follow::KeaHa::daemon_keys`) when DHCP
+/// failover is on.
+pub fn render_kea(pools: &[Resolved6], dns_on: bool, ha_keys: Option<&Value>) -> String {
     let mut ifaces: Vec<&str> = pools.iter().map(|r| r.dev.as_str()).collect();
     ifaces.sort();
     ifaces.dedup();
@@ -295,7 +313,7 @@ pub fn render_kea(pools: &[Resolved6], dns_on: bool) -> String {
             s
         })
         .collect();
-    let doc = json!({
+    let mut doc = json!({
         "Dhcp6": {
             "interfaces-config": {"interfaces": ifaces},
             "lease-database": {"type": "memfile", "persist": true, "name": KEA6_LEASES, "lfc-interval": 3600},
@@ -303,6 +321,12 @@ pub fn render_kea(pools: &[Resolved6], dns_on: bool) -> String {
             "loggers": [{"name": "kea-dhcp6", "output-options": [{"output": "stdout"}], "severity": "INFO"}],
         }
     });
+    if let (Some(k), Some(d)) = (
+        ha_keys.and_then(|k| k.as_object()),
+        doc["Dhcp6"].as_object_mut(),
+    ) {
+        d.extend(k.clone());
+    }
     format!(
         "{}{}\n",
         lan::header("//", "Kea DHCPv6 server"),
@@ -399,6 +423,7 @@ mod tests {
             pool,
             dev: "br-lan".into(),
             router: "fd00:50::1".parse().unwrap(),
+            vip: None,
             subnet: "fd00:50::/64".into(),
         };
         let v = dnsmasq_lines(&r, false, false);
