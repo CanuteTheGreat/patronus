@@ -232,7 +232,12 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
     // the WAN. Both are off unless switched on.
     for (slug, label, def_port, only_when) in [
         ("zabbix", "Zabbix agent", 10050_i64, None),
-        ("telegraf", "Telegraf scrape", 9273_i64, Some(("output", "prometheus_client"))),
+        (
+            "telegraf",
+            "Telegraf scrape",
+            9273_i64,
+            Some(("output", "prometheus_client")),
+        ),
     ] {
         let m = settings(store, slug).await?;
         if !on(&m, "enabled") {
@@ -715,15 +720,25 @@ mod tests {
         s.set_interface_role("eth1", Some("lan")).await.unwrap();
         put(&s, "zabbix.enabled", "0").await;
         put(&s, "telegraf.enabled", "0").await;
-        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default(), "off: nothing");
+        assert_eq!(
+            svc_rules(&s).await.unwrap(),
+            VpnRules::default(),
+            "off: nothing"
+        );
         put(&s, "zabbix.enabled", "1").await;
         let f = svc_rules(&s).await.unwrap().filter.join("\n");
-        assert!(f.contains("input iifname \"eth1\" tcp dport 10050 accept"), "{f}");
+        assert!(
+            f.contains("input iifname \"eth1\" tcp dport 10050 accept"),
+            "{f}"
+        );
         assert!(!f.contains("eth0"), "never the WAN: {f}");
         put(&s, "zabbix.listen_port", "10051").await;
         put(&s, "zabbix.listen_iface", "@opt1").await;
         let f = svc_rules(&s).await.unwrap().filter.join("\n");
-        assert!(f.is_empty(), "an unassigned role opens nothing, never 'any': {f}");
+        assert!(
+            f.is_empty(),
+            "an unassigned role opens nothing, never 'any': {f}"
+        );
         put(&s, "zabbix.listen_iface", "@lan").await;
         let f = svc_rules(&s).await.unwrap().filter.join("\n");
         assert!(f.contains("tcp dport 10051 accept"), "{f}");
@@ -733,10 +748,16 @@ mod tests {
         assert!(!f.contains("9273"), "a push output has no listener: {f}");
         put(&s, "telegraf.output", "prometheus_client").await;
         let f = svc_rules(&s).await.unwrap().filter.join("\n");
-        assert!(f.contains("input iifname \"eth1\" tcp dport 9273 accept"), "{f}");
+        assert!(
+            f.contains("input iifname \"eth1\" tcp dport 9273 accept"),
+            "{f}"
+        );
         put(&s, "telegraf.listen_port", "9999; drop").await;
         let f = svc_rules(&s).await.unwrap().filter.join("\n");
-        assert!(f.contains("tcp dport 9273 accept") && !f.contains("drop"), "{f}");
+        assert!(
+            f.contains("tcp dport 9273 accept") && !f.contains("drop"),
+            "{f}"
+        );
     }
 
     #[tokio::test]

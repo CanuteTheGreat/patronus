@@ -223,7 +223,9 @@ async fn metrics_gate(
         return MetricsGate::Deny(
             (
                 StatusCode::FORBIDDEN,
-                axum::Json(serde_json::json!({"error": "this source address may not read /metrics"})),
+                axum::Json(
+                    serde_json::json!({"error": "this source address may not read /metrics"}),
+                ),
             )
                 .into_response(),
         );

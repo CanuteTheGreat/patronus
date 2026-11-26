@@ -38,7 +38,7 @@ use crate::lan::{self, invalid, LanEnv};
 #[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
 use crate::supervise::{which, write_atomic, Supervisor};
 #[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
-use crate::svc::{self, Coll, SECRET_MASK};
+use crate::svc;
 #[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
 use patronus_config::applier::{Applier, ApplyReport, Phase};
 
@@ -140,7 +140,10 @@ impl MetricsPolicy {
         let (Some(t), Some(h)) = (&self.token, header) else {
             return false;
         };
-        let Some(got) = h.strip_prefix("Bearer ").or_else(|| h.strip_prefix("bearer ")) else {
+        let Some(got) = h
+            .strip_prefix("Bearer ")
+            .or_else(|| h.strip_prefix("bearer "))
+        else {
             return false;
         };
         let (a, b) = (t.as_bytes(), got.trim().as_bytes());
@@ -195,10 +198,7 @@ pub fn conf_val(s: &str) -> String {
 
 #[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
 fn user_exists(name: &str) -> bool {
-    nix::unistd::User::from_name(name)
-        .ok()
-        .flatten()
-        .is_some()
+    nix::unistd::User::from_name(name).ok().flatten().is_some()
 }
 
 #[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
@@ -543,6 +543,7 @@ pub use zabbix::{check_psk, ZabbixApplier, ZabbixConf, ZabbixSvc, ZABBIX_SPEC};
 
 #[cfg(feature = "zabbix-agent")]
 pub mod zabbix {
+    use crate::svc::{Coll, SECRET_MASK};
     use super::*;
 
     static FIELDS: [Field; 8] = [
@@ -598,7 +599,10 @@ pub mod zabbix {
         if psk == SECRET_MASK || psk.is_empty() {
             return Ok(());
         }
-        if psk.len() >= 32 && psk.len().is_multiple_of(2) && psk.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if psk.len() >= 32
+            && psk.len().is_multiple_of(2)
+            && psk.bytes().all(|b| b.is_ascii_hexdigit())
+        {
             Ok(())
         } else {
             Err(invalid(
@@ -864,7 +868,8 @@ pub mod zabbix {
 
 #[cfg(feature = "telegraf")]
 pub use telegraf::{
-    check_tables, check_url, Inputs, TelegrafApplier, TelegrafConf, TelegrafSvc, OUTPUTS, TELEGRAF_SPEC,
+    check_tables, check_url, Inputs, TelegrafApplier, TelegrafConf, TelegrafSvc, OUTPUTS,
+    TELEGRAF_SPEC,
 };
 
 #[cfg(feature = "telegraf")]
@@ -1153,7 +1158,8 @@ pub mod telegraf {
                 if s.s("bucket").is_empty() {
                     return Err(invalid("Telegraf: the bucket or database is required"));
                 }
-                if output == "influxdb_v2" && (s.s("organization").is_empty() || s.s("token").is_empty())
+                if output == "influxdb_v2"
+                    && (s.s("organization").is_empty() || s.s("token").is_empty())
                 {
                     return Err(invalid(
                         "Telegraf: InfluxDB v2 needs an organization and a token",
@@ -1344,7 +1350,9 @@ mod tests {
     fn prometheus_text_is_parsed_with_labels() {
         let s = parse_prom(PROM);
         assert_eq!(s.len(), 9);
-        let g = s.iter().find(|x| x.value == 0.0 && x.name == "patronus_gateway_up");
+        let g = s
+            .iter()
+            .find(|x| x.value == 0.0 && x.name == "patronus_gateway_up");
         assert_eq!(g.unwrap().labels["gateway"], "LTE \"b\"");
     }
 
@@ -1359,7 +1367,10 @@ mod tests {
         assert_eq!(q("service.up", "dnsmasq").unwrap(), "1");
         assert!(q("gateway.up", "").is_err());
         assert!(q("gateway.up", "nope").is_err());
-        assert!(q("dhcp.leases", "").is_err(), "absent metric is an error, not 0");
+        assert!(
+            q("dhcp.leases", "").is_err(),
+            "absent metric is an error, not 0"
+        );
         assert!(q("system.run", "id").is_err());
         let d: Value = serde_json::from_str(&q("gateway.discovery", "").unwrap()).unwrap();
         assert_eq!(d["data"].as_array().unwrap().len(), 2);
@@ -1473,17 +1484,32 @@ mod tests {
             for k in &keys {
                 assert!(
                     [
-                        "Server", "Hostname", "ListenIP", "ListenPort", "LogType",
-                        "ControlSocket", "Timeout", "TLSConnect", "TLSAccept",
-                        "TLSPSKIdentity", "TLSPSKFile", "DenyKey",
-                        "Plugins.SystemRun.LogRemoteCommands", "UnsafeUserParameters",
+                        "Server",
+                        "Hostname",
+                        "ListenIP",
+                        "ListenPort",
+                        "LogType",
+                        "ControlSocket",
+                        "Timeout",
+                        "TLSConnect",
+                        "TLSAccept",
+                        "TLSPSKIdentity",
+                        "TLSPSKFile",
+                        "DenyKey",
+                        "Plugins.SystemRun.LogRemoteCommands",
+                        "UnsafeUserParameters",
                         "UserParameter"
                     ]
                     .contains(k),
                     "unexpected key {k}\n{out}"
                 );
             }
-            assert_eq!(keys.iter().filter(|k| **k == "UnsafeUserParameters").count(), 1);
+            assert_eq!(
+                keys.iter()
+                    .filter(|k| **k == "UnsafeUserParameters")
+                    .count(),
+                1
+            );
             assert!(out.contains("UnsafeUserParameters=0\n"));
             assert_eq!(keys.iter().filter(|k| **k == "TLSAccept").count(), 1);
             assert!(out.contains("TLSAccept=psk\n"));
@@ -1517,14 +1543,22 @@ mod tests {
                 .unwrap();
             let e = a.apply(&st).await.unwrap_err();
             assert!(e.to_string().contains("server"), "{e}");
-            svc::save_row(&st, &zabbix::ZABBIX_SPEC.colls[0], None, &json!({"host": "zbx.example.net"}))
-                .await
-                .unwrap();
-            assert!(
-                svc::save_row(&st, &zabbix::ZABBIX_SPEC.colls[0], None, &json!({"host": "a;b"}))
-                    .await
-                    .is_err()
-            );
+            svc::save_row(
+                &st,
+                &zabbix::ZABBIX_SPEC.colls[0],
+                None,
+                &json!({"host": "zbx.example.net"}),
+            )
+            .await
+            .unwrap();
+            assert!(svc::save_row(
+                &st,
+                &zabbix::ZABBIX_SPEC.colls[0],
+                None,
+                &json!({"host": "a;b"})
+            )
+            .await
+            .is_err());
             let psk = "0123456789abcdef".repeat(2);
             svc::put_settings(
                 &st,
@@ -1534,7 +1568,10 @@ mod tests {
             .await
             .unwrap();
             let rep = a.apply(&st).await.unwrap();
-            assert!(rep.applied.iter().any(|l| l.contains("10050") || l.contains("Zabbix")));
+            assert!(rep
+                .applied
+                .iter()
+                .any(|l| l.contains("10050") || l.contains("Zabbix")));
             let dir = base_dir(&sup.paths).join("zabbix");
             let conf = std::fs::read_to_string(dir.join("zabbix_agent2.conf")).unwrap();
             assert!(conf.contains("Server=zbx.example.net\n") && conf.contains("Hostname=rtr1\n"));
@@ -1545,7 +1582,11 @@ mod tests {
             assert_eq!(key.trim(), psk);
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(
-                std::fs::metadata(dir.join("psk.key")).unwrap().permissions().mode() & 0o777,
+                std::fs::metadata(dir.join("psk.key"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
                 0o640
             );
             // the page and the dry-run render never show the key
@@ -1554,7 +1595,11 @@ mod tests {
             assert!(!a.render(&st).await.unwrap().contains(&psk));
             // unchanged config: no restart
             let rep2 = a.apply(&st).await.unwrap();
-            assert!(rep2.applied.iter().any(|l| l.contains("unchanged")), "{:?}", rep2.applied);
+            assert!(
+                rep2.applied.iter().any(|l| l.contains("unchanged")),
+                "{:?}",
+                rep2.applied
+            );
             // disabling stops it and removes the key
             svc::put_settings(&st, &zabbix::ZABBIX_SPEC, &json!({"enabled": false}))
                 .await
@@ -1568,9 +1613,17 @@ mod tests {
         async fn page_refuses_a_bad_key_and_remote_commands_stay_off() {
             let st = lan::testutil::store().await;
             let page = zabbix::ZabbixSvc;
-            assert!(page.put(&st, &json!({"psk": "nothex-nothex-nothex-nothex-nothex"})).await.is_err());
-            assert!(page.put(&st, &json!({"remote_commands": "on"})).await.is_err());
-            page.put(&st, &json!({"psk": "ab".repeat(20)})).await.unwrap();
+            assert!(page
+                .put(&st, &json!({"psk": "nothex-nothex-nothex-nothex-nothex"}))
+                .await
+                .is_err());
+            assert!(page
+                .put(&st, &json!({"remote_commands": "on"}))
+                .await
+                .is_err());
+            page.put(&st, &json!({"psk": "ab".repeat(20)}))
+                .await
+                .unwrap();
             let g = page.get(&st).await.unwrap();
             assert_eq!(g["settings"]["psk"], SECRET_MASK);
             assert_eq!(g["settings"]["remote_commands"], "off");
@@ -1617,12 +1670,18 @@ mod tests {
             assert_eq!(out["metric_version"].as_integer(), Some(2));
             assert!(v["inputs"]["cpu"].is_array() && v["inputs"]["mem"].is_array());
             assert!(v["inputs"]["conntrack"].is_array());
-            assert_eq!(v["inputs"]["nftables"][0]["tables"][0].as_str(), Some("inet patronus"));
+            assert_eq!(
+                v["inputs"]["nftables"][0]["tables"][0].as_str(),
+                Some("inet patronus")
+            );
             assert_eq!(
                 v["inputs"]["file"][0]["files"][0].as_str(),
                 Some("/var/lib/patronus-monagent/metrics.prom")
             );
-            assert!(v["inputs"].get("disk").is_none(), "off inputs are not rendered");
+            assert!(
+                v["inputs"].get("disk").is_none(),
+                "off inputs are not rendered"
+            );
         }
 
         #[test]
@@ -1640,12 +1699,19 @@ mod tests {
                 c.username = hostile;
                 let doc = telegraf::render(&c);
                 let v: toml::Value = toml::from_str(&doc).unwrap_or_else(|e| panic!("{e}\n{doc}"));
-                assert!(v["outputs"].get("exec").is_none(), "no injected output\n{doc}");
+                assert!(
+                    v["outputs"].get("exec").is_none(),
+                    "no injected output\n{doc}"
+                );
                 let o = match out {
                     "influxdb_v2" => &v["outputs"]["influxdb_v2"][0],
                     _ => &v["outputs"]["influxdb"][0],
                 };
-                let token_key = if out == "influxdb_v2" { "token" } else { "password" };
+                let token_key = if out == "influxdb_v2" {
+                    "token"
+                } else {
+                    "password"
+                };
                 assert_eq!(o[token_key].as_str(), Some(hostile));
                 assert_eq!(v["outputs"].as_table().unwrap().len(), 1);
             }
@@ -1653,16 +1719,33 @@ mod tests {
 
         #[test]
         fn url_and_table_validation() {
-            for ok in ["http://influx.example:8086", "https://10.0.0.2:8086/", "https://[fd00::1]:8086/x", "http://a.b"] {
+            for ok in [
+                "http://influx.example:8086",
+                "https://10.0.0.2:8086/",
+                "https://[fd00::1]:8086/x",
+                "http://a.b",
+            ] {
                 assert!(telegraf::check_url(ok).is_ok(), "{ok}");
             }
             for bad in [
-                "ftp://x", "http://", "http://a b", "http://a\"b", "http://u:p@h", "http://h:99999",
-                "http://h/a\nb", "http://h\\x", "javascript:1",
+                "ftp://x",
+                "http://",
+                "http://a b",
+                "http://a\"b",
+                "http://u:p@h",
+                "http://h:99999",
+                "http://h/a\nb",
+                "http://h\\x",
+                "javascript:1",
             ] {
                 assert!(telegraf::check_url(bad).is_err(), "{bad}");
             }
-            assert_eq!(telegraf::check_tables("inet patronus, ip nat").unwrap().len(), 2);
+            assert_eq!(
+                telegraf::check_tables("inet patronus, ip nat")
+                    .unwrap()
+                    .len(),
+                2
+            );
             assert!(telegraf::check_tables("inet patronus; rm").is_err());
             assert!(telegraf::check_tables("evil x").is_err());
             assert!(telegraf::check_tables("inet").is_err());
@@ -1682,7 +1765,9 @@ mod tests {
             }
             let a = telegraf::TelegrafApplier::with_parts(sup.clone(), t.env.clone(), Some(fake));
             let page = telegraf::TelegrafSvc;
-            page.put(&st, &json!({"enabled": true, "output": "influxdb_v2"})).await.unwrap();
+            page.put(&st, &json!({"enabled": true, "output": "influxdb_v2"}))
+                .await
+                .unwrap();
             assert!(a.apply(&st).await.unwrap_err().to_string().contains("URL"));
             assert!(page.put(&st, &json!({"url": "http://h\"x"})).await.is_err());
             page.put(
@@ -1696,7 +1781,10 @@ mod tests {
             assert!(rep.applied[0].contains("(re)started"), "{:?}", rep.applied);
             let cfg = base_dir(&sup.paths).join("telegraf/telegraf.conf");
             let txt = std::fs::read_to_string(&cfg).unwrap();
-            assert!(txt.contains("tok-0123456789"), "the daemon's file has the token");
+            assert!(
+                txt.contains("tok-0123456789"),
+                "the daemon's file has the token"
+            );
             assert!(!a.render(&st).await.unwrap().contains("tok-0123456789"));
             let g = page.get(&st).await.unwrap();
             assert_eq!(g["settings"]["token"], SECRET_MASK);
@@ -1707,9 +1795,15 @@ mod tests {
             let rep = a.apply(&st).await.unwrap();
             assert!(rep.applied[0].contains("(re)started"), "{:?}", rep.applied);
             // prometheus_client binds the LAN address
-            page.put(&st, &json!({"output": "prometheus_client"})).await.unwrap();
+            page.put(&st, &json!({"output": "prometheus_client"}))
+                .await
+                .unwrap();
             let rep = a.apply(&st).await.unwrap();
-            assert!(rep.applied[0].contains("192.168.50.1:9273"), "{:?}", rep.applied);
+            assert!(
+                rep.applied[0].contains("192.168.50.1:9273"),
+                "{:?}",
+                rep.applied
+            );
             page.put(&st, &json!({"enabled": false})).await.unwrap();
             a.apply(&st).await.unwrap();
             assert!(!cfg.exists());

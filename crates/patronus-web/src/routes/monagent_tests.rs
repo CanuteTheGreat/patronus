@@ -141,7 +141,13 @@ impl T {
             .to_string()
     }
 
-    async fn call(&self, cookie: &str, m: Method, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+    async fn call(
+        &self,
+        cookie: &str,
+        m: Method,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
         let (s, b, _) = self
             .send(
                 m,
@@ -162,13 +168,19 @@ async fn zabbix_page_validates_masks_the_key_applies_and_undoes() {
     let (s, b) = t.call(&c, Method::GET, "/api/svc", None).await;
     assert_eq!(s, StatusCode::OK);
     for slug in ["zabbix", "telegraf", "metrics"] {
-        assert!(b.as_array().unwrap().iter().any(|f| f["slug"] == slug), "{slug} not listed: {b}");
+        assert!(
+            b.as_array().unwrap().iter().any(|f| f["slug"] == slug),
+            "{slug} not listed: {b}"
+        );
     }
     let (s, b) = t.call(&c, Method::GET, "/api/svc/zabbix", None).await;
     assert_eq!(s, StatusCode::OK, "{b}");
     assert_eq!(b["settings"]["enabled"], false, "off by default");
     assert_eq!(b["settings"]["listen_port"], 10050);
-    assert_eq!(b["settings"]["listen_iface"], "@lan", "the LAN only, by default");
+    assert_eq!(
+        b["settings"]["listen_iface"], "@lan",
+        "the LAN only, by default"
+    );
     assert_eq!(b["settings"]["remote_commands"], "off");
     let keys: Vec<&str> = b["schema"]["fields"]
         .as_array()
@@ -176,7 +188,15 @@ async fn zabbix_page_validates_masks_the_key_applies_and_undoes() {
         .iter()
         .map(|f| f["key"].as_str().unwrap())
         .collect();
-    for k in ["enabled", "hostname", "listen_iface", "listen_port", "psk_identity", "psk", "active_server"] {
+    for k in [
+        "enabled",
+        "hostname",
+        "listen_iface",
+        "listen_port",
+        "psk_identity",
+        "psk",
+        "active_server",
+    ] {
         assert!(keys.contains(&k), "no {k}: {keys:?}");
     }
     assert_eq!(b["schema"]["collections"][0]["key"], "servers");
@@ -190,11 +210,18 @@ async fn zabbix_page_validates_masks_the_key_applies_and_undoes() {
         json!({"active_server": "bad host"}),
         json!({"surprise": 1}),
     ] {
-        let (s, b) = t.call(&c, Method::PUT, "/api/svc/zabbix", Some(body.clone())).await;
+        let (s, b) = t
+            .call(&c, Method::PUT, "/api/svc/zabbix", Some(body.clone()))
+            .await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "{body} -> {b}");
     }
     let (s, _) = t
-        .call(&c, Method::POST, "/api/svc/zabbix/servers", Some(json!({"host": "x;rm"})))
+        .call(
+            &c,
+            Method::POST,
+            "/api/svc/zabbix/servers",
+            Some(json!({"host": "x;rm"})),
+        )
         .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
     assert_eq!(t.zabbix.applies.load(Ordering::SeqCst), 0);
@@ -211,11 +238,19 @@ async fn zabbix_page_validates_masks_the_key_applies_and_undoes() {
     assert_eq!(s, StatusCode::OK, "{b}");
     assert_eq!(t.zabbix.applies.load(Ordering::SeqCst), 1);
     let (s, _) = t
-        .call(&c, Method::POST, "/api/svc/zabbix/servers", Some(json!({"host": "zbx.example.net"})))
+        .call(
+            &c,
+            Method::POST,
+            "/api/svc/zabbix/servers",
+            Some(json!({"host": "zbx.example.net"})),
+        )
         .await;
     assert!(s.is_success(), "{s}");
     let (_, b) = t.call(&c, Method::GET, "/api/svc/zabbix", None).await;
-    assert_eq!(b["settings"]["psk"], "********", "the key is never returned");
+    assert_eq!(
+        b["settings"]["psk"], "********",
+        "the key is never returned"
+    );
     assert!(!b.to_string().contains(psk));
     assert_eq!(b["collections"]["servers"][0]["host"], "zbx.example.net");
     let audit: Vec<String> = sqlx::query_scalar("SELECT COALESCE(details, '') FROM audit_log")
@@ -225,7 +260,12 @@ async fn zabbix_page_validates_masks_the_key_applies_and_undoes() {
     assert!(audit.iter().all(|d| !d.contains(psk)), "{audit:?}");
     // writing the mask back keeps the stored key
     let (s, _) = t
-        .call(&c, Method::PUT, "/api/svc/zabbix", Some(json!({"psk": "********", "listen_port": 10051})))
+        .call(
+            &c,
+            Method::PUT,
+            "/api/svc/zabbix",
+            Some(json!({"psk": "********", "listen_port": 10051})),
+        )
         .await;
     assert_eq!(s, StatusCode::OK);
     let stored: Option<String> =
@@ -238,7 +278,12 @@ async fn zabbix_page_validates_masks_the_key_applies_and_undoes() {
     // a refused apply is undone
     t.zabbix.fail.store(true, Ordering::SeqCst);
     let (s, _) = t
-        .call(&c, Method::PUT, "/api/svc/zabbix", Some(json!({"listen_port": 10099})))
+        .call(
+            &c,
+            Method::PUT,
+            "/api/svc/zabbix",
+            Some(json!({"listen_port": 10099})),
+        )
         .await;
     assert!(s.is_server_error() || s == StatusCode::BAD_REQUEST, "{s}");
     let (_, b) = t.call(&c, Method::GET, "/api/svc/zabbix", None).await;
@@ -254,7 +299,10 @@ async fn telegraf_page_validates_the_url_and_masks_the_token() {
     assert_eq!(b["settings"]["output"], "prometheus_client");
     assert_eq!(b["settings"]["listen_port"], 9273);
     assert_eq!(b["settings"]["in_conntrack"], true);
-    assert_eq!(b["settings"]["in_nft"], false, "the privileged input is opt-in");
+    assert_eq!(
+        b["settings"]["in_nft"], false,
+        "the privileged input is opt-in"
+    );
     for body in [
         json!({"url": "http://x\"y"}),
         json!({"url": "ftp://host"}),
@@ -264,7 +312,9 @@ async fn telegraf_page_validates_the_url_and_masks_the_token() {
         json!({"nft_tables": "inet x; drop"}),
         json!({"token": "short"}),
     ] {
-        let (s, b) = t.call(&c, Method::PUT, "/api/svc/telegraf", Some(body.clone())).await;
+        let (s, b) = t
+            .call(&c, Method::PUT, "/api/svc/telegraf", Some(body.clone()))
+            .await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "{body} -> {b}");
     }
     assert_eq!(t.telegraf.applies.load(Ordering::SeqCst), 0);
@@ -293,22 +343,44 @@ async fn metrics_endpoint_follows_its_typed_settings() {
         async move { t.send(Method::GET, "/metrics", &hs, peer, None).await }
     };
     // defaults = today's behaviour: a login is required, a session is enough
-    assert_eq!(get(vec![], Some("192.168.50.9")).await.0, StatusCode::UNAUTHORIZED);
-    assert_eq!(get(cookie(&c), Some("192.168.50.9")).await.0, StatusCode::OK);
+    assert_eq!(
+        get(vec![], Some("192.168.50.9")).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        get(cookie(&c), Some("192.168.50.9")).await.0,
+        StatusCode::OK
+    );
 
     // a scrape token replaces the login for /metrics only
     let (s, _) = t
-        .call(&c, Method::PUT, "/api/svc/metrics", Some(json!({"token": "scrape-token-123"})))
+        .call(
+            &c,
+            Method::PUT,
+            "/api/svc/metrics",
+            Some(json!({"token": "scrape-token-123"})),
+        )
         .await;
     assert_eq!(s, StatusCode::OK);
     let bearer = |v: &str| vec![(header::AUTHORIZATION, format!("Bearer {v}"))];
     let (s, body, _) = get(bearer("scrape-token-123"), Some("192.168.50.9")).await;
     assert_eq!(s, StatusCode::OK);
     assert!(body.contains("patronus_"), "{body}");
-    assert_eq!(get(bearer("scrape-token-124"), Some("192.168.50.9")).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        get(bearer("scrape-token-124"), Some("192.168.50.9"))
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
     // the token opens nothing else
     let (s, _, _) = t
-        .send(Method::GET, "/api/status", &bearer("scrape-token-123"), Some("192.168.50.9"), None)
+        .send(
+            Method::GET,
+            "/api/status",
+            &bearer("scrape-token-123"),
+            Some("192.168.50.9"),
+            None,
+        )
         .await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
     // and is never shown
@@ -317,24 +389,58 @@ async fn metrics_endpoint_follows_its_typed_settings() {
 
     // an allowed source network binds everyone, token and session included
     let (s, _) = t
-        .call(&c, Method::PUT, "/api/svc/metrics", Some(json!({"allowed_source": "192.168.50.0/24"})))
+        .call(
+            &c,
+            Method::PUT,
+            "/api/svc/metrics",
+            Some(json!({"allowed_source": "192.168.50.0/24"})),
+        )
         .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(get(bearer("scrape-token-123"), Some("192.168.50.9")).await.0, StatusCode::OK);
-    assert_eq!(get(bearer("scrape-token-123"), Some("203.0.113.5")).await.0, StatusCode::FORBIDDEN);
-    assert_eq!(get(cookie(&c), Some("203.0.113.5")).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(
+        get(bearer("scrape-token-123"), Some("192.168.50.9"))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(bearer("scrape-token-123"), Some("203.0.113.5")).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        get(cookie(&c), Some("203.0.113.5")).await.0,
+        StatusCode::FORBIDDEN
+    );
     let (s, _) = t
-        .call(&c, Method::PUT, "/api/svc/metrics", Some(json!({"allowed_source": "not a network"})))
+        .call(
+            &c,
+            Method::PUT,
+            "/api/svc/metrics",
+            Some(json!({"allowed_source": "not a network"})),
+        )
         .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 
     // the switch: off answers 404 to everybody
     let (s, _) = t
-        .call(&c, Method::PUT, "/api/svc/metrics", Some(json!({"enabled": false})))
+        .call(
+            &c,
+            Method::PUT,
+            "/api/svc/metrics",
+            Some(json!({"enabled": false})),
+        )
         .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(get(bearer("scrape-token-123"), Some("192.168.50.9")).await.0, StatusCode::NOT_FOUND);
-    assert_eq!(get(cookie(&c), Some("192.168.50.9")).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        get(bearer("scrape-token-123"), Some("192.168.50.9"))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(cookie(&c), Some("192.168.50.9")).await.0,
+        StatusCode::NOT_FOUND
+    );
 }
 
 #[tokio::test]
@@ -342,10 +448,19 @@ async fn navigation_lists_the_monitoring_pages() {
     let t = setup().await;
     let c = t.admin().await;
     let (s, body, _) = t
-        .send(Method::GET, "/svc/zabbix", &[(header::COOKIE, c.clone())], None, None)
+        .send(
+            Method::GET,
+            "/svc/zabbix",
+            &[(header::COOKIE, c.clone())],
+            None,
+            None,
+        )
         .await;
     assert_eq!(s, StatusCode::OK);
     for href in ["/svc/metrics", "/svc/zabbix", "/svc/telegraf"] {
-        assert!(body.contains(&format!("href=\"{href}\"")), "{href} missing from the menu");
+        assert!(
+            body.contains(&format!("href=\"{href}\"")),
+            "{href} missing from the menu"
+        );
     }
 }

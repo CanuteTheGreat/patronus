@@ -106,9 +106,9 @@ pub mod netflow;
 
 #[cfg(feature = "igmp")]
 pub mod igmp;
-pub mod monagent;
 #[cfg(feature = "mdns")]
 pub mod mdns;
+pub mod monagent;
 
 #[cfg(feature = "nat64")]
 pub mod nat64;

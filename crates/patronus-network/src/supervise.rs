@@ -439,7 +439,10 @@ impl Supervisor {
         // fail fast if it dies immediately (bad option, missing plugin)
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         let argv_refs: Vec<&str> = spec.argv.iter().map(String::as_str).collect();
-        if !pid_alive(pid, Some(real_program(&argv_refs)).filter(|p| !p.is_empty())) {
+        if !pid_alive(
+            pid,
+            Some(real_program(&argv_refs)).filter(|p| !p.is_empty()),
+        ) {
             let tail = std::fs::read_to_string(&log).unwrap_or_default();
             let tail: Vec<&str> = tail.lines().rev().take(5).collect();
             return Err(Error::Network(format!(
@@ -524,12 +527,24 @@ mod tests {
     #[test]
     fn a_setpriv_wrapper_is_looked_through() {
         let w = [
-            "/usr/bin/setpriv", "--reuid=zabbix", "--regid=zabbix", "--init-groups", "--",
-            "/usr/sbin/zabbix_agent2", "-f",
+            "/usr/bin/setpriv",
+            "--reuid=zabbix",
+            "--regid=zabbix",
+            "--init-groups",
+            "--",
+            "/usr/sbin/zabbix_agent2",
+            "-f",
         ];
         assert_eq!(real_program(&w), "/usr/sbin/zabbix_agent2");
-        assert_eq!(real_program(&["/usr/bin/igmpproxy", "-n"]), "/usr/bin/igmpproxy");
-        assert_eq!(real_program(&["setpriv"]), "setpriv", "no -- : nothing to look through");
+        assert_eq!(
+            real_program(&["/usr/bin/igmpproxy", "-n"]),
+            "/usr/bin/igmpproxy"
+        );
+        assert_eq!(
+            real_program(&["setpriv"]),
+            "setpriv",
+            "no -- : nothing to look through"
+        );
         assert_eq!(real_program(&[]), "");
     }
 

@@ -25,9 +25,8 @@ fn period() -> Duration {
 
 /// Does an enabled agent read the snapshot?
 pub async fn wanted(store: &patronus_config::ConfigStore) -> bool {
-    let flag = |v: Option<String>| {
-        v.is_some_and(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
-    };
+    let flag =
+        |v: Option<String>| v.is_some_and(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"));
     let get = |k: &'static str| async move {
         patronus_network::lan::get_setting(store, k)
             .await
