@@ -80,6 +80,8 @@ def main():
                 check("203.0.113.9" in bans and "seeded" in bans, f"{tag}: the seeded ban and its note are listed")
                 nav = page.locator('.sidebar-nav a.nav-item[href="/security/brute-force"]')
                 check(nav.count() == 1 and "active" in (nav.get_attribute("class") or ""), f"{tag}: menu entry present and marked")
+                srcs = page.locator('#g-form input[name^=src_]').count()
+                check(srcs == 6, f"{tag}: the form offers every source: SSH, Dropbear, web UI, OpenVPN, IPsec, intrusion detection ({srcs})")
                 overflow = page.evaluate("document.scrollingElement.scrollWidth - window.innerWidth")
                 check(overflow <= 1, f"{tag}: nothing scrolls sideways (overflow {overflow}px)")
                 backgrounds[(scheme, width)] = page.evaluate("getComputedStyle(document.body).backgroundColor")
@@ -100,6 +102,19 @@ def main():
                     )
                     got = api(page, "GET", "/api/guard")["json"]["settings"]["max_failures"]
                     check(got == 7, f"{tag}: saving the form stores the setting (max_failures {got})")
+                    # the VPN and intrusion-detection sources: ticked, saved, stored
+                    page.evaluate("document.querySelector('.g-adv').open = true")
+                    page.check('#g-form input[name=src_ids]')
+                    page.fill('#g-form input[name=ids_max_alerts]', "12")
+                    page.select_option('#g-form select[name=ids_severity]', "2")
+                    page.click("#g-save")
+                    page.wait_for_function(
+                        "document.getElementById('g-error').style.display === 'none'", timeout=10000
+                    )
+                    st = api(page, "GET", "/api/guard")["json"]["settings"]
+                    check("ids" in st["sources"] and "openvpn" in st["sources"] and "strongswan" in st["sources"]
+                          and st["ids_max_alerts"] == 12 and st["ids_severity"] == 2,
+                          f"{tag}: the intrusion-detection source and its limits are saved ({st['sources']}, {st['ids_max_alerts']}, {st['ids_severity']})")
                     page.fill('#g-ban-form input[name=address]', "198.51.100.66")
                     page.fill('#g-ban-form input[name=reason]', "from the page")
                     page.click('#g-ban-form button[type=submit]')

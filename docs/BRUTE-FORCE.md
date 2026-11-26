@@ -15,6 +15,7 @@ and **off until you turn it on** (Security > Brute-force protection, or
 | `web` | every refused login of the web UI (wrong password, wrong two-factor code) |
 | `openvpn` | the OpenVPN server's `VERIFY ERROR` (a client certificate the CA did not sign) and `Auth Username/Password verification failed` |
 | `strongswan` | IKEv2 logins strongSwan refused: `generating IKE_AUTH response ... N(AUTH_FAILED)` (wrong pre-shared key, unknown certificate) and `EAP-MS-CHAPv2 verification failed` (wrong password), each one a guess |
+| `ids` | (off by default) alerts of the intrusion-detection engine from one source address, at or above a severity: see "IDS source" |
 
 SSH messages are read from the system log: on systemd hosts the journal
 (`journalctl -f`, tags `sshd`, `sshd-session`, `sshd-auth`, `dropbear`), on other
@@ -47,6 +48,20 @@ name (`--syslog NAME`) is added with `guard.log_tags`. A line counts only when i
 written by the VPN daemon (an anchored prefix: empty, a timestamp, or a syslog tag
 that is the daemon's), so text another program or a user name repeats cannot get an
 address banned.
+
+### IDS source
+
+With `ids` among the sources, an address the intrusion-detection engine keeps alerting
+on is banned like a password guesser. The guard reads the engine's alert history
+(`ids_alerts`); alerts that were already there when the protection started are history
+and count as nothing. An alert counts when its severity is `guard.ids_severity` or more
+serious (1 = high .. 4 = informational; default 1) and, with `guard.ids_action` =
+`blocked`, only when the IPS dropped the packet (`any` counts every alert, default).
+`guard.ids_max_alerts` (default 10) counted alerts within `guard.find_secs` ban the
+source. The router's own addresses are never banned and the usual exemptions apply, so
+an alert caused by a LAN device does not ban it while the LAN exemption is on. The
+source is only useful with the engine running (USE=intrusion-detection); without the
+history table there is nothing to read and nothing happens.
 
 ## When an address is banned
 
@@ -86,7 +101,7 @@ or `patronus guard set KEY=VALUE ...`:
 | Key | Default | |
 |---|---|---|
 | `enabled` | `0` | protection on/off |
-| `sources` | `sshd,dropbear,web,openvpn,strongswan` | what is counted |
+| `sources` | `sshd,dropbear,web,openvpn,strongswan` | what is counted (`ids` is added by hand) |
 | `max_failures` | `5` | failures before a ban (1-1000) |
 | `find_secs` | `600` | counting window |
 | `ban_secs` | `900` | first ban |
@@ -100,6 +115,7 @@ or `patronus guard set KEY=VALUE ...`:
 | `openvpn_log` | `auto` | OpenVPN server output: the supervisor's file or an absolute path |
 | `log_tags` | empty | extra syslog names of VPN daemons whose lines may count |
 | `journal` | `auto` | read the journal: `auto` (systemd, no explicit files), `on`, `off` |
+| `ids_severity` / `ids_action` / `ids_max_alerts` | `1` / `any` / `10` | IDS source: severity (1-4), `any` or `blocked`, alerts before a ban (1-100000) |
 | `history_days` / `history_max_rows` | `30` / `5000` | ban history retention |
 | `tick_secs` | `2` | check interval |
 
@@ -118,8 +134,20 @@ rollbacks neither carry nor rewind them.
 
 ## Tiers
 
-The standard tier builds it by default. Router-tier images (embedded) do not
-carry it yet; their System page lists it under "Not available on this device".
+The standard tier builds it by default. The router tier carries it too, on both
+images: the AX1800 access points (aarch64) and the Slate (MIPS). Dropbear is the SSH
+server there; its failures go through the busybox syslog into `/var/log/messages`,
+which `guard.log_files = auto` follows (no journal on the OpenRC variant). The
+engine is part of the multi-call binary (`bruteforce` in the image's `FEATURES=`),
+off until switched on, and costs:
+
+| Image | What it costs |
+|---|---|
+| Slate, release build (mips musl, size-optimised, the CI recipe) | binary 15,189,872 -> 15,321,084 bytes (+131,212, +0.9 %); xz-compressed 4,110,180 -> 4,148,504 (+38,324) |
+| any router image, guard on | measured by the QEMU gates as `GATEMETRIC guard_applyd_rss_*` (applyd resident memory before and with a ban) |
+
+The IDS source is for the standard tier (the router tier has no IDS engine) and the
+System page of a router image lists it under "Not available on this device".
 
 ## Proof
 
@@ -138,3 +166,10 @@ manual IPv6 /64 ban, bans across a reboot, and turning it off removing the
 table. Unit tests in `crates/patronus-firewall/src/guard.rs` cover the log
 formats, injection attempts, thresholds, windows, escalation and settings
 validation.
+
+Router tier: the AX1800 gate (`ci/embedded-aarch64/ax1800/qemu-gate.sh`) and the
+Slate gate (`ci/embedded-mips/slate/qemu-gate.py`) boot the real image under QEMU
+and make four real failed Dropbear logins from a second network: the attacker's
+address lands in the kernel set, its packets are dropped, the control channel is not
+touched and an unban gives access back. The IDS source has unit tests against a
+real alert history (`ids_alerts_ban_by_severity_apart_from_failed_logins`).
