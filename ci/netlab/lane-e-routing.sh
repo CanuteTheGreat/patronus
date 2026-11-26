@@ -31,9 +31,10 @@
 #    * sticky connections: one client keeps one uplink for all its flows, clients get their own
 #      map entries, a lost uplink drops the assignments, a returning one does not rebalance,
 #      the timeout expires idle clients, switching it off removes the nft table
-#    * kill states: after a failover the stale NAT entry keeps a UDP/TCP flow on WAN1's address
-#      (none), with kill states (down) the flow moves to WAN2 within seconds, with down_recovery
-#      it moves back when WAN1 returns; the action is in the status, the page and an event
+#    * kill states: an idle TCP connection's tracked state stays after the failover (none), is
+#      deleted with the uplink (down) and, with down_recovery, the fallback's is deleted when WAN1
+#      returns; an active UDP flow follows the route by itself (the kernel re-masquerades it); the
+#      action is in the gateway status, the Routing page and an event
 #  - static routes via an IP and via a gateway name reach the kernel (proto
 #    251); bad input and deleting a gateway in use are refused (400)
 #  - reboot (fresh namespaces + `patronus apply`) rebuilds all of it; a
@@ -51,6 +52,7 @@ ISP2() { ip netns exec nl-isp2 "$@"; }
 APPLYD_PID=
 SRV_PID=
 SND_PID=
+IDLE_PID=
 
 dump() {
   echo "--- debug: rtr routes"; R ip -4 route 2>/dev/null || true; R ip -4 route show proto 253 2>/dev/null || true
@@ -86,7 +88,7 @@ applyd_stop() {
   APPLYD_PID=
   rm -f "$PATRONUS_APPLYD_SOCKET"
 }
-cleanup() { kill $SND_PID $SRV_PID 2>/dev/null; nl_web_stop; applyd_stop; nl_down; ip netns del nl-isp2 2>/dev/null || true; }
+cleanup() { kill $SND_PID $SRV_PID $IDLE_PID 2>/dev/null; nl_web_stop; applyd_stop; nl_down; ip netns del nl-isp2 2>/dev/null || true; }
 trap cleanup EXIT
 
 must() { # CODE METHOD PATH [JSON]
@@ -294,7 +296,8 @@ set_group "{$GRP_FAILOVER,\"trigger\":\"down\"}"
 CDEV=lan0
 for h in 11 12 13; do C ip addr add 192.168.50.$h/24 dev $CDEV; done
 who_from() { C curl -s --max-time 4 --interface "$1" "http://$NL_WWW/" | awk '{print $3}'; }
-LB="\"name\":\"FAILOVER\",\"members\":\"WAN1:1:1, WAN2:1:1\",\"trigger\":\"down\",\"kill_states\":\"none\""
+LBB="\"name\":\"FAILOVER\",\"members\":\"WAN1:1:1, WAN2:1:1\",\"trigger\":\"down\""
+LB="$LBB,\"kill_states\":\"none\""
 set_group "{$LB,\"sticky_secs\":300}"
 T4=$(R nft list table inet patronus_wan 2>&1) || fail "no sticky table: $T4"
 grep -q 'update @st' <<<"$T4" && grep -q 'numgen random mod 2' <<<"$T4" || fail "sticky rules: $T4"
@@ -338,7 +341,7 @@ MAPS=$(R nft list table inet patronus_wan)
 if grep -q '192.168.50.10' <<<"$MAPS"; then fail "sticky: the idle client's assignment should have expired: $MAPS"; fi
 nl_ok "sticky: an idle client's assignment expires after the timeout (3 s)"
 must 400 PUT /routing/groups/FAILOVER "{$LB,\"sticky_secs\":99999999}"
-must 400 PUT /routing/groups/FAILOVER "{$LB,\"kill_states\":\"always\"}"
+must 400 PUT /routing/groups/FAILOVER "{$LBB,\"kill_states\":\"always\"}"
 set_group "{$LB,\"sticky_secs\":0}"
 if R nft list table inet patronus_wan >/dev/null 2>&1; then fail "sticky off: the table should be gone"; fi
 nl_ok "sticky off: the nft table is removed; bad timeout / kill-states values are refused (400)"
@@ -346,11 +349,12 @@ for h in 11 12 13; do C ip addr del 192.168.50.$h/24 dev $CDEV; done
 set_group "{$GRP_FAILOVER,\"trigger\":\"down\",\"kill_states\":\"none\"}"
 wait_for "default on WAN1" 20 via_is 'via 203.0.113.1 dev rtr-wan'
 
-# --- 4e. kill states: an existing flow moves within seconds ----------------------
-# A UDP flow (one socket, one conntrack entry) and a TCP connection from the LAN client to the internet
-# host. The server logs the source address it sees. Without kill states the stale NAT entry keeps the flow
-# on WAN1's address after the route moved; with them the entry is deleted and the next packet is
-# masqueraded on the new uplink.
+# --- 4e. kill states: what stays behind when an uplink goes away ----------------
+# Linux re-masquerades a flow whose output interface changed by itself (the kernel replaces the entry and
+# drops that one packet), so an ACTIVE UDP flow follows the route to the other uplink with or without kill
+# states. What stays behind is the tracked state of IDLE connections (an idle TCP connection is tracked for five
+# days) and of inbound ones: kill states deletes them as soon as the uplink goes (and, with down_recovery, those of
+# the fallback when the better uplink returns). The server logs the source address it sees.
 cat >"$T/srv.py" <<'PYEOF'
 import socket, sys, threading, time
 log = open(sys.argv[1], 'a', buffering=1)
@@ -359,7 +363,6 @@ t = socket.socket(); t.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); t.
 def tcp():
     while True:
         c, a = t.accept()
-        log.write('%f tcp %s\n' % (time.time(), a[0]))
         threading.Thread(target=lambda c=c: [c.recv(100) for _ in iter(int, 1)], daemon=True).start()
 threading.Thread(target=tcp, daemon=True).start()
 while True:
@@ -369,46 +372,59 @@ PYEOF
 cat >"$T/snd.py" <<'PYEOF'
 import socket, sys, time
 u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.bind(('0.0.0.0', 40000))
-t = socket.create_connection((sys.argv[1], 9998))
 while True:
     u.sendto(b'x', (sys.argv[1], 9999))
-    try: t.send(b'y')
-    except OSError: pass
     time.sleep(0.2)
+PYEOF
+cat >"$T/idle.py" <<'PYEOF'
+import socket, sys, time
+t = socket.create_connection((sys.argv[1], 9998))
+time.sleep(3600)
 PYEOF
 SRV_LOG=$T/srv.log; : >"$SRV_LOG"
 INET python3 -u "$T/srv.py" "$SRV_LOG" & SRV_PID=$!
 sleep 1
 C python3 -u "$T/snd.py" "$NL_WWW" & SND_PID=$!
+IDLE_PID=
 seen_udp() { awk -v s="$1" -v t="$2" '$2=="udp" && $3==s && $1>t {n++} END {exit !n}' "$SRV_LOG"; }
+idle_ct() { R conntrack -L -p tcp 2>/dev/null | grep -E "dport=9998 .*src=$NL_WWW dst=$1 " >/dev/null; }
+no_idle_ct() { ! idle_ct "$1"; }
+idle_start() { # WAN-ADDRESS the connection must be tracked on
+  [ -n "$IDLE_PID" ] && { kill "$IDLE_PID" 2>/dev/null || true; wait "$IDLE_PID" 2>/dev/null || true; }
+  R conntrack -F >/dev/null 2>&1 || true
+  C python3 -u "$T/idle.py" "$NL_WWW" & IDLE_PID=$!
+  wait_for "the idle TCP connection tracked on $1" 10 idle_ct "$1"
+}
 wait_for "the UDP flow to reach the server via WAN1" 15 seen_udp "$NL_RTR_WAN" 0
-ct_wan1() { R conntrack -L -p tcp 2>/dev/null | grep -E "dport=9998 .*src=$NL_WWW dst=$NL_RTR_WAN " >/dev/null; }
-wait_for "the TCP connection tracked on WAN1's address" 10 ct_wan1
-
-kill_cycle() { # MODE: failover then recovery; sets MOVE_SECS
-  local mode=$1
-  set_group "{$GRP_FAILOVER,\"trigger\":\"down\",\"kill_states\":\"$mode\"}"
-  wait_for "default on WAN1" 20 via_is 'via 203.0.113.1 dev rtr-wan'
+fail_wan1() { # failover with the given kill_states mode; MOVED = when the default route was on WAN2
   ISP ip addr flush dev up0
   wait_for "default route on WAN2" 30 via_is 'via 100.64.0.1 dev rtr-wan2'
   MOVED=$(date +%s.%N)
 }
-# negative control: kill states off -> the stale NAT entry keeps the flow on WAN1's address
-kill_cycle none
+restore_wan1() {
+  ISP ip addr add 203.0.113.1/24 dev up0
+  wait_for "default back on WAN1" 30 via_is 'via 203.0.113.1 dev rtr-wan'
+}
+# kill states off
+set_group "{$GRP_FAILOVER,\"trigger\":\"down\",\"kill_states\":\"none\"}"
+wait_for "default on WAN1" 20 via_is 'via 203.0.113.1 dev rtr-wan'
+idle_start "$NL_RTR_WAN"
+fail_wan1
+wait_for "the active UDP flow to reach the server as 100.64.0.2" 12 seen_udp 100.64.0.2 "$MOVED"
+nl_ok "kill_states none: the active UDP flow follows the route to WAN2 (the kernel re-masquerades it), $(awk -v m="$MOVED" -v n="$(date +%s.%N)" 'BEGIN{printf "%.0f", n-m}') s after the route moved"
 sleep 10
-if seen_udp 100.64.0.2 "$MOVED"; then fail "kill_states none: the UDP flow moved by itself (no kill expected)"; fi
-ct_wan1 || fail "kill_states none: the TCP entry should still be tracked on WAN1's address"
-nl_ok "kill_states none: 10 s after the failover the flow still carries WAN1's NAT address (stale state kept)"
-ISP ip addr add 203.0.113.1/24 dev up0
-wait_for "default back on WAN1" 30 via_is 'via 203.0.113.1 dev rtr-wan'
+idle_ct "$NL_RTR_WAN" || fail "kill_states none: the idle connection's state on WAN1's address should still be tracked"
+nl_ok "kill_states none: the idle TCP connection's tracked state on WAN1's address is still there 10 s after the failover"
+restore_wan1
+# kill states on down: the idle connection's state goes with the uplink
 K0=$(event_count gateway_states_killed)
-# kill states on down: the flow moves
-kill_cycle down
-wait_for "the UDP flow to reach the server via WAN2" 12 seen_udp 100.64.0.2 "$MOVED"
-nl_ok "kill_states down: the existing UDP flow left via WAN2 $(awk -v m="$MOVED" -v n="$(date +%s.%N)" 'BEGIN{printf "%.0f", n-m}') s after the route moved"
-no_ct_wan1() { ! ct_wan1; }
-wait_for "the TCP entry on WAN1's address to be deleted" 10 no_ct_wan1
-nl_ok "kill_states down: the TCP connection's tracked state on WAN1's address is gone"
+set_group "{$GRP_FAILOVER,\"trigger\":\"down\",\"kill_states\":\"down\"}"
+idle_start "$NL_RTR_WAN"
+t0=$(date +%s)
+fail_wan1
+wait_for "the idle connection's state on WAN1's address to be deleted" 10 no_idle_ct "$NL_RTR_WAN"
+nl_ok "kill_states down: the idle TCP connection's tracked state on WAN1's address is deleted $(( $(date +%s) - t0 )) s after the failure (route moved after about 5 s)"
+wait_for "the active UDP flow to reach the server as 100.64.0.2" 12 seen_udp 100.64.0.2 "$MOVED"
 wait_event gateway_states_killed "$K0"
 nl_api GET /routing >/dev/null
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); g=[x for x in d["gateways"] if x["name"]=="WAN1"][0]; assert g["killed"] and g["killed"]["count"]>=1, g' "$NL_OUT" \
@@ -416,19 +432,15 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); g=[x for x in d["ga
 nl_web GET /routing
 grep -q 'connection(s) deleted' "$NL_OUT" || fail "Routing page does not show the kill-states action"
 nl_ok "kill-states action is in the gateway status, the Routing page and a gateway_states_killed event"
-# recovery: with 'down' the flow stays; with 'down_recovery' it moves back
-ISP ip addr add 203.0.113.1/24 dev up0
-wait_for "default back on WAN1" 30 via_is 'via 203.0.113.1 dev rtr-wan'
+# down_recovery: the fallback's connections go when the better uplink returns
 set_group "{$GRP_FAILOVER,\"trigger\":\"down\",\"kill_states\":\"down_recovery\"}"
-ISP ip addr flush dev up0
-wait_for "default route on WAN2" 30 via_is 'via 100.64.0.1 dev rtr-wan2'
-wait_for "UDP flow on WAN2 again" 12 seen_udp 100.64.0.2 "$(date +%s.%N)"
-ISP ip addr add 203.0.113.1/24 dev up0
+idle_start 100.64.0.2          # tracked on the fallback while WAN1 is away
+restore_wan1
+wait_for "the fallback's idle connection state to be deleted" 12 no_idle_ct 100.64.0.2
+nl_ok "kill_states down_recovery: WAN1 is back -> the idle connection tracked on the fallback (WAN2) was deleted"
 BACK=$(date +%s.%N)
-wait_for "default back on WAN1" 30 via_is 'via 203.0.113.1 dev rtr-wan'
-wait_for "the UDP flow to return to WAN1's address" 15 seen_udp "$NL_RTR_WAN" "$BACK"
-nl_ok "kill_states down_recovery: WAN1 is back -> the fallback's flow was deleted and left via WAN1 again"
-kill "$SND_PID" "$SRV_PID" 2>/dev/null || true; wait "$SND_PID" "$SRV_PID" 2>/dev/null || true
+wait_for "the UDP flow to leave via WAN1's address again" 15 seen_udp "$NL_RTR_WAN" "$BACK"
+kill "$SND_PID" "$SRV_PID" "$IDLE_PID" 2>/dev/null || true; wait "$SND_PID" "$SRV_PID" "$IDLE_PID" 2>/dev/null || true
 set_group "{$GRP_FAILOVER,\"trigger\":\"down\"}"
 must 200 PUT /routing/gateways/WAN1 '{"name":"WAN1","interface":"@wan"}'
 wait_for "default on WAN1" 20 via_is 'via 203.0.113.1 dev rtr-wan'
