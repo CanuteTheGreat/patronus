@@ -139,13 +139,23 @@ dash_activity() { login || return 1
 # nft_connlimit, ifname sets), appear in the live ruleset, and go away again with the rule
 floating_rules() { login || return 1
   W2=https://127.0.0.1:$WEBP/api/firewall
+  c=$(wapi $W2/capabilities); caps=$(cat "$W/api.json"); [ "$c" = 200 ] || { echo "capabilities: $c $caps"; return 1; }
+  has_all "$caps" '"connlimit":' '"limit":' '"dynset":' || { echo "capabilities: $caps"; return 1; }
+  conn=no; rate=no; has_all "$caps" '"connlimit":true' && conn=yes; has_all "$caps" '"limit":true' '"dynset":true' && rate=yes
   c=$(wapi -X POST -d '{"name":"cigrp","members":["lo","br-lan"]}' $W2/interface-groups); [ "$c" = 200 ] || { echo "group: $c $(cat "$W/api.json")"; return 1; }
   c=$(wapi -X PUT -d '{"rate_kbit":2000,"burst_kb":128,"per_source":true}' $W2/limiters/cigatelim); [ "$c" = 200 ] || { echo "limiter: $c $(cat "$W/api.json")"; return 1; }
-  c=$(wapi -X POST -d '{"name":"ci floating","chain":"forward","action":"accept","interface":"any","floating":true,"quick":true,"direction":"in","interfaces":["group:cigrp","eth9"],"protocol":"tcp","source":"any","destination":"any","port":"9999","description":"ci floating","enabled":true,"limiter":"cigatelim","max_src_conn":5,"max_src_rate":20,"max_src_rate_secs":10,"overload":"cigateflood","category":"ci"}' $W2/rules)
+  base='"name":"ci floating","chain":"forward","action":"accept","interface":"any","floating":true,"quick":true,"direction":"in","interfaces":["group:cigrp","eth9"],"protocol":"tcp","source":"any","destination":"any","port":"9999","description":"ci floating","enabled":true,"category":"ci"'
+  # a limit this kernel cannot do is refused with the reason, never half-applied
+  if [ $conn = no ]; then c=$(wapi -X POST -d "{$base,\"max_src_conn\":5}" $W2/rules); [ "$c" = 400 ] && has_all "$(cat "$W/api.json")" 'kernel has no' || { echo "connlimit refusal: $c $(cat "$W/api.json")"; return 1; }; fi
+  if [ $rate = no ]; then c=$(wapi -X POST -d "{$base,\"limiter\":\"cigatelim\"}" $W2/rules); [ "$c" = 400 ] && has_all "$(cat "$W/api.json")" 'kernel has no' || { echo "limit refusal: $c $(cat "$W/api.json")"; return 1; }; fi
+  lim=''; [ $conn = yes ] && lim="$lim,\"max_src_conn\":5"; [ $rate = yes ] && lim="$lim,\"limiter\":\"cigatelim\",\"max_src_rate\":20,\"max_src_rate_secs\":10,\"overload\":\"cigateflood\""
+  c=$(wapi -X POST -d "{$base$lim}" $W2/rules)
   [ "$c" = 200 ] || [ "$c" = 201 ] || { echo "floating rule: $c $(cat "$W/api.json")"; return 1; }
   id=$(sed -n 's/.*"id":\([0-9]*\).*/\1/p' "$W/api.json" | head -1)
   o=$(R 'nft list ruleset') || return 1
-  has_all "$o" 'set ifgrp_cigrp' 'iifname @ifgrp_cigrp' 'iifname "eth9"' 'ct count over 5' 'ov_cigateflood_v4' 'lim_forward' 'limit rate over' || { echo "ruleset lacks the floating rule parts:"; echo "$o" | grep -n 'cigrp\|ov_\|lim_\|count over' | head -20; return 1; }
+  has_all "$o" 'set ifgrp_cigrp' 'iifname @ifgrp_cigrp' 'iifname "eth9"' || { echo "ruleset lacks the floating rule:"; echo "$o" | grep -n 'cigrp\|eth9' | head; return 1; }
+  [ $conn = yes ] && { has_all "$o" 'ct count over 5' || { echo "no connection limit in the kernel"; return 1; }; }
+  [ $rate = yes ] && { has_all "$o" 'ov_cigateflood_v4' 'lim_forward' 'limit rate over' || { echo "no rate limit / limiter in the kernel"; return 1; }; }
   c=$(wapi -X PUT -d '{"members":["lo"]}' $W2/interface-groups/cigrp); [ "$c" = 200 ] || { echo "group update: $c $(cat "$W/api.json")"; return 1; }
   case "$(R 'nft list set inet patronus ifgrp_cigrp')" in *'"br-lan"'*) echo "br-lan still in the group set"; return 1;; esac
   c=$(wapi -X DELETE $W2/rules/$id); [ "$c" = 200 ] || { echo "delete rule: $c"; return 1; }
