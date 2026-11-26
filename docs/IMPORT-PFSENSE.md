@@ -34,7 +34,10 @@ printed: the report shows `(set)`.
 
 pfSense names devices after the driver (`em0`, `igb1`, `vtnet0`). Give the names on this box:
 `--map em0=eth0 --map em1=eth1`. VLAN devices follow their parent (`em1.20` becomes `eth1.20`).
-Without a map the old names are kept and the plan says so.
+A port you do not map follows its role: the old box's `wan`, `lan` and `optN` ports go to the ports that have the
+same role on this box (Interfaces, console menu 1 or `patronus interfaces assign`); the plan starts with a
+`port matched by role: em0 -> eth0` line for each. A port with no matching role here keeps its old name and the
+plan says so. The console menu's import item (20) relies on this, so assign WAN / LAN / OPT first.
 
 ## Imported
 
