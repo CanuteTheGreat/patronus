@@ -58,6 +58,8 @@ cp -r ci/netlab/fixtures "$OUT/"
 cp ci/guest-page-e2e.py "$OUT/"
 # lane B UI scenario (lane-b-guard-ui.sh) drives this one
 cp ci/guard-page-e2e.py "$OUT/"
+# lane B security overview UI scenario (lane-b-security-ui.sh)
+cp ci/security-page-e2e.py "$OUT/"
 # lane J XDP data plane: the shipped BPF program source
 cp crates/patronus-ebpf/src/xdp_firewall.bpf.c "$OUT/"
 OLD_ENV=
@@ -186,6 +188,11 @@ run_container() {
   docker cp "$OUT/." "$C:/t/"
   docker start -a "$C" || true
   rc=$(docker inspect -f '{{.State.ExitCode}}' "$C")
+  # NETLAB_SHOTS_DIR=<dir>: keep the UI scenarios' screenshots (/t/shots) for review
+  if [ -n "${NETLAB_SHOTS_DIR:-}" ]; then
+    mkdir -p "$NETLAB_SHOTS_DIR"
+    docker cp "$C:/t/shots/." "$NETLAB_SHOTS_DIR/" >/dev/null 2>&1 || true
+  fi
 }
 ensure_devices
 run_container

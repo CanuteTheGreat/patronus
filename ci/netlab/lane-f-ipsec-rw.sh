@@ -118,7 +118,9 @@ rw_down() { RWS --terminate --ike "$1" >/dev/null 2>&1 || true; sleep 0.5; }
 MSCHAP=0
 # (`ls a b` exits non-zero when EITHER path is missing, which skipped these steps
 # even with the plugin installed: search instead)
-PLUG=$(find /usr/lib /usr/lib64 /usr/libexec \( -name 'libstrongswan-eap-mschapv2.so' -o -name 'libstrongswan-md4.so' \) 2>/dev/null | tr '\n' ' ')
+# (find exits non-zero when a search root such as /usr/lib64 does not exist, e.g. on arm64: that aborted the lane
+# under pipefail before it printed anything)
+PLUG=$( (find /usr/lib /usr/lib64 /usr/libexec \( -name 'libstrongswan-eap-mschapv2.so' -o -name 'libstrongswan-md4.so' \) 2>/dev/null || true) | tr '\n' ' ')
 echo "eap-mschapv2/md4 plugins: ${PLUG:-none}"
 case "$PLUG" in *eap-mschapv2*) MSCHAP=1;; esac
 [ "$MSCHAP" = 1 ] || echo "NOTE: no eap-mschapv2 plugin in this strongSwan: live EAP connection steps are skipped"

@@ -45,6 +45,12 @@ pub struct ThreatFeed {
     pub count: i64,
     pub status: String,
     pub last_refresh: Option<i64>,
+    /// `drop` or `alert` (count and log only).
+    pub action: String,
+    /// Packets that matched the feed in the last 24 hours / 7 days (the
+    /// security overview's sampler, `sec_feed_hits`).
+    pub hits_24h: u64,
+    pub hits_7d: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,6 +75,9 @@ pub struct ThreatBody {
     pub max_entries: Option<u64>,
     #[serde(default)]
     pub description: Option<String>,
+    /// `drop` (default) or `alert`.
+    #[serde(default)]
+    pub action: Option<String>,
 }
 
 /// One GeoIP alias for the GeoIP page.
@@ -405,10 +414,20 @@ impl FirewallManager {
 
     pub async fn threat_overview(&self) -> anyhow::Result<ThreatOverview> {
         let all = aliases::load_aliases(&self.store).await.map_err(Self::e)?;
+        let now = chrono::Utc::now().timestamp();
+        let h24 = crate::security::feed_hits_since(&self.store, now - 86_400)
+            .await
+            .unwrap_or_default();
+        let h7 = crate::security::feed_hits_since(&self.store, now - 7 * 86_400)
+            .await
+            .unwrap_or_default();
         let mut feeds_out: Vec<ThreatFeed> = Vec::new();
         let row = |id: &str, name: &str, desc: &str, url: &str, custom: bool, a: Option<&Alias>| {
             let s = a.and_then(|a| a.source.as_ref());
             ThreatFeed {
+                action: s.map(|s| s.action.clone()).unwrap_or_else(|| "drop".into()),
+                hits_24h: h24.get(id).copied().unwrap_or(0),
+                hits_7d: h7.get(id).copied().unwrap_or(0),
                 id: id.to_string(),
                 name: name.to_string(),
                 description: desc.to_string(),
@@ -527,6 +546,9 @@ impl FirewallManager {
         }
         if let Some(v) = b.direction {
             src.direction = v;
+        }
+        if let Some(v) = b.action {
+            src.action = v;
         }
         if let Some(v) = b.refresh_secs {
             src.refresh_secs = v;

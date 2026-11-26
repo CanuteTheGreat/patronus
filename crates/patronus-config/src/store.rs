@@ -100,6 +100,11 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "guard_bans",
     "guard_failures",
     "guard_reports",
+    // security overview (lane j): threat-feed hit history, the kernel counters last read and
+    // the last WireGuard handshake per peer: measured, with retention (security.feed_hits_days)
+    "sec_feed_hits",
+    "sec_feed_counter_pos",
+    "sec_wg_seen",
     // measured history (lane h): 5-minute CPU/memory/throughput samples (tens of thousands
     // of rows within days), monthly data accounting, the event log and the firewall log.
     // In the export they made every revision, backup and drift check carry megabytes of

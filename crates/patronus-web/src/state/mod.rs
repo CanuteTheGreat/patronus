@@ -240,5 +240,7 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
     insight::spawn_collector(state.config_store.clone());
     insight::spawn_db_refresh(state.config_store.clone());
     uplink::spawn_recorder(state.clone());
+    // security overview: threat-feed hit counters and WireGuard handshakes -> history
+    crate::security::spawn_sampler(state.clone());
     Ok(state)
 }

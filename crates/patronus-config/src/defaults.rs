@@ -34,6 +34,8 @@ pub const DEFAULT_BOOTSTRAP_PATH: &str = "/etc/patronus/patronus.toml";
 
 /// `system_config` key recording that the defaults were seeded.
 pub const DEFAULTS_SEEDED_KEY: &str = "defaults_seeded_at";
+/// Brute-force protection switch (`patronus_firewall::guard`), seeded on for new installs.
+pub const GUARD_ENABLED_KEY: &str = "guard.enabled";
 
 /// Ports the anti-lockout rule keeps open: SSH and the web UI's standard ports
 /// (the web listeners themselves come from `webui::WebSettings`, which the
@@ -237,6 +239,19 @@ pub async fn ensure_defaults(
             .await
             .map_err(|e| {
                 patronus_core::Error::Config(format!("seed DNS rebind protection: {e}"))
+            })?;
+            // Brute-force protection (docs/BRUTE-FORCE.md) is on for a new install: every netlab
+            // lane ran with it on before this default changed (docs/design/security-suite.md).
+            // An upgraded store keeps what it had (off unless somebody turned it on).
+            sqlx::query(
+                "INSERT OR IGNORE INTO system_config (key, value, updated_at) VALUES (?, '1', ?)",
+            )
+            .bind(GUARD_ENABLED_KEY)
+            .bind(chrono::Utc::now().timestamp())
+            .execute(store.pool()?)
+            .await
+            .map_err(|e| {
+                patronus_core::Error::Config(format!("seed brute-force protection: {e}"))
             })?;
         }
         store
@@ -491,6 +506,40 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(v.as_deref(), Some("0"));
+    }
+
+    #[tokio::test]
+    async fn new_installs_get_brute_force_protection_but_upgraded_stores_do_not() {
+        let new = ConfigStore::open_in_memory().await.unwrap();
+        ensure_defaults(&new, None, &[]).await.unwrap();
+        assert_eq!(
+            new.load_system_config(GUARD_ENABLED_KEY)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("1")
+        );
+        let up = ConfigStore::open_in_memory().await.unwrap();
+        up.save_system_config(DEFAULTS_SEEDED_KEY, "2026-01-01T00:00:00Z")
+            .await
+            .unwrap();
+        ensure_defaults(&up, None, &[]).await.unwrap();
+        assert_eq!(
+            up.load_system_config(GUARD_ENABLED_KEY).await.unwrap(),
+            None
+        );
+        // switched off later: seeding never repeats
+        new.save_system_config(GUARD_ENABLED_KEY, "0")
+            .await
+            .unwrap();
+        ensure_defaults(&new, None, &[]).await.unwrap();
+        assert_eq!(
+            new.load_system_config(GUARD_ENABLED_KEY)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("0")
+        );
     }
 
     #[tokio::test]

@@ -3,8 +3,8 @@
 # with real OpenSSH logins, the real web login API, nftables and real traffic.
 #
 # Proves:
-#   - off by default: no inet patronus_guard table;
-#   - turned on through the API: the table exists with both ban sets;
+#   - on for a new install (seeded at first boot): the inet patronus_guard table exists after `patronus apply`;
+#   - settings through the API: the table keeps both ban sets;
 #   - a LAN address is never banned while "never ban my own networks" is on, however often it fails;
 #   - with it off, real failed SSH password logins (sshd writing its own log) ban the client after
 #     the threshold: the address is in the kernel set, the drop counter grows, the client can no
@@ -68,10 +68,11 @@ web_fail() { # N failed web logins from the LAN client (own cookie jar)
   done
 }
 
-# --- boot, off by default -----------------------------------------------------------------------------
+# --- boot: a new install has it on --------------------------------------------------------------------
 nl_boot "$DB"
-[ -z "$(guard_table)" ] || nl_fail "guard table exists although the protection is off"
-nl_ok "off by default: no inet patronus_guard table"
+grep -q 'set ban4' <<<"$(guard_table)" || nl_fail "new install: no inet patronus_guard table after the first boot"
+[ "$(sqlite3 "$DB" "SELECT value FROM system_config WHERE key='guard.enabled'")" = 1 ] || nl_fail "guard.enabled not seeded"
+nl_ok "new install: brute-force protection is on after the first boot (table inet patronus_guard)"
 
 # a real sshd in the router namespace, writing its own log (the stand-in on :22 makes room)
 pkill -f '[n]l-tcp.py 0.0.0.0 22$' || true
@@ -89,7 +90,7 @@ nl_api PUT /guard/settings "{\"enabled\":true,\"max_failures\":3,\"find_secs\":3
 [ "$NL_CODE" = 200 ] || nl_fail "enable: $NL_CODE $(cat "$NL_OUT")"
 T=$(guard_table)
 grep -q 'set ban4' <<<"$T" && grep -q 'set ban6' <<<"$T" || nl_fail "no ban sets: $T"
-nl_ok "turned on through the API: table inet patronus_guard with ban4 and ban6"
+nl_ok "settings through the API: table inet patronus_guard with ban4 and ban6"
 nl_api PUT /guard/settings '{"max_failures":0}'
 [ "$NL_CODE" = 400 ] || nl_fail "max_failures 0 accepted ($NL_CODE)"
 nl_api PUT /guard/settings '{"allowlist":["10.0.0.0/33"]}'

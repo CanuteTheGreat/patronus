@@ -61,6 +61,10 @@ pub struct AliasSource {
     pub direction: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// threat: `drop` (default) or `alert` (count and log matches, let them
+    /// through to the user's rules: try a feed before it blocks anything).
+    #[serde(default = "default_threat_action")]
+    pub action: String,
     #[serde(default)]
     pub last_attempt: Option<i64>,
     #[serde(default)]
@@ -82,6 +86,7 @@ impl AliasSource {
             max_entries: default_max_entries(),
             direction: default_direction(),
             enabled: true,
+            action: default_threat_action(),
             last_attempt: None,
             last_refresh: None,
             last_status: None,
@@ -95,6 +100,9 @@ fn default_refresh() -> u64 {
 }
 fn default_max_entries() -> u64 {
     100_000
+}
+fn default_threat_action() -> String {
+    "drop".into()
 }
 fn default_direction() -> String {
     "both".into()
@@ -326,7 +334,7 @@ pub async fn load_sources(
 ) -> Result<std::collections::HashMap<String, AliasSource>> {
     let rows = sqlx::query(
         "SELECT alias, kind, url, countries, refresh_secs, max_entries, direction, enabled,
-                last_attempt, last_refresh, last_status, last_count
+                last_attempt, last_refresh, last_status, last_count, action
          FROM firewall_alias_sources",
     )
     .fetch_all(store.pool()?)
@@ -349,6 +357,7 @@ pub async fn load_sources(
                     last_refresh: r.get(9),
                     last_status: r.get(10),
                     last_count: r.get(11),
+                    action: r.get(12),
                 },
             )
         })
@@ -386,12 +395,13 @@ pub async fn save_alias(store: &ConfigStore, alias: &Alias) -> Result<()> {
             let src = crate::feeds::check_source(&a, src)?;
             sqlx::query(
                 "INSERT INTO firewall_alias_sources
-                     (alias, kind, url, countries, refresh_secs, max_entries, direction, enabled)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     (alias, kind, url, countries, refresh_secs, max_entries, direction, enabled,
+                      action)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(alias) DO UPDATE SET kind = excluded.kind, url = excluded.url,
                      countries = excluded.countries, refresh_secs = excluded.refresh_secs,
                      max_entries = excluded.max_entries, direction = excluded.direction,
-                     enabled = excluded.enabled",
+                     enabled = excluded.enabled, action = excluded.action",
             )
             .bind(&a.name)
             .bind(&src.kind)
@@ -401,6 +411,7 @@ pub async fn save_alias(store: &ConfigStore, alias: &Alias) -> Result<()> {
             .bind(src.max_entries as i64)
             .bind(&src.direction)
             .bind(src.enabled as i64)
+            .bind(&src.action)
             .execute(store.pool()?)
             .await
             .map_err(db("save alias source"))?;

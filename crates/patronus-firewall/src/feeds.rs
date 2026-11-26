@@ -196,6 +196,9 @@ pub fn check_source(alias: &Alias, s: &AliasSource) -> Result<AliasSource> {
     if !matches!(s.direction.as_str(), "in" | "out" | "both") {
         return Err(invalid("direction: in, out or both"));
     }
+    if !matches!(s.action.as_str(), "drop" | "alert") {
+        return Err(invalid("action: drop or alert"));
+    }
     if !(300..=31_536_000).contains(&s.refresh_secs) {
         return Err(invalid(
             "refresh interval: between 5 minutes and one year (in seconds)",
@@ -1308,16 +1311,53 @@ pub fn threat_rules(all: &[Alias]) -> Vec<String> {
         if matches!(s.direction.as_str(), "out" | "both") {
             sides.push("daddr");
         }
+        // alert only: count + log, no verdict (the packet goes on to the user's rules)
+        let (word, verdict) = if s.action == "alert" {
+            ("alert", "")
+        } else {
+            ("drop", " drop")
+        };
         for (fam, ver) in [("ip", IpVersion::V4), ("ip6", IpVersion::V6)] {
             let set = alias_set_name(&a.name, ver);
             for side in &sides {
                 out.push(format!(
                     "add rule {TABLE} {c} {fam} {side} @{set} limit rate 5/second burst 10 packets \
-                     log prefix \"patronus[ti:{id}] drop: \" group {NFLOG_GROUP}"
+                     log prefix \"patronus[ti:{id}] {word}: \" group {NFLOG_GROUP}"
                 ));
                 out.push(format!(
-                    "add rule {TABLE} {c} {fam} {side} @{set} counter drop comment \"threat-intel {id}\""
+                    "add rule {TABLE} {c} {fam} {side} @{set} counter{verdict} comment \"{THREAT_COMMENT}{id}\""
                 ));
+            }
+        }
+    }
+    out
+}
+
+/// Comment prefix of a feed's counting rule (`threat-intel <id>`).
+pub const THREAT_COMMENT: &str = "threat-intel ";
+
+/// Live hit counters per feed id (packets, bytes) summed over the feed's
+/// counting rules, from the JSON of `nft -j list chain inet patronus ti_check`
+/// (or the whole table). The kernel counters restart at every ruleset load;
+/// the security overview's sampler turns them into a persistent history.
+pub fn live_hits(nft_json: &serde_json::Value) -> HashMap<String, (u64, u64)> {
+    let mut out: HashMap<String, (u64, u64)> = HashMap::new();
+    for item in nft_json["nftables"].as_array().into_iter().flatten() {
+        let Some(r) = item.get("rule") else { continue };
+        if r["chain"] != THREAT_CHAIN {
+            continue;
+        }
+        let Some(id) = r["comment"]
+            .as_str()
+            .and_then(|c| c.strip_prefix(THREAT_COMMENT))
+        else {
+            continue;
+        };
+        for e in r["expr"].as_array().into_iter().flatten() {
+            if let Some(c) = e.get("counter") {
+                let x = out.entry(id.to_string()).or_default();
+                x.0 += c["packets"].as_u64().unwrap_or(0);
+                x.1 += c["bytes"].as_u64().unwrap_or(0);
             }
         }
     }
@@ -1704,12 +1744,19 @@ mod tests {
             max_entries: 1000,
             direction: "both".into(),
             enabled: true,
+            action: "drop".into(),
             last_attempt: None,
             last_refresh: None,
             last_status: None,
             last_count: None,
         };
         assert!(check_source(&host("lst"), &src("url")).is_ok());
+        let mut bad = src("threat");
+        bad.action = "reject".into();
+        assert!(
+            check_source(&host("ti_x"), &bad).is_err(),
+            "action must be drop or alert"
+        );
         assert!(
             check_source(&host("x"), &src("threat")).is_err(),
             "needs ti_ prefix"
@@ -1786,6 +1833,7 @@ mod tests {
                 max_entries: cap,
                 direction: "both".into(),
                 enabled: true,
+                action: "drop".into(),
                 last_attempt: None,
                 last_refresh: None,
                 last_status: None,
@@ -1871,6 +1919,39 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("log prefix \"patronus[ti:a] drop: \" group 7"));
+
+        // alert only: counted and logged, never dropped
+        let mut a = aliases::get_alias(&s, "ti_a").await.unwrap().unwrap();
+        a.source.as_mut().unwrap().action = "alert".into();
+        aliases::save_alias(&s, &a).await.unwrap();
+        let again = aliases::get_alias(&s, "ti_a").await.unwrap().unwrap();
+        assert_eq!(again.source.unwrap().action, "alert", "action is stored");
+        let text = threat_rules(&aliases::load_aliases(&s).await.unwrap()).join("\n");
+        assert!(
+            text.contains("ip saddr @alias_ti_a_v4 counter comment \"threat-intel a\""),
+            "{text}"
+        );
+        assert!(!text.contains("@alias_ti_a_v4 counter drop"), "{text}");
+        assert!(text.contains("patronus[ti:a] alert: "), "{text}");
+        assert!(
+            text.contains("@alias_ti_b_v4 counter drop"),
+            "other feeds still drop: {text}"
+        );
+    }
+
+    #[test]
+    fn live_hits_sum_each_feeds_counters() {
+        let j = serde_json::json!({"nftables": [
+            {"rule": {"chain": "ti_check", "comment": "threat-intel a", "expr": [{"counter": {"packets": 3, "bytes": 180}}, {"drop": null}]}},
+            {"rule": {"chain": "ti_check", "comment": "threat-intel a", "expr": [{"counter": {"packets": 2, "bytes": 120}}, {"drop": null}]}},
+            {"rule": {"chain": "ti_check", "comment": "threat-intel b", "expr": [{"counter": {"packets": 0, "bytes": 0}}]}},
+            {"rule": {"chain": "input", "comment": "threat-intel a", "expr": [{"counter": {"packets": 99, "bytes": 1}}]}},
+            {"rule": {"chain": "ti_check", "comment": "threat-intel exemption", "expr": [{"return": null}]}}
+        ]});
+        let h = live_hits(&j);
+        assert_eq!(h.get("a"), Some(&(5, 300)));
+        assert_eq!(h.get("b"), Some(&(0, 0)));
+        assert_eq!(h.len(), 2);
     }
 
     #[test]

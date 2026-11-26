@@ -21,6 +21,7 @@ pub mod network;
 pub mod packages;
 pub mod qos;
 pub mod routing;
+pub mod security;
 #[cfg(all(feature = "dns", feature = "segmentation"))]
 pub mod seg_dns;
 #[cfg(feature = "segmentation")]

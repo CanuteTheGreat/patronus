@@ -105,6 +105,14 @@ impl SystemManager {
         self
     }
 
+    /// Apply every subsystem from the store (after a revision restore).
+    pub(crate) async fn apply_everything(
+        &self,
+        store: &ConfigStore,
+    ) -> Result<Vec<String>, String> {
+        self.apply_all(store).await
+    }
+
     async fn apply_all(&self, store: &ConfigStore) -> Result<Vec<String>, String> {
         let mut out = Vec::new();
         for a in &self.appliers {

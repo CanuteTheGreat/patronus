@@ -65,12 +65,24 @@ that are not finished are listed separately under
   feed of your own): enabled feeds are refreshed, capped, and their addresses
   are dropped ahead of your rules; private ranges a feed lists are never
   blocked and an `ti_allow` alias exempts hosts. [C58]
-- Brute-force protection (USE=bruteforce, off until switched on): addresses
+- Brute-force protection (USE=bruteforce, on for new installs, off on an upgraded store until switched on): addresses
   that keep failing SSH (OpenSSH, Dropbear) or web UI logins are banned in the
   firewall, to the router and through it; repeat offenders get longer bans,
   IPv6 sources are banned per /64, your own LAN and an allow list are never
   banned, bans survive a reboot and can be lifted from the page or the CLI.
   See docs/BRUTE-FORCE.md. [C151]
+- Security overview: one page grades the router from live state (what listens
+  and whether the loaded firewall lets the WAN reach it, the running sshd's
+  effective settings, admin two-factor login, brute-force protection, threat
+  feeds, DNSSEC, WAN source guards, SYN flood protection, intrusion detection,
+  updates, services, WireGuard keys and silent peers, IPsec proposals, OpenVPN
+  tls-crypt), each check linking to the page that fixes it. "Apply the
+  recommended baseline" shows the change set first, applies it as one
+  configuration revision that one click undoes, and never cuts the connection
+  the admin is using. See docs/SECURITY-OVERVIEW.md. [C211]
+- Threat-feed catalog with hit counters: each feed can block or only alert
+  (count and log, let through); the packets each feed matched are kept per
+  hour and shown on the overview, the dashboard and the firewall page. [C212]
 - Firewall log viewer: packets that a logging rule (or a threat feed, or the
   default policy) drops or accepts are recorded with the rule that caught them;
   search by rule, action, address, port, interface or text, follow it live. [C59]

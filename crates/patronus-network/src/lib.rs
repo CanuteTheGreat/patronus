@@ -120,6 +120,7 @@ pub mod l2tp;
 pub mod packages;
 #[cfg(feature = "plugins")]
 pub mod plugins;
+pub mod posture;
 #[cfg(feature = "web-proxy")]
 pub mod proxy;
 pub mod radio;

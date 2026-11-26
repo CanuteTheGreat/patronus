@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+
+{% block title %}Security overview - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    .sec-top { display: flex; flex-wrap: wrap; gap: 14px; align-items: stretch; margin-bottom: 14px; }
+    .sec-grade { flex: 0 0 auto; min-width: 150px; border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; background: var(--card-bg); text-align: center; }
+    .sec-grade b { display: block; font-size: 2.6em; line-height: 1.1; }
+    .sec-grade span { color: var(--muted); font-size: 0.85em; }
+    .sec-counts { flex: 1 1 260px; display: flex; flex-wrap: wrap; gap: 10px; }
+    .sec-counts > div { flex: 1 1 110px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--card-bg); }
+    .sec-counts b { display: block; font-size: 1.5em; }
+    .sec-counts span { color: var(--muted); font-size: 0.85em; }
+    .sec-st { display: inline-block; min-width: 4.5em; text-align: center; padding: 1px 8px; border-radius: 10px; font-size: 0.8em; font-weight: 600; }
+    .sec-st.pass { background: var(--ok-bg); color: var(--ok-fg); }
+    .sec-st.warn, .sec-st.unknown { background: var(--warn-bg); color: var(--warn-fg); }
+    .sec-st.fail { background: var(--bad-bg); color: var(--bad-fg); }
+    .sec-st.na { background: var(--info-bg); color: var(--info-fg); }
+    tr.sec-group th { text-align: left; padding-top: 12px; }
+    td.sec-ev { overflow-wrap: anywhere; max-width: 46em; }
+    .sec-scroll { overflow-x: auto; }
+    .hint { color: var(--muted); font-size: 0.85em; margin: 4px 0 10px; }
+    /* the dialog keeps its layout also where the page has a `* { margin: 0 }` reset and no kit dialog styles */
+    dialog.ui-dialog { margin: auto; padding: 0; max-width: min(760px, 96vw); width: 96vw; max-height: 90vh; overflow: auto;
+        border: 1px solid var(--line); border-radius: 8px; background: var(--card-bg); color: var(--ink, inherit); }
+    dialog.ui-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+    dialog.ui-dialog > form > header { padding: 12px 16px; font-weight: 600; font-size: 1.05em; border-bottom: 1px solid var(--line); }
+    dialog.ui-dialog .ui-dialog-body { padding: 8px 16px; }
+    dialog.ui-dialog .ui-dialog-body h3 { font-size: 0.95em; margin: 10px 0 4px; }
+    dialog.ui-dialog > form > footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); }
+    dialog.ui-dialog ul { padding-left: 1.2em; margin: 6px 0; }
+    dialog.ui-dialog li { margin: 4px 0; }
+    #feeds-table th, #sec-checks th { white-space: nowrap; }
+    #feeds-table td small { display: block; color: var(--muted); }
+    td.sec-fix a { white-space: nowrap; }
+    .sec-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    form.sec-settings { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+    form.sec-settings label { display: flex; flex-direction: column; gap: 3px; font-size: 0.85em; color: var(--ink-2); }
+    form.sec-settings label.wide { flex: 1 1 26em; }
+    form.sec-settings label.wide input { width: 100%; box-sizing: border-box; }
+    @media (max-width: 640px) {
+        table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; box-sizing: border-box; }
+        table.stack thead { display: none; }
+        table.stack tr { border-bottom: 1px solid var(--line); padding: 8px 0; }
+        table.stack tr.sec-group th { display: block; }
+        table.stack td { border: 0; padding: 3px 0; display: flex; justify-content: flex-start; align-items: flex-start; gap: 12px; text-align: left; overflow-wrap: anywhere; }
+        table.stack td::before { content: attr(data-label); color: var(--ink-2); font-size: 0.8em; text-align: left; flex: 0 0 26%; padding-top: 2px; }
+        table.stack td > * { max-width: 72%; }
+        table.stack tr[data-check], table.stack tr[data-feed] { border-bottom: 1px solid var(--line); padding: 10px 0; }
+        td.sec-fix a { white-space: normal; }
+        form.sec-settings label, form.sec-settings input { width: 100%; box-sizing: border-box; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ui-page-header page-header">
+    <div>
+        <h1 class="page-title">Security overview</h1>
+        <p class="ui-sub page-subtitle">Each check reads what the router is doing right now and links to the page that fixes it.</p>
+    </div>
+    <div class="ui-actions sec-actions">
+        <button class="ui-btn btn btn-secondary" id="sec-recheck" type="button">Check again</button>
+        {% if is_admin %}<button class="ui-btn primary btn btn-primary" id="sec-review" type="button">Review recommended baseline</button>{% endif %}
+    </div>
+</div>
+<div id="sec-error" class="ui-banner crit alert-error" style="display:none" role="alert"></div>
+<div id="sec-flash" class="ui-banner ok" style="display:none" role="status"></div>
+<div id="sec-undo" class="ui-banner info" style="display:none">
+    <span id="sec-undo-text"></span>
+    {% if is_admin %}<button class="ui-btn sm btn btn-secondary btn-sm" id="sec-undo-btn" type="button">Undo baseline</button>{% endif %}
+</div>
+
+<div class="sec-top" aria-live="polite">
+    <div class="sec-grade"><b id="sec-grade">…</b><span id="sec-score">Loading…</span></div>
+    <div class="sec-counts">
+        <div><b id="sec-fail">…</b><span>to fix</span></div>
+        <div><b id="sec-warn">…</b><span>to review</span></div>
+        <div><b id="sec-pass">…</b><span>passed</span></div>
+        <div><b id="sec-na">…</b><span>not applicable</span></div>
+    </div>
+</div>
+
+<section class="ui-panel card">
+    <div class="ui-panel-head card-header"><h2 class="card-title">Checks</h2><span class="hint" id="sec-when"></span></div>
+    <div class="ui-panel-body sec-scroll" tabindex="0" role="region" aria-label="Security checks">
+        <table class="ui-grid lan stack" id="sec-checks">
+            <thead><tr><th>Status</th><th>Check</th><th>What the router does now</th><th>Fix</th></tr></thead>
+            <tbody><tr><td colspan="4"><p class="ui-loading">Loading…</p></td></tr></tbody>
+        </table>
+    </div>
+</section>
+
+<section class="ui-panel card" id="feeds">
+    <div class="ui-panel-head card-header"><h2 class="card-title">Threat-feed catalog</h2><a href="/firewall#tab-threat">Custom feeds and budget</a></div>
+    <div class="ui-panel-body">
+        <p class="hint">Free public blocklists. An enabled feed drops traffic from (and to) its addresses ahead of your rules, or with
+            <em>alert only</em> just counts and logs it. Hits are what the feed's firewall rules matched, sampled every minute.</p>
+        <p class="hint" id="feeds-summary">Loading…</p>
+        <div class="sec-scroll" tabindex="0" role="region" aria-label="Threat feeds">
+            <table class="ui-grid lan stack" id="feeds-table">
+                <thead><tr><th>Feed</th><th>On</th><th>Mode</th><th class="num">Entries</th><th class="num">24 h hits</th><th class="num">7 d hits</th><th>Status</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<section class="ui-panel card">
+    <div class="ui-panel-head card-header"><h2 class="card-title">Check settings</h2></div>
+    <div class="ui-panel-body">
+        <form class="sec-settings" id="sec-settings">
+            <label>WireGuard peer is silent after (days)<input class="ui-input" type="number" min="1" max="3650" name="wg_silent_days"></label>
+            <label>Intrusion detection from (MB RAM)<input class="ui-input" type="number" min="256" name="ids_min_ram_mb"></label>
+            <label>Keep feed hits (days)<input class="ui-input" type="number" min="1" max="366" name="feed_hits_days"></label>
+            <label class="wide">Feeds the baseline turns on (comma-separated ids)<input class="ui-input" type="text" name="baseline_feeds" placeholder="spamhaus_drop,spamhaus_edrop"></label>
+            {% if can_modify %}<button class="ui-btn btn btn-primary" type="submit">Save</button>{% endif %}
+        </form>
+    </div>
+</section>
+
+<dialog class="ui-dialog" id="sec-plan" aria-labelledby="sec-plan-title">
+    <form method="dialog">
+        <header id="sec-plan-title">Recommended baseline (dry run)</header>
+        <div class="ui-dialog-body">
+            <p class="hint" id="sec-plan-session"></p>
+            <h3>Will change</h3>
+            <ul id="sec-plan-changes"></ul>
+            <h3>Left alone</h3>
+            <ul id="sec-plan-skipped"></ul>
+            <p class="hint">Applied as one configuration change: <b>Undo baseline</b> (or System &gt; Configuration history) puts everything back.</p>
+        </div>
+        <footer>
+            <button class="ui-btn btn btn-secondary" value="cancel" type="submit">Cancel</button>
+            <button class="ui-btn primary solid btn btn-primary" id="sec-apply" type="button">Apply these changes</button>
+        </footer>
+    </form>
+</dialog>
+
+<script>
+const CAN_MODIFY = {{ can_modify }};
+async function api(method, path, body) {
+    const r = await fetch('/api' + path, { method, credentials: 'same-origin', headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+    const t = await r.text(); let d = {}; try { d = t ? JSON.parse(t) : {}; } catch (e) { d = { error: t }; }
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    return d;
+}
+function show(id, text) { const e = document.getElementById(id); e.textContent = text || ''; e.style.display = text ? '' : 'none'; }
+const LABEL = { pass: 'pass', warn: 'review', fail: 'fix', na: 'n/a', unknown: 'unknown' };
+const GROUP = { access: 'Access to the router', network: 'Network', services: 'Services and updates', vpn: 'VPN' };
+let plan = null, baselineRev = null;
+function td(tr, label, el) { const c = tr.insertCell(); c.dataset.label = label; if (typeof el === 'string') c.textContent = el; else if (el) c.appendChild(el); return c; }
+function render(d) {
+    document.getElementById('sec-grade').textContent = d.grade;
+    document.getElementById('sec-score').textContent = 'score ' + d.score + ' / 100';
+    ['fail', 'warn', 'pass', 'na'].forEach(k => document.getElementById('sec-' + k).textContent = d.counts[k] + (k === 'warn' && d.counts.unknown ? ' (+' + d.counts.unknown + ' unknown)' : ''));
+    document.getElementById('sec-when').textContent = 'checked ' + new Date(d.checked_at * 1000).toLocaleString();
+    show('sec-error', d.live ? '' : 'Live state could not be read (' + (d.live_error || 'no answer') + '): checks that need it say "unknown".');
+    baselineRev = d.baseline_revision;
+    const u = document.getElementById('sec-undo');
+    if (baselineRev) { document.getElementById('sec-undo-text').textContent = 'A recommended baseline was applied (configuration revision ' + baselineRev + ' is from just before it). '; u.style.display = ''; } else u.style.display = 'none';
+    const tb = document.querySelector('#sec-checks tbody'); tb.innerHTML = '';
+    for (const g of Object.keys(GROUP)) {
+        const rows = d.checks.filter(c => c.group === g); if (!rows.length) continue;
+        const h = tb.insertRow(); h.className = 'sec-group'; const th = document.createElement('th'); th.colSpan = 4; th.textContent = GROUP[g]; h.appendChild(th);
+        for (const c of rows) {
+            const tr = tb.insertRow(); tr.dataset.check = c.id; tr.dataset.status = c.status;
+            const b = document.createElement('span'); b.className = 'sec-st ui-badge ' + c.status + ' ' + ({ pass: 'ok', warn: 'warn', fail: 'crit', na: 'off', unknown: 'warn' })[c.status]; b.textContent = LABEL[c.status];
+            td(tr, 'Status', b);
+            const t = document.createElement('span'); t.textContent = c.title + (c.critical && c.status === 'fail' ? ' (critical)' : '');
+            td(tr, 'Check', t);
+            const ev = td(tr, 'Now', ''); ev.className = 'sec-ev'; const p = document.createElement('span'); p.textContent = c.evidence; ev.appendChild(p);
+            if (c.id === 'wg_silent' && c.detail && c.detail.silent && CAN_MODIFY) {
+                for (const s of c.detail.silent) {
+                    const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'ui-btn sm btn btn-secondary btn-sm'; btn.textContent = 'Disable ' + s.name;
+                    btn.onclick = () => run(api('PUT', '/vpn/wireguard/peers/' + s.id, { enabled: false }), 'Peer ' + s.name + ' disabled.');
+                    ev.appendChild(document.createTextNode(' ')); ev.appendChild(btn);
+                }
+            }
+            const a = document.createElement('a'); a.href = c.fix_href; a.textContent = c.fix_label;
+            if (c.status === 'pass' || c.status === 'na') a.className = 'text-muted';
+            td(tr, 'Fix', a).classList.add('sec-fix');
+        }
+    }
+}
+async function load() {
+    try { render(await api('GET', '/security')); } catch (e) { show('sec-error', e.message); }
+    loadFeeds();
+}
+async function loadFeeds() {
+    try {
+        const f = await api('GET', '/security/feeds?hours=168');
+        const t = f.threat; const tb = document.querySelector('#feeds-table tbody'); tb.innerHTML = '';
+        const on = t.feeds.filter(x => x.enabled);
+        document.getElementById('feeds-summary').textContent = on.length + ' of ' + t.feeds.length + ' feeds on, ' + t.total_entries + ' entries (budget ' + t.max_total + ').';
+        for (const x of t.feeds) {
+            const tr = tb.insertRow(); tr.dataset.feed = x.id;
+            const n = document.createElement('div'); const b = document.createElement('b'); b.textContent = x.name; n.appendChild(b);
+            const sm = document.createElement('small'); sm.textContent = x.description; n.appendChild(sm);
+            td(tr, 'Feed', n);
+            const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = x.enabled; cb.disabled = !CAN_MODIFY; cb.className = 'feed-on'; cb.setAttribute('aria-label', 'Feed ' + x.name + ' on');
+            cb.onchange = () => run(api('PUT', '/firewall/threatintel/' + x.id, { enabled: cb.checked }), x.name + (cb.checked ? ' on: downloading.' : ' off.'), true);
+            td(tr, 'On', cb);
+            const sel = document.createElement('select'); sel.className = 'ui-input feed-mode'; sel.disabled = !CAN_MODIFY; sel.setAttribute('aria-label', 'Mode of ' + x.name);
+            [['drop', 'block'], ['alert', 'alert only']].forEach(o => sel.add(new Option(o[1], o[0]))); sel.value = x.action || 'drop';
+            sel.onchange = () => run(api('PUT', '/firewall/threatintel/' + x.id, { action: sel.value }), x.name + ': ' + sel.options[sel.selectedIndex].text + '.', true);
+            td(tr, 'Mode', sel);
+            td(tr, 'Entries', String(x.count)).className = 'num';
+            td(tr, '24 h hits', String(x.hits_24h)).className = 'num';
+            td(tr, '7 d hits', String(x.hits_7d)).className = 'num';
+            td(tr, 'Status', x.status + (x.last_refresh ? ' (' + new Date(x.last_refresh * 1000).toLocaleString() + ')' : ''));
+        }
+    } catch (e) { document.getElementById('feeds-summary').textContent = 'Threat feeds: ' + e.message; }
+}
+async function run(p, ok, feedsOnly) {
+    try { await p; show('sec-flash', ok); show('sec-error', ''); if (feedsOnly) { loadFeeds(); setTimeout(load, 1500); } else load(); }
+    catch (e) { show('sec-error', e.message); }
+}
+document.getElementById('sec-recheck').onclick = () => load();
+const rv = document.getElementById('sec-review');
+if (rv) rv.onclick = async () => {
+    try {
+        const r = await api('GET', '/security/baseline'); plan = r.plan;
+        const s = plan.session || {};
+        document.getElementById('sec-plan-session').textContent = s.addr ? ('Your connection: ' + s.addr + ' via ' + (s.dev || '?') + (s.over_wan ? ' (over the WAN: everything that carries it is left alone)' : '') + '.') : '';
+        const ch = document.getElementById('sec-plan-changes'); ch.innerHTML = '';
+        if (!plan.changes.length) { const li = document.createElement('li'); li.textContent = 'Nothing: the recommended baseline is already in place.'; ch.appendChild(li); }
+        for (const c of plan.changes) { const li = document.createElement('li'); li.dataset.check = c.check; li.textContent = c.title + ': ' + c.before + ' \u2192 ' + c.after; ch.appendChild(li); }
+        const sk = document.getElementById('sec-plan-skipped'); sk.innerHTML = '';
+        if (!plan.skipped.length) { const li = document.createElement('li'); li.textContent = 'Nothing.'; sk.appendChild(li); }
+        for (const c of plan.skipped) { const li = document.createElement('li'); li.dataset.check = c.check; li.textContent = c.title + ': ' + c.reason; sk.appendChild(li); }
+        document.getElementById('sec-apply').disabled = !plan.changes.length;
+        document.getElementById('sec-plan').showModal();
+    } catch (e) { show('sec-error', e.message); }
+};
+document.getElementById('sec-apply').onclick = async () => {
+    const dlg = document.getElementById('sec-plan');
+    try {
+        const r = await api('POST', '/security/baseline', { token: plan.token });
+        dlg.close(); show('sec-flash', 'Applied ' + r.applied.length + ' change(s) as one configuration revision.'); show('sec-error', '');
+        render(r.overview); loadFeeds();
+    } catch (e) { dlg.close(); show('sec-error', e.message); }
+};
+const ub = document.getElementById('sec-undo-btn');
+if (ub) ub.onclick = async () => {
+    try {
+        const r = await api('GET', '/security/baseline');
+        const n = r.revisions_after_baseline || 0;
+        if (!confirm('Put the configuration back to how it was just before the baseline?' + (n ? ' ' + n + ' later change(s) are undone too.' : ''))) return;
+        const u = await api('POST', '/security/baseline/undo', { revision: baselineRev });
+        show('sec-flash', 'Baseline undone: configuration revision ' + u.restored + ' restored.'); render(u.overview); loadFeeds();
+    } catch (e) { show('sec-error', e.message); }
+};
+document.getElementById('sec-settings').addEventListener('submit', async ev => {
+    ev.preventDefault(); const f = ev.target.elements;
+    const body = { wg_silent_days: +f.wg_silent_days.value, ids_min_ram_mb: +f.ids_min_ram_mb.value, feed_hits_days: +f.feed_hits_days.value,
+        baseline_feeds: f.baseline_feeds.value.split(',').map(s => s.trim()).filter(Boolean) };
+    run(api('PUT', '/security/settings', body), 'Settings saved.');
+});
+api('GET', '/security').then(d => { const f = document.getElementById('sec-settings').elements; f.wg_silent_days.value = d.settings.wg_silent_days; f.ids_min_ram_mb.value = d.settings.ids_min_ram_mb; f.feed_hits_days.value = d.settings.feed_hits_days; f.baseline_feeds.value = d.settings.baseline_feeds.join(','); render(d); }).catch(e => show('sec-error', e.message));
+loadFeeds();
+</script>
+{% endblock %}

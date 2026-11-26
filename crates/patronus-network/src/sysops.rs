@@ -585,6 +585,7 @@ pub fn handle_in(dir: &Path, action: &str, params: &Value) -> Result<Value> {
         "reboot" | "shutdown" => power(action),
         "capture" => capture(params),
         "diag" => crate::diag::handle(params),
+        "posture_facts" => crate::posture::facts(params),
         // access-point Wi-Fi of the router-tier images (/etc/patronus/ap.env, see crate::apwifi)
         "wifi_get" => crate::apwifi::get(&crate::apwifi::Paths::default()),
         "wifi_set" => {

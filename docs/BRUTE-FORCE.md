@@ -3,8 +3,11 @@
 Patronus bans addresses that keep guessing passwords, the job sshguard, fail2ban
 or a CrowdSec bouncer does on other firewalls. It is built in (USE=bruteforce,
 on by default in the package; no extra daemon), cheap enough for small boxes,
-and **off until you turn it on** (Security > Brute-force protection, or
-`patronus guard set enabled=1`).
+**on for a new install** (seeded once at the first boot) and left as it was on an
+upgraded store (off until you turn it on: Security > Brute-force protection,
+`patronus guard set enabled=1`, or the security overview's recommended baseline,
+docs/SECURITY-OVERVIEW.md). Every netlab lane ran with it on before this default
+changed (docs/design/security-suite.md, "Brute-force protection by default").
 
 ## What is counted
 
@@ -62,7 +65,7 @@ or `patronus guard set KEY=VALUE ...`:
 
 | Key | Default | |
 |---|---|---|
-| `enabled` | `0` | protection on/off |
+| `enabled` | `1` on a new install (seeded at the first boot), `0` when absent (an upgraded store) | protection on/off |
 | `sources` | `sshd,dropbear,web` | what is counted |
 | `max_failures` | `5` | failures before a ban (1-1000) |
 | `find_secs` | `600` | counting window |

@@ -113,6 +113,13 @@ fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() :
         <div class="label"><a href="/monitoring">Monitoring</a></div>
     </div>
     {% endif %}
+    <div class="stat-card" id="security-card">
+        <h2>Security</h2>
+        <div class="value" id="security-grade">…</div>
+        <div class="label" id="security-summary">Loading…</div>
+        <div class="label" id="security-feeds"></div>
+        <div class="label"><a href="/security">Security overview</a></div>
+    </div>
     <div class="stat-card">
         <h2>System</h2>
         <div class="label">CPU {{ "{:.1}"|format(system_info.cpu_usage) }}% &middot;
@@ -158,4 +165,23 @@ fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() :
     </p>
     {% endif %}
 </div>
+<script>
+// Security card: filled after the page is up (never blocks the dashboard).
+fetch('/api/security?cached=1', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(d => {
+    const g = document.getElementById('security-grade'), s = document.getElementById('security-summary');
+    if (!d) { g.textContent = '?'; s.textContent = 'Security overview not available'; return; }
+    g.textContent = d.grade + ' \u00b7 ' + d.score;
+    const c = document.getElementById('security-card');
+    if (d.counts.fail) c.classList.add('warning');
+    s.textContent = d.counts.fail + ' to fix, ' + d.counts.warn + ' to review, ' + d.counts.pass + ' passed';
+    return fetch('/api/security/feeds?hours=24', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(f => {
+        if (!f) return;
+        const on = f.threat.feeds.filter(x => x.enabled);
+        const top = on.slice().sort((a, b) => b.hits_24h - a.hits_24h).slice(0, 3).filter(x => x.hits_24h > 0);
+        document.getElementById('security-feeds').textContent = on.length
+            ? 'Threat feeds: ' + on.length + ' on' + (top.length ? ', hits 24 h: ' + top.map(x => x.name + ' ' + x.hits_24h).join(', ') : ', no hits in 24 h')
+            : 'Threat feeds: none on';
+    });
+}).catch(() => { document.getElementById('security-summary').textContent = 'Security overview not available'; });
+</script>
 {% endblock %}

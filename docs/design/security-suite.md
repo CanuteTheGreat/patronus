@@ -1,6 +1,6 @@
 # Built-in security suite
 
-Status: design + phase plan (2026-11). Phase 1 shipped items are marked.
+Status: design + phase plan (2026-11). Shipped items are marked.
 
 A modern firewall is expected to do more than filter: pfSense and OPNsense ship
 (or package) Suricata/Snort, pfBlockerNG / Unbound blocklists, ntopng, sshguard
@@ -32,7 +32,7 @@ Rules every item follows:
 |---|---|---|---|---|---|
 | IDS/IPS | Suricata / Snort packages, ET Open + Snort VRT | Suricata built in (inline IPS), ET Open/Abuse.ch | Snort 3 package | UniFi IDS/IPS (Suricata), Fortinet/Palo Alto paid signatures | Suricata via NFQUEUE (USE=intrusion-detection); rule-set manager, policies, alert browser landing (docs/IDS-RULESETS.md) |
 | DNS filtering / ad blocking | pfBlockerNG DNSBL | Unbound blocklists | adblock / adblock-lean | UniFi ad blocking, Firewalla family | Unbound blocklists (URLs + domains), per-group policies and family preset (segmentation) |
-| IP threat-intel blocklists | pfBlockerNG IP lists | firewall aliases (URL tables), CrowdSec | banIP | UniFi "threat management", Firewalla | threat-feed aliases (Spamhaus DROP/EDROP, FireHOL L1, abuse.ch, own URL) dropped ahead of user rules (docs/FIREWALL-FEEDS.md) |
+| IP threat-intel blocklists | pfBlockerNG IP lists | firewall aliases (URL tables), CrowdSec | banIP | UniFi "threat management", Firewalla | threat-feed aliases (Spamhaus DROP/EDROP, FireHOL L1, abuse.ch, own URL) dropped ahead of user rules (docs/FIREWALL-FEEDS.md); **phase 2: catalog on the overview, per-feed hit counters, alert-only mode (shipped)** |
 | GeoIP / ASN blocking | pfBlockerNG | GeoIP aliases | banIP | region blocking | GeoIP + ASN aliases |
 | Brute-force protection | sshguard (built in) | sshguard / CrowdSec | banIP + dropbear | built in | **phase 1: shipped** (docs/BRUTE-FORCE.md) |
 | Flow / traffic analysis | ntopng package | Insight, ntopng plugin | luci-statistics, nlbwmon | per-client/app dashboards | traffic insight, uplink health, NetFlow export; no app classification yet |
@@ -40,7 +40,7 @@ Rules every item follows:
 | Router's own CVE exposure | update notices | update notices + changelog | opkg list-upgradable | "firmware has security fix" notices | update channel; no CVE view yet |
 | Encrypted DNS | DoT upstream | DoT/DoH (Unbound, dnscrypt-proxy) | https-dns-proxy | DoH upstream | DoT upstream; DoH policy for devices with a DNS policy |
 | Security log + alerting | logs, notifications | logs, Monit | logread | push alerts | firewall log viewer, structured log viewer, notification channels |
-| Hardening baseline / score | wizard defaults | - | - | UniFi "security posture", Firewalla checks | individual knobs (SYN flood, bogons, MSS, IPv4 options, inbound reject); no overview |
+| Hardening baseline / score | wizard defaults | - | - | UniFi "security posture", Firewalla checks | **phase 2 (shipped): security overview with 18 live checks, grade, dashboard card, one-click baseline (dry run, one revision, undo, keeps the admin's path) and VPN checks** (docs/SECURITY-OVERVIEW.md) |
 
 ## Components chosen (and why)
 
@@ -59,8 +59,10 @@ Rules every item follows:
    `--address=/domain/` lists with a size cap from the board profile.
 3. **IP threat intel: nftables sets** filled by the existing feeds engine. Add
    a catalog toggle on the overview page, per-feed hit counters on the
-   dashboard and an "alert only" mode. Router tier: capped sets (memory per
-   element measured per board).
+   dashboard and an "alert only" mode (**shipped**: the sampler adds the
+   feed rules' kernel counter increases to an hourly `sec_feed_hits` history,
+   NON_CONFIG, 30 days; alert only = count + log, no verdict). Router tier:
+   capped sets (memory per element measured per board).
 4. **Brute-force protection: built into Patronus** (no daemon): SSH (OpenSSH,
    Dropbear) and web UI failures -> timed bans in an own nft table, IPv6 per
    /64, escalation, LAN exemption, allow list. A CrowdSec agent was
@@ -109,7 +111,10 @@ Rules every item follows:
 10. **VPN hardening.** Checks on the overview page: WireGuard peers without a
     preshared key, peers silent for 90 days, IPsec proposals below the
     current recommendation (no SHA-1/MODP-1024), OpenVPN without
-    tls-crypt; a fix button where the change is safe.
+    tls-crypt; a fix button where the change is safe (**shipped**: read from
+    the kernel's peers, strongSwan's loaded proposals and live SAs, running
+    OpenVPN configs; the safe fix is "Disable" on a silent peer, everything else
+    needs the other end of the tunnel and links to the VPN page).
 11. **Hardening baseline + security overview.** One page that grades the
     box with evidence (each check reads live state): SSH key-only and not on
     WAN, web UI not on WAN, admin 2FA, brute-force protection on, threat
@@ -118,7 +123,36 @@ Rules every item follows:
     unused services off, default ports standard. "Apply the recommended
     baseline" shows the change set first (dry run), applies it as one
     configuration revision (rollback in one click) and never touches the
-    management path the admin is using.
+    management path the admin is using. **Shipped** (docs/SECURITY-OVERVIEW.md):
+    reachability from the WAN is decided by walking the loaded nftables input
+    chain (`patronus_firewall::exposure`), the plan is recomputed on apply and
+    refused if it differs from the dry run, the admin's address is routed
+    (`ip route get`) and anything that may carry a WAN session (the WAN web
+    rule, a bogon/private-source guard that would drop that source) is left
+    out with the reason. Not in the baseline: two-factor login (each admin
+    enrols), intrusion detection (~520 MB and the watched interface is a
+    choice), tunnel algorithms (both ends), ports and services. Automatic
+    security updates: the check reports that the firmware has no automatic
+    update schedule yet (its own job).
+
+### Brute-force protection by default
+
+Decision (2026-11): **on for new installs**, seeded once at the first boot
+(`patronus_config::defaults`, like DNS rebinding protection); an upgraded store
+keeps what it had, and the baseline turns it on there. Before the default
+changed, the whole netlab suite (`NETLAB_ALL=1 ci/netlab/run.sh`, every lane,
+journey, failure and upgrade scenario) ran with it on, since every lane boots a
+new store. Why it is safe on: the LAN (every subnet of a LAN-role interface)
+and an allow list are never banned, a ban needs 5 failures in 10 minutes, the
+first ban lasts 15 minutes, and Patronus' own CI clients sit on the LAN side.
+What the run found and what changed (2026-11-26, rw-man-07 arm64, ubuntu:24.04 netlab image): 75 scenarios
+passed with it on, 4 hwsim Wi-Fi lanes skipped (no radio tools in that container), 3 failed. `lane-a-foundation`
+expected `patronus firewall flush` to leave no ruleset and the guard table stayed: `FirewallApplier::teardown`
+now removes `inet patronus_guard` too. `lane-f-ipsec-rw` aborted on a host without `/usr/lib64` (a `find` exit
+status under pipefail, nothing to do with the guard): fixed in the lane. `lane-n-tls` fails its TLS 1.2 handshake
+check identically with the protection switched off (an environment difference of that image, not this change).
+All three re-ran green or unchanged with the fixes; apart from lane-b-guard's deliberate bans, no lane
+had a client banned.
 
 ## Tiers
 
@@ -138,9 +172,9 @@ Rules every item follows:
 
 - **Phase 1 (shipped):** brute-force protection (item 4, standard tier); IDS
   rule-set manager from its lane (item 1).
-- **Phase 2:** security overview + one-click baseline + VPN checks (10, 11);
-  DNS filtering catalog + RPZ (2); threat-feed catalog + hit counters (3);
-  security events into alert routing (9).
+- **Phase 2:** security overview + one-click baseline + VPN checks (10, 11,
+  shipped); DNS filtering catalog + RPZ (2); threat-feed catalog + hit
+  counters (3, shipped); security events into alert routing (9).
 - **Phase 3:** LAN security audit (6); router CVE exposure (7); DoH/DoT server
   (8); application identification with nDPI (5); brute-force protection on
   the router tier, VPN sources and IDS-driven bans (4).

@@ -14,6 +14,7 @@ pub mod qrcode;
 pub mod radius;
 pub mod rbac;
 pub mod routes;
+pub mod security;
 pub mod server;
 pub mod state;
 pub mod syslogin;

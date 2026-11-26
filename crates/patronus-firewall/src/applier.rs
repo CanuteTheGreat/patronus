@@ -789,6 +789,9 @@ impl Applier for FirewallApplier {
         }
         // the segmentation table goes with it (best effort: it may not exist)
         let _ = nftables::execute_nft_command(&["delete", "table", "inet", "patronus_seg"]);
+        // and so does the brute-force guard table: a flush leaves no Patronus ruleset behind
+        let _ =
+            nftables::execute_nft_command(&["delete", "table", "inet", crate::guard::TABLE_NAME]);
         Ok(())
     }
 

@@ -589,7 +589,10 @@ function showTab(id) {
 document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
 // Summary cards jump to the tab that lists what they count.
 document.querySelectorAll('a.stat-link').forEach(a => a.addEventListener('click', e => { e.preventDefault(); showTab(a.dataset.goto); document.getElementById(a.dataset.goto).scrollIntoView(); }));
-if (sessionStorage.getItem(TAB_KEY) && document.getElementById(sessionStorage.getItem(TAB_KEY))) {
+if (location.hash && /^#tab-[a-z-]+$/.test(location.hash) && document.getElementById(location.hash.slice(1))) {
+    // deep links (the security overview's "Fix" links) open their tab
+    showTab(location.hash.slice(1));
+} else if (sessionStorage.getItem(TAB_KEY) && document.getElementById(sessionStorage.getItem(TAB_KEY))) {
     showTab(sessionStorage.getItem(TAB_KEY));
 }
 

@@ -8,6 +8,7 @@ use std::process::Command;
 pub mod aliases;
 pub mod applier;
 pub mod asn;
+pub mod exposure;
 pub mod feeds;
 pub mod guard;
 pub mod ha_rules;
