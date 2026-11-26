@@ -14,6 +14,8 @@
 //! configuration. No subsystem may show fixture rows: an empty system shows
 //! an empty list (see tests/no_fixtures.rs).
 
+#[cfg(feature = "captive-portal")]
+pub mod captive;
 pub mod firewall;
 pub mod fwfeeds;
 pub mod fwlog;
@@ -230,6 +232,9 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
         #[cfg(feature = "dns")]
         seg::spawn_dns_log_collector(store.clone());
     }
+    // captive portal: sign-in listeners and the session ticker (timeouts, disconnects)
+    #[cfg(feature = "captive-portal")]
+    captive::spawn(store.clone());
     // gateway / tunnel / HA / configuration events for the event log and webhooks
     telemetry::spawn_watcher(state.clone());
     // scheduled internet speed tests (off unless an interval is set)

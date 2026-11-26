@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "uci-import"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "captive-portal", "wifi-client", "uci-import"]
 
 # `patronus import-uci`: OpenWrt UCI config importer (no extra dependencies;
 # its wifi-ap / dhcp-server parts are cfg-gated inside it)
@@ -55,7 +55,6 @@ monitoring = []
 monitoring-prometheus = ["dep:prometheus"]
 
 # Advanced
-captive-portal = []
 ids-suricata = []
 vlan = ["patronus-network/vlan", "patronus-web?/vlan"]
 pppoe = ["patronus-network/pppoe", "patronus-web?/pppoe"]
@@ -70,6 +69,8 @@ nat64 = ["patronus-network/nat64", "patronus-web?/nat64"]
 l2tp = ["patronus-network/l2tp", "patronus-web?/l2tp"]
 upnp = ["patronus-network/upnp", "patronus-web?/upnp"]
 guest = ["patronus-network/guest", "patronus-web?/guest"]
+# captive portal (zones, local/voucher/RADIUS login, sessions; pages served by patronus-web)
+captive-portal = ["patronus-network/captive-portal", "patronus-web?/captive-portal"]
 ldap = ["patronus-web?/ldap"]
 plugins = ["patronus-network/plugins", "patronus-web?/plugins"]
 segmentation = ["patronus-network/segmentation", "patronus-web?/segmentation"]
@@ -105,7 +106,6 @@ patronus-sdwan = { path = "../patronus-sdwan" }
 patronus-mpls = { path = "../patronus-mpls" }
 patronus-geodns = { path = "../patronus-geodns" }
 patronus-saas = { path = "../patronus-saas" }
-patronus-captiveportal = { path = "../patronus-captiveportal" }
 
 tokio.workspace = true
 clap = { workspace = true, features = ["derive"] }

@@ -40,6 +40,9 @@ upnp = []
 # guest network: isolated VLAN/Wi-Fi network with its own DHCP/DNS, caps, schedule and vouchers
 # (RDEPEND net-dns/dnsmasq, iproute2, nftables; net-wireless/hostapd for the guest SSID)
 guest = []
+# captive portal: zones, portal users, voucher rolls, passthrough and the `inet patronus_portal`
+# table (pages, RADIUS and sessions: patronus-captiveportal); RDEPEND nftables, iproute2 (tc), conntrack-tools
+captive-portal = ["dep:argon2"]
 vrf = []
 # device segmentation (lane s): L2 isolation settings (proxy ARP, isolated bridge ports)
 # for the nft default-deny table; the rules themselves are always compiled
@@ -80,6 +83,7 @@ netlink-packet-core.workspace = true
 netlink-packet-route.workspace = true
 rtnetlink = "0.14"
 ipnetwork = "0.20"
+argon2 = { version = "0.5", optional = true }
 futures = "0.3"
 x25519-dalek = { version = "2.0", features = ["static_secrets"], optional = true }
 base64 = "0.22"
