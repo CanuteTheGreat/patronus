@@ -396,6 +396,123 @@ pub fn render_filter_rule(rule: &FirewallRule, aliases: &AliasMap) -> Result<Vec
     Ok(render_filter_rule_ext(rule, aliases, &RenderCtx::default())?.lines)
 }
 
+/// Which optional nftables expressions this kernel has. Small router images
+/// leave some out (the Slate kernel has no connection counting); a rule that
+/// needs one is refused when it is saved and skipped, with a warning, when the
+/// ruleset is rendered, instead of failing the whole ruleset load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct KernelCaps {
+    /// `ct count over N` (nft_connlimit): max states, max connections per source.
+    pub connlimit: bool,
+    /// `limit rate over ...` (nft_limit): new-connection rate, limiters.
+    pub limit: bool,
+    /// `add @set { ... }` statements (dynamic sets).
+    pub dynset: bool,
+}
+
+impl KernelCaps {
+    /// Everything (also what an unreadable kernel is assumed to have).
+    pub const ALL: KernelCaps = KernelCaps {
+        connlimit: true,
+        limit: true,
+        dynset: true,
+    };
+
+    /// What `ext` needs, and the first thing this kernel lacks for it.
+    pub fn missing_for(&self, ext: &patronus_core::types::RuleExt) -> Option<&'static str> {
+        let per_source = ext.max_src_conn.is_some()
+            || ext.max_src_rate.is_some()
+            || ext.limiter.is_some();
+        if (ext.max_states.is_some() || ext.max_src_conn.is_some()) && !self.connlimit {
+            return Some("connection counting (nft_connlimit)");
+        }
+        if (ext.max_src_rate.is_some() || ext.limiter.is_some()) && !self.limit {
+            return Some("rate limiting (nft_limit)");
+        }
+        if per_source && !self.dynset {
+            return Some("dynamic sets (nft_dynset)");
+        }
+        None
+    }
+}
+
+/// Outcome of one probe script.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Probe {
+    Supported,
+    Unsupported,
+    /// nft missing, no permission: say nothing about the kernel.
+    Unknown,
+}
+
+const PROBE_HEAD: &str = "add table inet pat_probe\nadd chain inet pat_probe c { type filter hook input priority 0; }\n";
+
+/// Work out the capabilities from a probe runner (script -> outcome). The
+/// plain base script must be supported first; if it is not, the answer is
+/// "unknown" for everything and every feature counts as present.
+pub fn probe_caps(run: &dyn Fn(&str) -> Probe) -> Option<KernelCaps> {
+    if run(&format!("{PROBE_HEAD}add rule inet pat_probe c counter drop\n")) != Probe::Supported {
+        return None;
+    }
+    let one = |rule: &str, extra: &str| {
+        run(&format!("{PROBE_HEAD}{extra}add rule inet pat_probe c {rule}\n")) != Probe::Unsupported
+    };
+    Some(KernelCaps {
+        connlimit: one("ct state new ct count over 1000000 drop", ""),
+        limit: one("limit rate over 1/second drop", ""),
+        dynset: one(
+            "ct state new add @s { ip saddr } drop",
+            "add set inet pat_probe s { type ipv4_addr; size 8; flags dynamic; }\n",
+        ),
+    })
+}
+
+fn run_nft_check(script: &str) -> Probe {
+    let Ok(mut child) = Command::new("nft")
+        .args(["-c", "-f", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    else {
+        return Probe::Unknown;
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let _ = stdin.write_all(script.as_bytes());
+    }
+    match child.wait_with_output() {
+        Ok(o) if o.status.success() => Probe::Supported,
+        Ok(o) => {
+            let e = String::from_utf8_lossy(&o.stderr).to_ascii_lowercase();
+            if e.contains("not permitted") || e.contains("cache initialization") {
+                Probe::Unknown
+            } else {
+                Probe::Unsupported
+            }
+        }
+        Err(_) => Probe::Unknown,
+    }
+}
+
+/// This kernel's capabilities, probed once (`nft -c`, nothing is loaded) and
+/// remembered; an unreadable kernel (no nft, no permission) is not
+/// remembered and counts as having everything.
+pub fn kernel_caps() -> KernelCaps {
+    static CAPS: std::sync::Mutex<Option<KernelCaps>> = std::sync::Mutex::new(None);
+    let mut g = CAPS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(c) = *g {
+        return c;
+    }
+    match probe_caps(&run_nft_check) {
+        Some(c) => {
+            *g = Some(c);
+            c
+        }
+        None => KernelCaps::ALL,
+    }
+}
+
 /// A limiter (rate cap) as the renderer needs it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LimiterSpec {
@@ -1669,5 +1786,50 @@ mod floating_tests {
         let b = render(&r, &RenderCtx::default()).unwrap();
         assert_eq!(a, b.lines);
         assert!(b.sets.is_empty() && b.limit_lines.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod caps_tests {
+    use super::*;
+
+    #[test]
+    fn probe_marks_only_what_the_kernel_refuses() {
+        let run = |script: &str| {
+            if script.contains("ct count") {
+                Probe::Unsupported
+            } else {
+                Probe::Supported
+            }
+        };
+        let c = probe_caps(&run).unwrap();
+        assert_eq!(
+            c,
+            KernelCaps {
+                connlimit: false,
+                limit: true,
+                dynset: true
+            }
+        );
+        let mut ext = patronus_core::types::RuleExt::default();
+        assert_eq!(c.missing_for(&ext), None);
+        ext.max_states = Some(5);
+        assert_eq!(c.missing_for(&ext), Some("connection counting (nft_connlimit)"));
+        ext.max_states = None;
+        ext.max_src_rate = Some(5);
+        ext.max_src_rate_secs = Some(1);
+        assert_eq!(c.missing_for(&ext), None);
+    }
+
+    #[test]
+    fn an_unreadable_kernel_is_assumed_to_have_everything() {
+        // the base probe fails (no permission / no nft): no verdict
+        assert_eq!(probe_caps(&|_| Probe::Unknown), None);
+        assert_eq!(probe_caps(&|_| Probe::Unsupported), None);
+        let all = probe_caps(&|_| Probe::Supported).unwrap();
+        assert_eq!(all, KernelCaps::ALL);
+        // an Unknown feature probe is not "unsupported"
+        let c = probe_caps(&|s| if s.contains("limit rate") { Probe::Unknown } else { Probe::Supported }).unwrap();
+        assert!(c.limit);
     }
 }

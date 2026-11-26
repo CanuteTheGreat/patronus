@@ -53,41 +53,48 @@ cat > "$NL_T/lb-open.py" <<'EOF'
 # Open N connections at once and hold them; print how many connected.
 import socket, sys, time
 host, port, n = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+hold = float(sys.argv[4]) if len(sys.argv) > 4 else 0.5
 socks, ok = [], 0
 for _ in range(n):
     try:
         c = socket.create_connection((host, port), timeout=1.5); c.recv(8); socks.append(c); ok += 1
     except OSError:
         pass
-print(ok)
-time.sleep(0.5)
+print(ok, flush=True)
+time.sleep(hold)
 EOF
 cat > "$NL_T/lb-sink.py" <<'EOF'
-# Upload sink: for every connection count the bytes received for 5 s and
-# append "<client address> <bytes>" to the file in argv[3].
+# Upload sink: for every connection read the label line the client sends first, count the bytes received for
+# 5 s and append "<label> <bytes>" to the file in argv[3]. (The clients are masqueraded, so the label is the id.)
 import socket, sys, threading, time
 s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind((sys.argv[1], int(sys.argv[2]))); s.listen(16)
 out = sys.argv[3]
 def h(c, peer):
-    n, t0 = 0, time.time()
+    n, t0, label, buf = 0, time.time(), None, b""
     c.settimeout(1)
     while time.time() - t0 < 5:
         try:
             d = c.recv(65536)
             if not d: break
-            n += len(d)
+            if label is None:
+                buf += d
+                if b"\n" in buf:
+                    label, rest = buf.split(b"\n", 1); n += len(rest)
+            else:
+                n += len(d)
         except socket.timeout:
             pass
     c.close()
-    open(out, "a").write(f"{peer} {n}\n")
+    open(out, "a").write(f"{(label or b'?').decode()} {n}\n")
 while True:
     c, a = s.accept(); threading.Thread(target=h, args=(c, a[0]), daemon=True).start()
 EOF
 cat > "$NL_T/lb-push.py" <<'EOF'
-# Upload as fast as possible for 5 s.
+# Upload as fast as possible for 5 s, labelled with argv[3].
 import socket, sys, time
 c = socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=3)
+c.sendall(sys.argv[3].encode() + b"\n")
 buf = b"x" * 65536; t0 = time.time()
 c.settimeout(2)
 while time.time() - t0 < 5:
@@ -110,7 +117,19 @@ boot() {
   nl_ok "boot: patronus apply"
 }
 
-conn() { "$1" python3 "$NL_T/nl-conn.py" "$2" "$3" >"$NL_OUT" 2>&1; }
+cat > "$NL_T/lb-conn.py" <<'EOF2'
+# Connect (2 s) and report; a server that waits for the client to speak first (HTTP) still counts as reachable.
+import socket, sys
+try:
+    c = socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=2)
+    c.settimeout(0.3)
+    try: c.recv(16)
+    except OSError: pass
+    print("connected")
+except OSError as e:
+    print("unreachable:", e); sys.exit(1)
+EOF2
+conn() { "$1" python3 "$NL_T/lb-conn.py" "$2" "$3" >"$NL_OUT" 2>&1; }
 expect_sees() { # DESC NS HOST PORT
   local d=$1; shift
   conn "$@" || { cat "$NL_OUT"; nl_fail "$d: expected reachable"; }
@@ -153,20 +172,23 @@ nl_web_start "$DB"
 nl_login
 # the second LAN network may pass, like the seeded LAN rule does for @lan
 api_ok POST /firewall/rules "$(rj lb-opt-allow accept rtr-opt any | sed 's/"protocol":"tcp"/"protocol":"any"/; s/"destination":"[^"]*"/"destination":"any"/')"
+OPT_ALLOW=$(json_id)
 expect_sees "client 1 reaches the internet :9000" C $NL_WWW 9000
 expect_sees "client 2 reaches the internet :9000" C2 $NL_WWW 9000
 nl_web GET /firewall
 [ "$NL_CODE" = 200 ] || nl_fail "firewall page: $NL_CODE"
-for f in floating-form group-form limiter-form; do
-  grep -q "id=\"$f\"" "$NL_OUT" || nl_fail "firewall page lacks the $f form"
+for f in 'name="scope"' 'name="interfaces"' 'name="max_src_rate"' 'name="limiter"' 'id="group-form"' 'id="limiter-form"' 'id="overload-table"'; do
+  grep -qF "$f" "$NL_OUT" || nl_fail "firewall page lacks $f"
 done
-nl_ok "firewall page has the floating-rule, interface-group and limiter forms"
+for ep in "'/firewall/interface-groups'" "'/firewall/limiters'" "'/firewall/overload"; do
+  grep -qF "$ep" "$NL_OUT" || nl_fail "firewall page script never calls $ep"
+done
+nl_ok "firewall page has the floating-rule, interface-group, limiter and overload controls"
 
 echo "=== 1. floating rule on two interfaces; quick and not quick"
 api_ok POST /firewall/rules "$(floating lb-float-block drop true in '["rtr-lan","rtr-opt"]' 9000)"
 FLOAT=$(json_id)
-nl_assert_nft_has "iifname { \"rtr-lan\", \"rtr-opt\" } meta l4proto" 'tcp dport 9000 drop' 2>/dev/null \
-  || nl_assert_nft_has "iifname { \"rtr-lan\", \"rtr-opt\" }" "tcp dport 9000 drop"
+nl_assert_nft_has "iifname { \"rtr-lan\", \"rtr-opt\" } ip daddr $NL_WWW tcp dport 9000 drop"
 expect_blocked "floating block: client 1 (rtr-lan)" C $NL_WWW 9000
 expect_blocked "floating block: client 2 (rtr-opt)" C2 $NL_WWW 9000
 expect_sees "floating block is port-specific: :80 passes" C $NL_WWW 80
@@ -212,8 +234,8 @@ expect_sees "direction out rule removed" C $NL_WWW 9000
 echo "=== 3. interface group follows a new member"
 api_ok POST /firewall/interface-groups '{"name":"trusted","members":["rtr-lan"],"description":"first network"}'
 nl_assert_nft_has "set ifgrp_trusted" "type ifname"
-R nft list set inet patronus ifgrp_trusted | grep -q '"rtr-lan"' || nl_fail "the group set lacks rtr-lan"
-api_ok POST /firewall/rules "$(rj lb-group-block drop group:trusted 9000)"
+SET=$(R nft list set inet patronus ifgrp_trusted); grep -qF '"rtr-lan"' <<<"$SET" || nl_fail "the group set lacks rtr-lan"
+api_ok POST /firewall/rules "$(rj lb-group-block drop group:trusted 9000 ",\"before\":$OPT_ALLOW")"
 GRULE=$(json_id)
 nl_assert_nft_has "iifname @ifgrp_trusted" "tcp dport 9000 drop"
 expect_blocked "group rule: client 1 (member)" C $NL_WWW 9000
@@ -247,17 +269,20 @@ N=$(C python3 "$NL_T/lb-open.py" $NL_WWW 9100 8)
 nl_ok "max-src-conn 3: exactly 3 of 8 simultaneous connections from one source got through"
 api_ok DELETE /firewall/rules/$CONN_PLAIN
 sleep 9  # the holding server frees its sockets
-api_ok POST /firewall/rules "$(rj lb-states accept @lan 9100 ',"max_states":4')"
+api_ok POST /firewall/rules "$(floating lb-states accept true in '["rtr-lan","rtr-opt"]' 9100 ',"max_states":4')"
 STATES=$(json_id)
-api_ok POST /firewall/rules "$(rj lb-states2 accept rtr-opt 9100)"
-N1=$(C python3 "$NL_T/lb-open.py" $NL_WWW 9100 3)
-[ "$N1" = 3 ] || nl_fail "max-states 4: first source got $N1 of 3"
-nl_ok "max-states 4: 3 connections open, within the limit"
-N2=$( (C python3 "$NL_T/lb-open.py" $NL_WWW 9100 3 & sleep 0.3; wait) )
-[ "$N2" -le 4 ] || nl_fail "max-states 4: $N2 connections"
+nl_assert_nft_has "ct state new ct count over 4 drop"
+C python3 "$NL_T/lb-open.py" $NL_WWW 9100 3 4 > /tmp/lb-n1 &
+P1=$!
+sleep 1
+N2=$(C2 python3 "$NL_T/lb-open.py" $NL_WWW 9100 3 0.5)
+wait $P1 || true
+N1=$(cat /tmp/lb-n1)
+[ "$N1" = 3 ] || nl_fail "max-states 4: the first client got $N1 of 3"
+[ "$N2" = 1 ] || nl_fail "max-states 4: the second client got $N2 of 3 (want 1: 4 in total)"
+nl_ok "max-states 4: 3 + 1 connections got through across both interfaces, the rest were dropped"
 api_ok DELETE /firewall/rules/$STATES
-api_ok DELETE /firewall/rules/$(nl_api GET /firewall/rules >/dev/null; python3 -c 'import json,sys; print([r["id"] for r in json.load(open(sys.argv[1])) if r["name"]=="lb-states2"][0])' "$NL_OUT")
-sleep 9
+sleep 5
 
 echo "=== 5. max-src-rate puts a flooding client into the overload table"
 api_ok POST /firewall/rules "$(rj lb-flood accept @lan 80 ',"max_src_rate":5,"max_src_rate_secs":10,"overload":"flooders","overload_secs":120,"category":"limits"')"
@@ -276,7 +301,7 @@ EOF
 OKN=$(C python3 "$NL_T/lb-flood.py" $NL_WWW)
 [ "$OKN" -lt 40 ] && [ "$OKN" -ge 3 ] || nl_fail "flood: $OKN of 40 connections got through (want a few, not all)"
 nl_ok "flood: $OKN of 40 new connections got through before the rate limit bit"
-R nft list set inet patronus ov_flooders_v4 | grep -q "$NL_CLIENT" || { R nft list set inet patronus ov_flooders_v4; nl_fail "the flooding client is not in the overload table"; }
+SET=$(R nft list set inet patronus ov_flooders_v4); grep -qF "$NL_CLIENT" <<<"$SET" || { echo "$SET"; nl_fail "the flooding client is not in the overload table"; }
 nl_ok "the flooding client is in the overload table"
 nl_api GET /firewall/overload
 grep -q "$NL_CLIENT" "$NL_OUT" || nl_fail "the overload API does not list the client: $(cat "$NL_OUT")"
@@ -295,16 +320,19 @@ FREE=$(json_id)
 api_ok POST /firewall/rules "$(rj lb-up-opt accept rtr-opt 9200)"
 OPTR=$(json_id)
 : > /tmp/lb-sink.txt
-C python3 "$NL_T/lb-push.py" $NL_WWW 9200; sleep 1.5
-FREE_BPS=$(sink_bytes $NL_CLIENT)
+C python3 "$NL_T/lb-push.py" $NL_WWW 9200 c1; sleep 1.5
+FREE_BPS=$(sink_bytes c1)
 nl_ok "unlimited upload: $(mbps "$FREE_BPS") kB/s"
 api_ok PUT /firewall/rules/$FREE "$(rj lb-up-free accept @lan 9200 ',"limiter":"cap4m","category":"limits"')"
-nl_assert_nft_has "chain lim_forward" "limit rate over 500000 bytes/second burst 128 kbytes drop"
+nl_assert_nft_has "chain lim_forward" "limit rate over 500000 bytes/second burst 128 kbytes } drop"
 : > /tmp/lb-sink.txt
-C python3 "$NL_T/lb-push.py" $NL_WWW 9200 &
-C2 python3 "$NL_T/lb-push.py" $NL_WWW 9200 &
-wait; sleep 1.5
-LIM1=$(sink_bytes $NL_CLIENT); LIM2=$(sink_bytes $C2_NET.10)
+C python3 "$NL_T/lb-push.py" $NL_WWW 9200 c1 &
+PA=$!
+C2 python3 "$NL_T/lb-push.py" $NL_WWW 9200 c2 &
+PB=$!
+wait $PA $PB || true
+sleep 1.5
+LIM1=$(sink_bytes c1); LIM2=$(sink_bytes c2)
 nl_ok "limited upload: client 1 $(mbps "$LIM1") kB/s (cap 500), client 2 (no limiter) $(mbps "$LIM2") kB/s"
 [ "$(mbps "$LIM1")" -le 800 ] || nl_fail "the limiter did not hold: client 1 sent $(mbps "$LIM1") kB/s against a 500 kB/s cap"
 [ "$(mbps "$LIM1")" -ge 150 ] || nl_fail "the limiter strangled the flow: $(mbps "$LIM1") kB/s"
@@ -335,7 +363,7 @@ nl_stop_servers
 ip netns del nl-c2 2>/dev/null || true
 boot
 nl_assert_nft_has "set ifgrp_edge" "iifname @ifgrp_edge" "limit rate over 500000 bytes/second"
-R nft list set inet patronus ifgrp_edge | grep -q '"rtr-opt"' || nl_fail "group members did not return after the reboot"
+SET=$(R nft list set inet patronus ifgrp_edge); grep -qF '"rtr-opt"' <<<"$SET" || nl_fail "group members did not return after the reboot"
 expect_blocked "after reboot: floating rule on the group blocks client 1" C $NL_WWW 9000
 expect_blocked "after reboot: floating rule on the group blocks client 2" C2 $NL_WWW 9000
 nl_ok "floating rules, groups and limiters came back from the store alone"

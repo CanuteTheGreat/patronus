@@ -55,7 +55,7 @@ for s in "$@"; do cp "$s" "$OUT/"; done
 cp ci/netlab/lib.sh "$OUT/"
 cp -r ci/netlab/fixtures "$OUT/"
 # lane T UI scenario drives this Playwright script
-cp ci/guest-page-e2e.py "$OUT/"
+cp ci/guest-page-e2e.py ci/firewall-floating-e2e.py "$OUT/"
 # lane J XDP data plane: the shipped BPF program source
 cp crates/patronus-ebpf/src/xdp_firewall.bpf.c "$OUT/"
 OLD_ENV=
