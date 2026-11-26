@@ -558,7 +558,9 @@
             <button type="button" class="btn btn-danger" onclick="clearLog()">Clear stored log</button>
             <span id="log-status" class="hint"></span>
         </form>
-        <table id="log-table"><thead><tr><th>Time</th><th>Rule</th><th>Action</th><th>Chain</th><th>In</th><th>Out</th><th>Proto</th><th>Source</th><th>Destination</th><th>Len</th></tr></thead><tbody></tbody></table>
+        <p class="hint">Summary counts are for the currently displayed matching log lines, not all traffic.</p>
+        <div id="log-summary" aria-live="polite"></div>
+        <table id="log-table"><thead><tr><th>Time</th><th>Rule</th><th>Action</th><th>Chain</th><th>In</th><th>Out</th><th>Proto</th><th>Source</th><th>Destination</th><th>Len</th><th>Actions</th></tr></thead><tbody></tbody></table>
         <p id="log-empty" class="empty" style="display:none">No log lines match.</p>
     </div>
 
@@ -923,10 +925,45 @@ function logQuery(extra) {
     return p.toString();
 }
 function logRow(e) {
-    const tr = document.createElement('tr'); tr.dataset.id = e.id;
+    const tr = document.createElement('tr'); tr.dataset.id = e.id; tr.dataset.action = e.action || 'unknown';
     const ep = (a, p) => a + (p ? ':' + p : '');
     [new Date(e.ts * 1000).toLocaleString(), e.rule, e.action, e.chain, e.iface_in, e.iface_out, e.proto, ep(e.src, e.sport), ep(e.dst, e.dport), e.length || ''].forEach(v => tr.insertCell().textContent = v);
+    const actions = tr.insertCell();
+    [['Block this source', 'drop'], ['Pass this', 'accept']].forEach(([label, action]) => {
+        const button = document.createElement('button'); button.type = 'button';
+        button.className = 'btn btn-secondary btn-sm'; button.textContent = label;
+        button.addEventListener('click', () => ruleFromLog(e, action)); actions.appendChild(button);
+    });
     return tr;
+}
+function summarizeLog() {
+    const counts = new Map();
+    document.querySelectorAll('#log-table tbody tr').forEach(row => counts.set(row.dataset.action, (counts.get(row.dataset.action) || 0) + 1));
+    document.getElementById('log-summary').textContent = Array.from(counts, ([action, count]) => action + ': ' + count).join(' · ');
+}
+function ruleFromLog(e, action) {
+    const f = document.getElementById('rule-form');
+    const chain = e.chain;
+    const iface = chain === 'output' ? e.iface_out : e.iface_in;
+    const proto = (e.proto || '').toLowerCase();
+    // Never silently widen a proposed pass rule when the log cannot be represented.
+    if (!['input', 'output', 'forward'].includes(chain) || !e.src || !iface ||
+        !Array.from(f.elements['interface'].options).some(option => option.value === iface) ||
+        (action === 'accept' && chain === 'forward' && (!e.iface_out || !Array.from(f.elements['interface_out'].options).some(option => option.value === e.iface_out))) ||
+        (action === 'accept' && (!e.dst || !['tcp', 'udp'].includes(proto) || !e.dport))) {
+        flash('This log entry cannot be represented safely as a rule. Create it manually.', false); return;
+    }
+    f.reset(); f.elements['id'].value = ''; f.elements['name'].value = (action === 'drop' ? 'Block source ' : 'Pass traffic from ') + e.src;
+    f.elements['chain'].value = chain; f.elements['interface'].value = iface;
+    f.elements['action'].value = action; f.elements['source'].value = e.src;
+    if (action === 'accept') {
+        f.elements['destination'].value = e.dst; f.elements['protocol'].value = proto; f.elements['port'].value = e.dport;
+        if (chain === 'forward') f.elements['interface_out'].value = e.iface_out;
+    }
+    const before = f.elements['before']; if (before.options.length > 1) before.selectedIndex = 1;
+    document.getElementById('rule-form-title').textContent = 'Review rule from log';
+    chainChanged(); showTab('tab-rules'); f.scrollIntoView();
+    flash('Review the proposed rule and its position, then save it. No rule has been added yet.', true);
 }
 async function logSearch(ev) {
     if (ev) ev.preventDefault();
@@ -934,7 +971,8 @@ async function logSearch(ev) {
         const r = await api('GET', '/firewall/logs?' + logQuery({ limit: 300 }));
         const tb = document.querySelector('#log-table tbody'); tb.innerHTML = '';
         r.entries.forEach(e => tb.appendChild(logRow(e)));
-        logLast = Math.max(logLast, r.last_id || 0);
+        summarizeLog();
+        logLast = r.last_id || 0;
         document.getElementById('log-default-deny').checked = !!r.log_default_deny;
         document.getElementById('log-empty').style.display = r.entries.length ? 'none' : '';
         document.getElementById('log-status').textContent = r.entries.length + ' line(s)' + (r.collector.running ? '' : ' - the collector is not running: ' + (r.collector.error || 'no logging rule has fired yet'));
@@ -947,6 +985,7 @@ async function logPoll() {
         const tb = document.querySelector('#log-table tbody');
         r.entries.slice().reverse().forEach(e => tb.insertBefore(logRow(e), tb.firstChild));
         while (tb.rows.length > 500) tb.deleteRow(-1);
+        summarizeLog();
         if (r.entries.length) document.getElementById('log-empty').style.display = 'none';
         logLast = Math.max(logLast, r.last_id || 0);
     } catch (e) { }
