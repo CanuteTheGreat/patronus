@@ -16,7 +16,7 @@
 //! - A node that needs a login but has no key file is refused with a plain error
 //!   (tailscale would otherwise wait for a browser login that never comes).
 
-use crate::lan::{self, invalid};
+use crate::lan::invalid;
 use crate::linkstate::{argv, Cmd, SystemCmd};
 use crate::supervise::{which, Supervisor};
 use crate::svc::{self, Field, Kind, Settings, Spec, Svc};
@@ -522,7 +522,11 @@ mod tests {
 
     fn fake_bin(dir: &std::path::Path, name: &str) -> PathBuf {
         let p = dir.join(name);
-        std::fs::write(&p, "#!/bin/sh\nexec sleep 300\n").unwrap();
+        std::fs::write(
+            &p,
+            "#!/bin/sh\nsleep 300 &\ntrap 'kill $!; exit 0' TERM\nwait\n",
+        )
+        .unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
         p
     }
