@@ -312,36 +312,62 @@ impl Applier for TailscaleApplier {
         if started {
             rep.applied(format!("tailscaled (re)started on {}", s.s("interface")));
         }
-        // the daemon needs a moment before its socket answers
+        // the daemon needs a moment before its socket answers, and a moment more
+        // before it has read its saved state ("NoState" until then)
         let mut st = None;
         for _ in 0..80 {
             if let Ok(v) = self.status_json(&cli, &socket).await {
+                let settled = !matches!(v["BackendState"].as_str(), Some("NoState") | None);
                 st = Some(v);
-                break;
+                if settled {
+                    break;
+                }
             }
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
         let st =
             st.ok_or_else(|| Error::Service("tailscaled did not answer on its socket".into()))?;
         let state = st["BackendState"].as_str().unwrap_or("").to_string();
-        let args = up_args(&s);
-        let want = args.join("\n");
+        // The pre-auth key only matters for the first login: a node that already has an
+        // identity (its state directory survived) needs no key, and a missing or expired
+        // key file must not stop it from coming back after a reboot.
+        let logged_in = matches!(
+            state.as_str(),
+            "Running" | "Starting" | "Stopped" | "NeedsMachineAuth"
+        );
+        let all_args = up_args(&s);
+        let without_key: Vec<String> = all_args
+            .iter()
+            .filter(|a| !a.starts_with("--auth-key="))
+            .cloned()
+            .collect();
+        let want = without_key.join("\n");
         let have = std::fs::read_to_string(self.stamp()).unwrap_or_default();
         if state == "Running" && have == want && !started {
             rep.applied("Tailscale is running, unchanged");
             return Ok(rep);
         }
-        if s.s("auth_key_file").is_empty() && state != "Running" {
+        let key = s.s("auth_key_file");
+        let server_changed = |h: &str| {
+            !h.is_empty()
+                && h.lines().find(|l| l.starts_with("--login-server="))
+                    != want.lines().find(|l| l.starts_with("--login-server="))
+        };
+        if logged_in && server_changed(&have) {
+            // another control server needs a new login: forget the old identity first
+            self.ts(&cli, &socket, &argv(&["logout"])).await.ok();
+        }
+        let needs_login = !logged_in || server_changed(&have);
+        let args = if needs_login { all_args } else { without_key };
+        if needs_login && key.is_empty() {
             return Err(invalid(
                 "Tailscale: this node is not logged in: give a pre-auth key file (a new key from \
                  the Tailscale admin console or `headscale preauthkeys create`)",
             ));
         }
-        if !s.s("auth_key_file").is_empty() && !std::path::Path::new(&s.s("auth_key_file")).exists()
-        {
+        if needs_login && !std::path::Path::new(&key).exists() {
             return Err(invalid(format!(
-                "Tailscale: the pre-auth key file {} does not exist",
-                s.s("auth_key_file")
+                "Tailscale: the pre-auth key file {key} does not exist"
             )));
         }
         self.ts(&cli, &socket, &args)
@@ -602,6 +628,26 @@ mod tests {
             .unwrap();
         a.apply(&st).await.unwrap();
         assert_eq!(ups(&cmd), 2);
+        // a logged-in node needs no key: a deleted key file does not stop a later change
+        std::fs::remove_file(&key).unwrap();
+        TailscaleSvc
+            .put(&st, &put(json!({"hostname": "gw2"})))
+            .await
+            .unwrap();
+        a.apply(&st).await.unwrap();
+        let last = cmd
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|l| l.contains("up --reset"))
+            .cloned()
+            .unwrap();
+        assert!(
+            !last.contains("--auth-key") && last.contains("--hostname=gw2"),
+            "{last}"
+        );
         // status
         let v = a.status(&st).await.unwrap();
         assert_eq!(v["backend_state"], "Running");
