@@ -18,6 +18,8 @@ DIST = os.path.join(HERE, "dist")
 # build if any built file mentions it). ISO downloads are stable URLs on this site (/download/..., nginx 302s them to
 # the GitHub release assets, see nginx.conf), so the visible links stay on the product domain.
 SRC = f"https://github.com/CanuteTheGreat/{CFG['repo']}"
+# Help center articles for this product (errant.solutions/help/, built from errant-solutions-web help-src/)
+HELP = f"https://errant.solutions/help/{CFG['key']}/"
 BLOB = SRC + "/blob/main/"
 TREE = SRC + "/tree/main/"
 
@@ -100,7 +102,7 @@ def page(page_dir, title, body, active="", desc=None):
 <footer><div class="wrap foot">
 <p>{CFG['name']} is a free, GPL-3.0 project by <a href="https://errant.solutions/">Errant Solutions</a>.
 Source: <a href="{SRC}">GitHub</a>.</p>
-<p class="legal"><a href="{r('privacy/')}">Privacy</a> &middot; <a href="{r('licenses/')}">Open-source licenses</a> &middot; <a href="{r('docs/update-policy/')}">Updates and rollback policy</a> &middot; <a href="{r('security/')}">Security</a></p>
+<p class="legal"><a href="{HELP}">Help center</a> &middot; <a href="{r('privacy/')}">Privacy</a> &middot; <a href="{r('licenses/')}">Open-source licenses</a> &middot; <a href="{r('docs/update-policy/')}">Updates and rollback policy</a> &middot; <a href="{r('security/')}">Security</a></p>
 <p>Commercial support: planned after 1.0. Nothing is for sale today.</p></div></footer>
 </body></html>
 """
