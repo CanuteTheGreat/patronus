@@ -122,6 +122,13 @@ ap_pages() { c=$(wapi https://127.0.0.1:$WEBP/dhcp); grep -q 'This unit is an ac
   c=$(wapi https://127.0.0.1:$WEBP/svc/guest); grep -q 'This unit is an access point' "$W/api.json" && [ "$c" = 200 ] || { echo "/svc/guest: $c"; return 1; }
   c=$(wapi -X PUT -d '{"enabled":true}' https://127.0.0.1:$WEBP/api/svc/guest); [ "$c" = 409 ] || { echo "guest network change on an AP: HTTP $c"; return 1; }
   c=$(wapi https://127.0.0.1:$WEBP/wifi); [ "$c" = 200 ] && grep -q 'id="wifi-networks"' "$W/api.json" || { echo "/wifi page: $c"; return 1; }; }
+# Intrusion detection (Suricata + rule sets + alert browser) is not part of the router-tier image (a Suricata with the ET Open
+# set needs more RAM than this class has, see docs/IDS-RULESETS.md): its pages and API say so honestly instead of showing dead controls
+no_ids() { c=$(wapi https://127.0.0.1:$WEBP/svc/ids); [ "$c" = 404 ] && grep -q 'does not include the ids feature' "$W/api.json" || { echo "/svc/ids: $c $(head -c 200 "$W/api.json")"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/svc/ids/alerts); [ "$c" = 404 ] || { echo "/svc/ids/alerts: $c"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/api/svc/ids); [ "$c" = 404 ] || { echo "/api/svc/ids: $c"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/api/features); f=$(cat "$W/api.json")
+  case "$f" in *'"feature":"intrusion-detection"'*) ;; *) echo "the features list does not name intrusion detection as absent: $f"; return 1;; esac; }
 WIFI_SET='{"country":"US","chan24":"6","chan5":"36","width5":80,"wifi6":true,"networks":[{"ssid":"CI Gate Net","key":"ci-gate-wifi-pass","security":"wpa2+3","enabled":true},{"ssid":"CI Gate IoT","key":"ci-gate-iot-pass","bands":"24","isolate":true,"enabled":true}]}'
 wifi_set() { c=$(wapi -X PUT -d "$WIFI_SET" https://127.0.0.1:$WEBP/api/wifi); r=$(cat "$W/api.json")
   [ "$c" = 200 ] || { echo "PUT /api/wifi: $c $r"; return 1; }
@@ -545,6 +552,7 @@ if has_feature syslog; then
 else echo "SKIP: Syslog (not in FEATURES=$FEATURES)" | tee -a "$RES/results.txt"; fi
 check "features: role ap, Wi-Fi backend, \"not available\" list with reasons" features_ap
 check "AP role: router-only pages explain the main router, their APIs refuse changes (409); Wi-Fi page served" ap_pages
+check "intrusion detection is not on the router image: its pages and API answer 404 with the reason, the features list names it" no_ids
 check "Wi-Fi channel plan: automatic channel (ACS) by default on both radios, width/DFS/channel lists/survey rounds settable, bad values 400" wifi_chanplan
 check "Wi-Fi page API: networks + radios written to the access-point file (0600), no key in GET, bad channel 400, admin reveal" wifi_set
 check "Wi-Fi restart path: hostapd started into its own transient scope (systemd)" wifi_scope
