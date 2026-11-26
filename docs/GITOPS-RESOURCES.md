@@ -21,6 +21,7 @@ it declared. Proof: `ci/netlab/lane-m-gitops.sh` (rules) and
 | `IpsecRoadWarrior` | ipsec | `auth: eap \| cert, server_id, pool, dns, local_ts, local_address, enabled, users: [{username, password \| password_file, enabled}]` |
 | `Group` | accounts | `description, privileges: {firewall: write, vpn: read, ...}` |
 | `User` | accounts | `role: admin \| operator \| readonly, password_hash, enabled, groups: [one group]` |
+| `NotifyMatcher` | notify-matchers | `description`, `tree` (nested `op: all \| any \| not` with `items`, leaves `kind` / `severity` / `subject` / `calendar`; see docs/NOTIFY-MATCHERS.md); a matcher a notification channel uses cannot be deleted by the repository |
 
 Rules of the road:
 
