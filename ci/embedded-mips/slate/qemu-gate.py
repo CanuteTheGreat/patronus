@@ -15,6 +15,7 @@ INIT = sys.argv[1]; B = os.path.abspath(sys.argv[2])
 SSHP = int(os.environ.get("GATE_SSHP", 23222)); WEBP = int(os.environ.get("GATE_WEBP", 28443)); HTTPP = int(os.environ.get("GATE_HTTPP", 28080))
 INJP = int(os.environ.get("GATE_INJP", 22224)); TMO = int(os.environ.get("BOOT_TIMEOUT", 2400)); QEMU = os.environ.get("GATE_QEMU", "qemu-system-mips")
 LAN = os.environ.get("GATE_LAN", "10.0.66.1")
+ATKP = int(os.environ.get("GATE_ATKP", 23322))    # brute-force check: the WAN side's forward to the unit's ssh
 RES = os.environ.get("RESULTS", "/tmp/slate-qemu-" + INIT); os.makedirs(RES, exist_ok=True)
 W = tempfile.mkdtemp(prefix="slate-qemu.", dir=os.environ.get("TMPDIR") or None)
 KEY = os.path.join(B, "ci_ed25519"); PW = "Correct-Horse-Battery-9"; USER = "cigate"
@@ -225,7 +226,7 @@ def qemu_start(n, data):
            "-netdev", f"user,id=lan,net=10.0.66.0/24,host=10.0.66.2,dhcpstart=10.0.66.20,hostfwd=tcp:127.0.0.1:{SSHP}-{LAN}:22,hostfwd=tcp:127.0.0.1:{WEBP}-{LAN}:443,hostfwd=tcp:127.0.0.1:{HTTPP}-{LAN}:80",
            "-device", "pcnet,netdev=lan,romfile=",
            # eth1 = WAN (DHCP from the emulator's network, real egress)
-           "-netdev", "user,id=wan,net=10.0.2.0/24", "-device", "pcnet,netdev=wan,romfile=",
+           "-netdev", f"user,id=wan,net=10.0.2.0/24,hostfwd=tcp:127.0.0.1:{ATKP}-10.0.2.15:22", "-device", "pcnet,netdev=wan,romfile=",
            # eth2 = a second LAN port with the test client behind it (frames over a local socket)
            "-netdev", f"socket,id=inj,listen=127.0.0.1:{INJP}", "-device", "pcnet,netdev=inj,mac=02:c1:9a:7e:00:fe,romfile="]
     QP = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
@@ -405,6 +406,49 @@ def general_set():
     need("slate-gate2" in Rok("hostname"), "host name not applied live")
 
 
+def banner(timeout=5):
+    """The SSH banner of the unit through the WAN-side forward (the emulator shows the guest those connections as 10.0.2.2)."""
+    try:
+        s = socket.create_connection(("127.0.0.1", ATKP), timeout=timeout); s.settimeout(timeout)
+        try: return s.recv(64).decode("latin1").startswith("SSH-2.0-")
+        finally: s.close()
+    except OSError: return False
+
+
+def guard_bans():
+    """Brute-force protection (bruteforce feature): real failed Dropbear logins from the WAN side ban that address in the kernel set; the
+    banned address reaches nothing, the LAN-side control channel is untouched, an unban gives access back."""
+    rc, o = R("patronus guard status >/dev/null 2>&1; echo $?"); need(o.strip().endswith("0"), "the image carries no brute-force protection (patronus guard): " + o[-200:])
+    c, t, _ = web("POST", "/api/firewall/rules", dict(RULE, name="slate-gate ssh from wan", port="22", interface="@wan")); need(c == 201, f"WAN ssh rule: {c} {t[:200]}"); rid = json.loads(t)["id"]
+    try:
+        c, t, _ = web("POST", "/api/firewall/rules/apply"); need(c == 200, f"apply: {c} {t[:200]}")
+        need(banner(30), "no SSH banner through the WAN-side forward before the test")
+        rss = lambda: Rok("for p in $(pgrep -f 'applyd'); do sed -n 's/^VmRSS:[[:space:]]*//p' /proc/$p/status; done | head -1").strip()
+        rss0 = rss()
+        c, t, _ = web("PUT", "/api/guard/settings", {"enabled": True, "sources": ["dropbear"], "max_failures": 3, "ban_secs": 300, "tick_secs": 1}); need(c == 200, f"guard settings: {c} {t[:200]}")
+        time.sleep(5)
+        for _ in range(4):
+            subprocess.run(["ssh", "-p", str(ATKP), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=30",
+                            "-o", "BatchMode=yes", "-o", "PreferredAuthentications=password", "-o", "KexAlgorithms=curve25519-sha256", "ci-nosuchuser@127.0.0.1", "true"],
+                           stdin=subprocess.DEVNULL, capture_output=True, timeout=180)
+            time.sleep(1)
+        o = ""
+        for _ in range(40):
+            rc, o = R("nft list set inet patronus_guard ban4")
+            if "10.0.2.2" in o: break
+            time.sleep(3)
+        need("10.0.2.2" in o, "10.0.2.2 not in the ban set: " + o[-300:] + "\n" + R("tail -5 /var/log/messages; patronus guard status")[1])
+        need(not banner(8), "the banned address still reaches sshd")
+        rc, o = R("nft list table inet patronus_guard"); drops = sum(int(x) for x in re.findall(r"counter packets (\d+)", o)); need(drops > 0, "drop counter did not grow:\n" + o[-400:])
+        need("Dropbear" in Rok("patronus guard status"), "guard status does not name the source")
+        GM("guard_applyd_rss_before_kb", rss0.split()[0] if rss0 else "?"); GM("guard_applyd_rss_with_ban_kb", rss().split()[0] if rss() else "?")
+        c, t, _ = web("DELETE", "/api/guard/bans?address=10.0.2.2"); need(c == 200, f"unban: {c} {t[:200]}")
+        time.sleep(1); need(banner(30), "no SSH access after the unban")
+    finally:
+        web("PUT", "/api/guard/settings", {"enabled": False})
+        web("DELETE", f"/api/firewall/rules/{rid}"); web("POST", "/api/firewall/rules/apply")
+
+
 def boot_guard():
     o = R("patronus-guard status")[1]; need("armed" in o, "guard not armed at boot: " + o)
     Rok("patronus-guard ok"); o = R("patronus-guard status")[1]; need(re.search(r"\bok\b", o), "guard not confirmed: " + o)
@@ -438,6 +482,7 @@ def main():
     check("boot 1: DNS: the router answers a local host record to that client; an unknown name gets no address", lambda: dns_local() if lease else need(False, "no lease"))
     check("boot 1: DNS change rolled back through the revision history and undone again", lambda: dns_rollback() if lease else need(False, "no lease"))
     check("boot 1: system settings (host name, domain, time zone) saved through the web API and applied", general_set)
+    check("boot 1: brute-force protection: 4 failed Dropbear logins from the WAN side ban the address in nft, it reaches nothing, the LAN control channel is untouched, unban gives access back", guard_bans)
     time.sleep(30); stats("boot1")
     Rok("sync")
     c, t, _ = web("POST", "/api/system/reboot", {})
