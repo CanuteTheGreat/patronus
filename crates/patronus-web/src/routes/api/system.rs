@@ -514,7 +514,10 @@ pub struct UpdateRequest {
 }
 
 async fn update_job(state: AppState, action: &str, req: UpdateRequest) -> Response {
-    let params = json!({"scope": req.scope, "sync": req.sync});
+    // the configured channel + mirror travel with the job: sysops writes them into
+    // Portage's configuration before the sync/emerge
+    let chan = patronus_config::updates::resolve(Some(state.lan.store())).await;
+    let params = json!({"scope": req.scope, "sync": req.sync, "channel_settings": chan});
     match state.system.system_op(action, params).await {
         Ok(v) => (StatusCode::ACCEPTED, Json(v)).into_response(),
         Err(e) => {
@@ -551,6 +554,87 @@ pub async fn apply_updates(
     body: Option<Json<UpdateRequest>>,
 ) -> Response {
     update_job(state, "update_apply", body.map(|b| b.0).unwrap_or_default()).await
+}
+
+/// GET /api/system/updates/channel -- the update channel and mirror: the
+/// effective settings (store > patronus.toml > built-in), the raw stored
+/// values and the choices.
+pub async fn get_update_channel(State(state): State<AppState>) -> Response {
+    use patronus_config::updates::{self, Channel};
+    let effective = updates::resolve(Some(state.lan.store())).await;
+    let stored: serde_json::Map<String, serde_json::Value> = updates::stored(state.lan.store())
+        .await
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), json!(v)))
+        .collect();
+    let channels: Vec<_> = Channel::ALL
+        .iter()
+        .map(|c| json!({"id": c.as_str(), "description": c.describe()}))
+        .collect();
+    Json(json!({
+        "effective": effective,
+        "stored": stored,
+        "channels": channels,
+        "default_overlay_uri": updates::DEFAULT_OVERLAY_URI,
+        "portage": patronus_network::sysops::has_portage(),
+    }))
+    .into_response()
+}
+
+/// PUT /api/system/updates/channel (admins) -- channel (stable, testing,
+/// development), overlay mirror, binary package host ("none" = none) and
+/// overlay location. Absent = unchanged, empty = back to the lower layers,
+/// `reset` = forget all. On a Portage system the result is written into
+/// Portage's configuration at once; a failure there undoes the change.
+pub async fn put_update_channel(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Json(i): Json<patronus_config::updates::UpdateInput>,
+) -> Response {
+    use patronus_config::updates;
+    let store = state.lan.store();
+    let _ = store
+        .snapshot(&admin.session.username, "before change update channel")
+        .await;
+    let before = match updates::save(store, &i).await {
+        Ok(b) => b,
+        Err(e) => {
+            let m = e.to_string();
+            let code = if m.contains("Invalid") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            return error(code, m);
+        }
+    };
+    let eff = updates::resolve(Some(store)).await;
+    let mut portage = serde_json::Value::Null;
+    if patronus_network::sysops::has_portage() {
+        match state
+            .system
+            .system_op("update_channel_apply", json!({ "channel_settings": eff }))
+            .await
+        {
+            Ok(v) => portage = v,
+            Err(e) => {
+                if let Err(re) = updates::restore(store, &before).await {
+                    tracing::error!("could not undo the update settings: {re}");
+                }
+                return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+            }
+        }
+    }
+    let _ = store
+        .audit(
+            &admin.session.username,
+            "update",
+            "update-channel",
+            None,
+            &json!({ "channel": eff.channel.as_str(), "overlay_uri": eff.overlay_uri }),
+        )
+        .await;
+    Json(json!({ "ok": true, "effective": eff, "portage": portage })).into_response()
 }
 
 /// POST /api/system/reboot and /api/system/shutdown (admins; the box goes
@@ -1278,6 +1362,10 @@ pub fn router() -> axum::Router<AppState> {
         .route("/system/updates", get(list_updates))
         .route("/system/updates/check", post(check_updates))
         .route("/system/updates/apply", post(apply_updates))
+        .route(
+            "/system/updates/channel",
+            get(get_update_channel).put(put_update_channel),
+        )
         .route("/system/factory-reset", post(factory_reset))
         .route("/system/capture", post(capture))
         .route("/system/diag", post(diag))
