@@ -1872,4 +1872,41 @@ mod tests {
         assert!(c.contains("printer.lan.example."), "{c}");
         assert!(c.contains("192.168.50.20"), "{c}");
     }
+
+    #[tokio::test]
+    async fn gateway_dns_servers_join_the_upstreams_unless_dot_or_switched_off() {
+        let s = testutil::store().await;
+        let mut d = settings(&s).await.unwrap();
+        assert!(d.gateway_servers, "default on");
+        assert!(d.forward_to().is_empty());
+        d.gateway_upstreams = vec!["198.51.100.53".parse().unwrap()];
+        // no configured upstream: the gateway's server is the only forward target
+        let c = render_unbound(&d, &[], &[], &[], &[], &BTreeSet::new(), false);
+        assert!(c.contains("forward-addr: 198.51.100.53\n"), "{c}");
+        // configured upstreams stay first, a duplicate is not repeated
+        d.upstreams = vec!["9.9.9.9".parse().unwrap(), "198.51.100.53".parse().unwrap()];
+        assert_eq!(d.forward_to().len(), 2);
+        assert_eq!(d.forward_to()[0].to_string(), "9.9.9.9");
+        // switched off: only the configured ones
+        save_settings(
+            &s,
+            &DnsSettingsInput {
+                gateway_servers: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let mut off = settings(&s).await.unwrap();
+        assert!(!off.gateway_servers);
+        off.gateway_upstreams = d.gateway_upstreams.clone();
+        assert!(off.forward_to().is_empty());
+        // DNS over TLS never forwards to servers that may not speak it
+        d.upstreams = vec!["9.9.9.9".parse().unwrap()];
+        d.upstream_tls = true;
+        d.upstream_tls_name = "dns.quad9.net".into();
+        let c = render_unbound(&d, &[], &[], &[], &[], &BTreeSet::new(), false);
+        assert!(c.contains("forward-addr: 9.9.9.9@853#dns.quad9.net"), "{c}");
+        assert!(!c.contains("198.51.100.53"), "{c}");
+    }
 }

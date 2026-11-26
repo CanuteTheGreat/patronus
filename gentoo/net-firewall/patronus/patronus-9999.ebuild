@@ -100,7 +100,7 @@ RDEPEND="
 		ipsec? ( net-vpn/strongswan dev-libs/openssl )
 	)
 	|| ( net-misc/iputils sys-apps/busybox )
-	multiwan? ( sys-apps/iproute2 )
+	multiwan? ( sys-apps/iproute2 net-firewall/conntrack-tools )
 	ha? ( sys-cluster/keepalived net-firewall/conntrack-tools )
 	syslog? ( app-admin/rsyslog )
 	igmp? ( net-misc/igmpproxy )
