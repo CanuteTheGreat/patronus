@@ -138,7 +138,15 @@ pub struct IfaceConfig {
     /// dhcpcd's defaults (IA_NA from the MAC address, IA_PD [`DEFAULT_PD_IAID`]).
     #[serde(default)]
     pub dhcp6_iaid: Option<u32>,
+    /// Size of the delegated prefix to ask the ISP for (IA_PD prefix-length
+    /// hint, 48-64). `None` = no hint: the ISP decides.
+    #[serde(default)]
+    pub dhcp6_pd_len: Option<u8>,
 }
+
+/// Smallest and largest prefix length the WAN may ask the ISP to delegate.
+pub const PD_LEN_MIN: u8 = 48;
+pub const PD_LEN_MAX: u8 = 64;
 
 /// IA_PD IAID when none is configured.
 pub const DEFAULT_PD_IAID: u32 = 1;
@@ -782,6 +790,20 @@ impl NetConfig {
                     )));
                 }
             }
+            if let Some(n) = i.dhcp6_pd_len {
+                if !(PD_LEN_MIN..=PD_LEN_MAX).contains(&n) {
+                    return Err(invalid(format!(
+                        "{}: delegated prefix size /{n} (a /{PD_LEN_MIN} to /{PD_LEN_MAX}; /56 is the usual home allocation)",
+                        i.name
+                    )));
+                }
+                if i.ipv6_mode != V6Mode::Dhcp6 || i.pd_downstream.is_empty() {
+                    return Err(invalid(format!(
+                        "{}: a delegated prefix size needs IPv6 mode dhcp6 with prefix delegation to at least one interface",
+                        i.name
+                    )));
+                }
+            }
             if i.dhcp6_iaid.is_some() && i.ipv6_mode != V6Mode::Dhcp6 {
                 return Err(invalid(format!(
                     "{}: a DHCPv6 IAID needs IPv6 mode dhcp6",
@@ -824,7 +846,7 @@ impl NetConfig {
         let mut cfg = NetConfig::default();
         let rows = sqlx::query(
             "SELECT name, role, enabled, ipv4_mode, ipv6_mode, gateway4, gateway6, mtu, mac,
-                    description, dhcp, pd_downstream, metric, dhcp6_duid, dhcp6_iaid
+                    description, dhcp, pd_downstream, metric, dhcp6_duid, dhcp6_iaid, dhcp6_pd_len
              FROM interfaces ORDER BY name",
         )
         .fetch_all(pool)
@@ -858,6 +880,9 @@ impl NetConfig {
             i.dhcp6_iaid = r
                 .get::<Option<i64>, _>(14)
                 .and_then(|v| u32::try_from(v).ok());
+            i.dhcp6_pd_len = r
+                .get::<Option<i64>, _>(15)
+                .and_then(|v| u8::try_from(v).ok());
             cfg.interfaces.push(i);
         }
         let addrs = sqlx::query(
@@ -1068,8 +1093,8 @@ impl NetConfig {
             sqlx::query(
                 "INSERT INTO interfaces (name, role, enabled, dhcp, ipv4_mode, ipv6_mode,
                      gateway4, gateway6, mtu, mac, description, pd_downstream, metric, dhcp6_duid,
-                     dhcp6_iaid, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     dhcp6_iaid, dhcp6_pd_len, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(name) DO UPDATE SET role = excluded.role,
                      enabled = excluded.enabled, dhcp = excluded.dhcp,
                      ipv4_mode = excluded.ipv4_mode, ipv6_mode = excluded.ipv6_mode,
@@ -1079,6 +1104,7 @@ impl NetConfig {
                      pd_downstream = excluded.pd_downstream, metric = excluded.metric,
                      dhcp6_duid = excluded.dhcp6_duid,
                      dhcp6_iaid = excluded.dhcp6_iaid,
+                     dhcp6_pd_len = excluded.dhcp6_pd_len,
                      updated_at = excluded.updated_at",
             )
             .bind(&i.name)
@@ -1096,6 +1122,7 @@ impl NetConfig {
             .bind(i.metric.map(|m| m as i64))
             .bind(i.dhcp6_duid.as_deref().map(normalize_duid).transpose()?)
             .bind(i.dhcp6_iaid.map(i64::from))
+            .bind(i.dhcp6_pd_len.map(i64::from))
             .bind(now)
             .execute(&mut *tx)
             .await
@@ -1408,6 +1435,20 @@ mod tests {
             assert!(e.contains(needle), "{needle:?} not in {e}");
         };
         bad(&|c| c.vlans[0].vlan_id = 4095, "VLAN id");
+        // the delegated-prefix size hint: 48..=64, only with DHCPv6 prefix delegation
+        bad(
+            &|c| c.iface_mut("eth3").dhcp6_pd_len = Some(56),
+            "delegated prefix size needs",
+        );
+        bad(
+            &|c| {
+                let i = c.iface_mut("eth3");
+                i.ipv6_mode = V6Mode::Dhcp6;
+                i.pd_downstream = vec!["bond0".into()];
+                i.dhcp6_pd_len = Some(40);
+            },
+            "/40",
+        );
         bad(&|c| c.vlans[0].parent = "nope0".into(), "does not exist");
         bad(
             &|c| c.bonds[0].members.push("eth3".into()),
