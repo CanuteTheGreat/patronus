@@ -26,7 +26,7 @@
     .fw-page .stat-card div + div { font-size: var(--fs-sm); font-weight: 400; color: var(--c-muted); }
     /* rules grid: one line per rule, the name truncates instead of wrapping */
     #rules-table td { white-space: nowrap; }
-    #rules-table td.fw-name { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; }
+    #rules-table td.fw-name { max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
     #rules-table td.fw-name small { color: var(--c-muted); margin-left: 6px; }
     #rules-table td.fw-sel, #rules-table th.fw-sel { width: 32px; padding-right: 0; }
     #rules-table tr.off td:not(.fw-sel):not(.fw-act) { color: var(--c-muted); }
@@ -34,7 +34,7 @@
     #rules-table td.fw-act .ui-btn { min-width: 26px; padding: 0 6px; }
     .fw-page .ui-toolbar .ui-input[type=search] { width: 16rem; max-width: 100%; }
     .fw-page .ui-toolbar .fw-filter { min-height: 26px; height: 26px; padding: 0 var(--s-2); font-size: var(--fs-sm); }
-    #rules-table td.fw-name small { display: block; margin: 0; max-width: 22rem; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-sm); }
+    #rules-table td.fw-name small { display: block; margin: 0; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-sm); }
     #rules-table td.fw-sel .fw-lock { color: var(--c-muted); }
     .fw-sel-count { color: var(--c-muted); font-size: var(--fs-sm); }
     /* rule dialog */
@@ -149,7 +149,6 @@
                     <button class="ui-btn sm" title="Move up" aria-label="Move {{ rule.name }} up" onclick="moveRule({{ rule.id }}, 'up')">&#9650;</button>
                     <button class="ui-btn sm" title="Move down" aria-label="Move {{ rule.name }} down" onclick="moveRule({{ rule.id }}, 'down')">&#9660;</button>
                     <button class="ui-btn sm" aria-label="Edit {{ rule.name }}" onclick="editRule({{ rule.id }})">Edit</button>
-                    <button class="ui-btn sm danger" aria-label="Delete {{ rule.name }}" onclick="del('/firewall/rules/{{ rule.id }}', 'rule')">Delete</button>
                     {% endif %}
                 </td>
             </tr>
@@ -237,6 +236,7 @@
                 <div class="msg" id="rule-msg" role="alert"></div>
             </div>
             <footer>
+                <button type="button" class="ui-btn danger" id="rule-delete" style="margin-right:auto" onclick="deleteRuleFromDialog()">Delete rule</button>
                 <button type="button" class="ui-btn" onclick="closeRule()">Cancel</button>
                 <button type="submit" class="ui-btn primary">Save rule</button>
             </footer>
@@ -757,12 +757,19 @@ function openRule() {
     ruleOpener = document.activeElement;
     resetForm('rule-form', 'Add rule');
     document.getElementById('rule-form-title').textContent = 'Add rule';
+    document.getElementById('rule-delete').style.display = 'none';
     document.getElementById('rule-before').style.display = '';
     clearInvalid(document.getElementById('rule-form')); ruleMsg('');
     ruleDialog.showModal();
     document.getElementById('r-name').focus();
 }
 function closeRule() { ruleDialog.close(); }
+function deleteRuleFromDialog() {
+    const id = document.getElementById('rule-form').elements['id'].value;
+    if (!id) return;
+    ruleDialog.close();
+    del('/firewall/rules/' + id, 'rule');
+}
 ruleDialog.addEventListener('close', () => { if (ruleOpener && ruleOpener.focus) ruleOpener.focus(); });
 // selection + bulk actions (system rules cannot be selected)
 function selected() { return [...document.querySelectorAll('.rule-sel:checked')].map(c => parseInt(c.value, 10)); }
@@ -816,6 +823,7 @@ async function editRule(id) {
         f.elements['before'].value = '';
         ['source', 'destination', 'port'].forEach(k => { if (f.elements[k].value === 'any') f.elements[k].value = ''; });
         document.getElementById('rule-before').style.display = 'none';
+        document.getElementById('rule-delete').style.display = '';
         document.getElementById('rule-form-title').textContent = 'Edit rule #' + r.id + ' ' + r.name;
         chainChanged();
         showTab('tab-rules');

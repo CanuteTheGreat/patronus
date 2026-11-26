@@ -90,6 +90,7 @@
 .ui-menu > summary { list-style: none; }
 .ui-menu > summary::-webkit-details-marker { display: none; }
 .ui-menu > .ui-menu-items { position: absolute; right: 0; top: calc(100% + 4px); z-index: 35; min-width: 180px; background: var(--c-raised); border: 1px solid var(--c-border); border-radius: var(--r-md); box-shadow: var(--e-1); padding: 4px 0; display: grid; }
+.ui-menu:not([open]) > .ui-menu-items { display: none; } /* closed: no box (content-visibility still reports one) */
 .ui-menu .ui-menu-items > * { display: flex; align-items: center; gap: 8px; padding: 5px var(--s-3); color: var(--c-ink); background: none; border: 0; font: inherit; text-align: left; cursor: pointer; text-decoration: none; }
 .ui-menu .ui-menu-items > *:hover { background: var(--c-row-hover); }
 
