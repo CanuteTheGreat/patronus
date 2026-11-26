@@ -379,7 +379,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rows[0].1.informational.as_deref(), Some("unmaintained"));
-        assert!(rows[0].1.affects(&sv("0.4.0")), "no fixed event: every version is covered");
+        assert!(
+            rows[0].1.affects(&sv("0.4.0")),
+            "no fixed event: every version is covered"
+        );
         assert!(rows[0].1.fixed_above(&sv("0.4.0")).is_empty());
         let (rows, _) = parse_record(
             r#"{"id":"GHSA-x","database_specific":{"severity":"MODERATE"},"affected":[{"package":{"name":"a","ecosystem":"crates.io"},"ranges":[]}]}"#,
