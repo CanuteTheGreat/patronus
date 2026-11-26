@@ -234,12 +234,23 @@ pub async fn try_event(
     if !telemetry::EVENT_KINDS.contains(&b.kind.as_str()) {
         return error(
             StatusCode::BAD_REQUEST,
-            format!("Invalid event kind {:?}: one of {}", b.kind, telemetry::EVENT_KINDS.join(", ")),
+            format!(
+                "Invalid event kind {:?}: one of {}",
+                b.kind,
+                telemetry::EVENT_KINDS.join(", ")
+            ),
         );
     }
-    let sev = if b.severity.is_empty() { "info" } else { b.severity.as_str() };
+    let sev = if b.severity.is_empty() {
+        "info"
+    } else {
+        b.severity.as_str()
+    };
     if !telemetry::SEVERITIES.contains(&sev) {
-        return error(StatusCode::BAD_REQUEST, format!("Invalid severity {sev:?}: info, warning or critical"));
+        return error(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid severity {sev:?}: info, warning or critical"),
+        );
     }
     let e = telemetry::sample_event(&b.kind, &b.subject, sev);
     let names: Vec<String> = telemetry::route(&state.config_store, &e)
@@ -289,6 +300,12 @@ pub fn router() -> axum::Router<AppState> {
         .route("/system/matchers", get(list_matchers))
         .route("/system/matchers/limits", get(matcher_info))
         .route("/system/events/try", axum::routing::post(try_event))
-        .route("/system/matchers/preview", axum::routing::post(preview_matcher))
-        .route("/system/matchers/:name", put(put_matcher).delete(delete_matcher))
+        .route(
+            "/system/matchers/preview",
+            axum::routing::post(preview_matcher),
+        )
+        .route(
+            "/system/matchers/:name",
+            put(put_matcher).delete(delete_matcher),
+        )
 }

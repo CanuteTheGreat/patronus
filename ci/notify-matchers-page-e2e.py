@@ -170,11 +170,13 @@ def run(p, kind):
     # ---- keyboard
     row_with(page, "about matches").focus()
     page.keyboard.press("Alt+ArrowLeft")
-    check(tag + "Alt+Left outdents the focused item", tree(page).endswith("about matches guest*, NOT())"), tree(page))
+    check(tag + "Alt+Left outdents the focused item", tree(page).endswith("NOT(), about matches guest*)"), tree(page))
     active = page.evaluate("() => document.activeElement.getAttribute('aria-label')")
     check(tag + "focus stays on the moved item", active == "about matches guest*", active)
-    page.keyboard.press("Alt+ArrowDown")   # no-op at the end of the list is fine; moves below nothing
+    page.keyboard.press("Alt+ArrowDown")   # already last: nothing moves
+    check(tag + "Alt+Down on the last item changes nothing", tree(page).endswith("NOT(), about matches guest*)"), tree(page))
     page.keyboard.press("Alt+ArrowUp")
+    check(tag + "Alt+Up moves it above the 'not'", tree(page).endswith("about matches guest*, NOT())"), tree(page))
     page.keyboard.press("Alt+ArrowDown")
     page.keyboard.press("Alt+ArrowRight")
     check(tag + "Alt+Right indents it into the 'not' again", tree(page).endswith("NOT(about matches guest*))"), tree(page))
@@ -191,7 +193,7 @@ def run(p, kind):
     drag(page, row_with(page, "time window"), row_with(page, "Not group"), "before")
     want = tree(page)
     check(tag + "dragging out of a group, before another row",
-          want.startswith("ALL(ANY(event kind gateway_down, tunnel_down, severity at least warning), time window, NOT("), want)
+          want.startswith("ALL(ANY(event kind gateway_down, tunnel_down, severity at least warning), time window ") and ", NOT(about matches guest*)" in want, want)
     add(root, "Severity at least")
     page.locator("#nm-tree > li > ul > li > .nm-row[aria-label='severity at least warning']").last.focus()
     page.keyboard.press("Delete")
@@ -230,12 +232,13 @@ def run(p, kind):
     api(page, "/api/system/hooks", "POST", {"name": "e2e-hook", "url": "http://192.0.2.9:9/x"})
     page.reload()
     page.wait_for_selector("#hooks-table tbody tr[data-hook=e2e-hook] select", timeout=20000)
+    page.select_option("#nm-select", "e2e-night")
     page.locator("#hooks-table tbody tr[data-hook=e2e-hook] select").select_option("e2e-night")
     page.wait_for_timeout(800)
     hooks = api(page, "/api/system/hooks")["json"]
     check(tag + "the channel list points the channel at the matcher",
           [h["matcher"] for h in hooks if h["name"] == "e2e-hook"] == ["e2e-night"], hooks)
-    page.select_option("#nm-select", "e2e-night")
+    page.wait_for_function("document.getElementById('nm-used').textContent.includes('e2e-hook')", timeout=10000)
     used = page.locator("#nm-used").inner_text()
     check(tag + "the editor says which channel uses it", "e2e-hook" in used, used)
     page.click("#nm-delete")
