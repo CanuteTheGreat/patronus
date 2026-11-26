@@ -585,6 +585,12 @@ pub fn handle_in(dir: &Path, action: &str, params: &Value) -> Result<Value> {
         "reboot" | "shutdown" => power(action),
         "capture" => capture(params),
         "diag" => crate::diag::handle(params),
+        // boot environments of a ZFS-root install (crate::bootenv)
+        "be_list" => Ok(crate::bootenv::list()),
+        "be_op" => crate::bootenv::op(
+            params.get("op").and_then(Value::as_str).unwrap_or(""),
+            params.get("name").and_then(Value::as_str),
+        ),
         // access-point Wi-Fi of the router-tier images (/etc/patronus/ap.env, see crate::apwifi)
         "wifi_get" => crate::apwifi::get(&crate::apwifi::Paths::default()),
         "wifi_set" => {

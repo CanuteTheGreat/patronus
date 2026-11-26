@@ -101,7 +101,7 @@ Last generated: 2026-11-17 (279 features).
 | Transparent bridging firewall (filter bridged L2 traffic) | pfS/OPN/OWrt | missing | missing | missing | Bridge-family filtering is a deliberate non-feature; add nft `bridge` family table if wanted. | P2 |
 | Static port / outbound NAT exemptions, NAT64 and VPN exemptions | pfS/OPN | partial | untested | untested | Add `no_nat` + `static_port` NatType options. | P2 |
 | Rule hit counters / per-rule traffic statistics in UI | pfS/OPN/UniFi | missing | missing | missing | Add `counter` to rendered rules + read back via `nft -j list` for the Rules tab (S). | P1 |
-| Import firewall config from OpenWrt (UCI) / other products | OWrt/pfS(config.xml)/OPN | in progress | in progress | in progress | pfSense/OPNsense config.xml importer missing (P1 for switchers). | P1 |
+| Import firewall config from OpenWrt (UCI) / other products | OWrt/pfS(config.xml)/OPN | in progress | in progress | in progress | `patronus import pfsense FILE --plan` reads pfSense/OPNsense config.xml (interfaces, VLANs, PPPoE, aliases, rules, NAT, DHCP static maps, DNS overrides, WireGuard, IKEv2 PSK IPsec; the rest listed in plain words, docs/IMPORT-PFSENSE.md), unit-tested. Not yet: console-menu / first-run page entry, installed-image vmtest. | P1 |
 
 ## Interfaces, routing, multi-WAN and HA
 
@@ -251,7 +251,7 @@ Last generated: 2026-11-17 (279 features).
 
 | Feature | Found in | Standard | Router | Small | What is missing / notes | Impact |
 |---|---|---|---|---|---|---|
-| First-boot setup wizard (roles, LAN/WAN addressing, DHCP pool) | pfS/OPN/OWrt(no)/UniFi/GL/eero | tested | partial | partial | No wizard step for WAN type (PPPoE/VLAN), WAN speed for shaping, Wi-Fi, admin password strength; no phone/QR flow | P0 |
+| First-boot setup wizard (roles, LAN/WAN addressing, DHCP pool, host name/domain/time zone/NTP, WAN DHCP/static/PPPoE, WAN IPv6 DHCPv6-PD with prefix size/SLAAC/static, LAN IPv6 track/static) | pfS/OPN/OWrt(no)/UniFi/GL/eero | tested | partial | partial | Netlab lane-n-wizard proves identity, DHCPv6-PD /56 hint and PPPoE. Still missing: VLAN-tagged WAN in the web wizard (installer has it), WAN speed for shaping, Wi-Fi, admin password strength; no phone/QR flow | P0 |
 | Responsive web UI (mobile layout) | pfS(partial)/OPN/UniFi/GL/eero | untested | partial | partial | No documented mobile viewport test; no PWA manifest or service worker (only a service-worker cleanup in login.html:133) | P1 |
 | Dashboard widgets | pfS/OPN/UniFi/FW/GL/eero | partial | partial | partial | Not customisable, no live graph widgets, no gateway quality / top talkers / Wi-Fi clients widget | P1 |
 | Console menu (text menu on tty/serial: set IPs, reset password, reboot) | pfS/OPN/OWrt(failsafe)/GL | missing | missing | missing | Add `patronus console` (interface assignment, LAN IP, admin password reset, factory reset, ping) launched from agetty/serial inittab; OpenRC+systemd units; vmtest scenario drives it over serial (M) | P0 |
