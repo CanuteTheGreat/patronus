@@ -27,6 +27,13 @@ pub struct Component {
 
 pub const CATALOG: &[Component] = &[
     Component {
+        id: "nut",
+        feature: "ups",
+        title: "UPS monitoring (NUT)",
+        atom: "sys-power/nut",
+        binary: "upsmon",
+    },
+    Component {
         id: "igmpproxy",
         feature: "igmp",
         title: "IGMP proxy",

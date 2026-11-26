@@ -33,7 +33,7 @@ IUSE="
 	+monitoring prometheus netflow collectd
 	+captive-portal
 	intrusion-detection suricata snort
-	syslog igmp mdns nat64 l2tp upnp vrf web-proxy dynamic-routing sdwan
+	syslog igmp ups mdns nat64 l2tp upnp vrf web-proxy dynamic-routing sdwan
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp +plugins
@@ -104,6 +104,7 @@ RDEPEND="
 	ha? ( sys-cluster/keepalived net-firewall/conntrack-tools )
 	syslog? ( app-admin/rsyslog )
 	igmp? ( net-misc/igmpproxy )
+	ups? ( sys-power/nut[usb,snmp,serial] )
 	mdns? ( net-dns/avahi )
 	net-analyzer/tcpdump
 	net-analyzer/traceroute
@@ -246,6 +247,7 @@ src_configure() {
 		$(usex syslog "syslog" "")
 		$(usex netflow "netflow" "")
 		$(usex igmp "igmp" "")
+		$(usex ups "ups" "")
 		$(usex mdns "mdns" "")
 		$(usex nat64 "nat64" "")
 		$(usex l2tp "l2tp" "")
@@ -394,6 +396,7 @@ src_install() {
 		use syslog && webfeatures+=( syslog )
 		use netflow && webfeatures+=( netflow )
 		use igmp && webfeatures+=( igmp )
+		use ups && webfeatures+=( ups )
 		use mdns && webfeatures+=( mdns )
 		use nat64 && webfeatures+=( nat64 )
 		use l2tp && webfeatures+=( l2tp )

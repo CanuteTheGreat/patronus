@@ -104,6 +104,8 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "traffic_daily",
     "system_events",
     "firewall_log",
+    // UPS readings (lane u): measured history, pruned by the recorder
+    "ups_samples",
 ];
 
 /// Revisions kept by [`ConfigStore::snapshot`] (older ones are pruned).

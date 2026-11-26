@@ -289,6 +289,12 @@ pub const EVENT_KINDS: &[&str] = &[
     "ha_state",
     "config_changed",
     "data_cap",
+    "ups_on_battery",
+    "ups_online",
+    "ups_low_battery",
+    "ups_replace_battery",
+    "ups_unreachable",
+    "ups_reachable",
     "test",
 ];
 

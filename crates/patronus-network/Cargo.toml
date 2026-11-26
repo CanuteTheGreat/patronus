@@ -33,6 +33,8 @@ dynamic-routing = []
 syslog = []
 netflow = []
 igmp = []
+# UPS monitoring through NUT (sys-power/nut): driver + upsd + upsmon under the supervisor
+ups = []
 mdns = []
 nat64 = []
 l2tp = []

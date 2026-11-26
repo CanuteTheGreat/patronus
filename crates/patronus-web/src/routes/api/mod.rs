@@ -32,4 +32,5 @@ pub mod system;
 pub mod telemetry;
 pub mod vpn;
 pub mod wifi;
+pub mod ups;
 pub mod wifi_uplink;

@@ -418,6 +418,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "syslog",
         "netflow",
         "igmp",
+        "ups",
         "mdns",
         "nat64",
         "upnp",
@@ -487,6 +488,7 @@ pub fn absent_features(
         ("vlan", "VLANs"),
         ("netflow", "NetFlow export"),
         ("igmp", "IGMP proxy"),
+        ("ups", "UPS monitoring (NUT)"),
         ("mdns", "mDNS repeater (device discovery across networks)"),
         ("nat64", "NAT64 / DNS64"),
         ("upnp", "UPnP / NAT-PMP"),
@@ -555,6 +557,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::insight_history::router())
         .merge(api::packages::router())
         .merge(api::svc::router())
+        .merge(api::ups::router())
         .merge(api::segmentation::router())
         .merge(seg_time_router())
         .merge(seg_dns_router())

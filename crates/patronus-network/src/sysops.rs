@@ -328,6 +328,29 @@ pub fn power_argv(action: &str, systemd: bool) -> Option<Vec<&'static str>> {
     }
 }
 
+/// An ordered clean power-off, run now and waited for: what a UPS monitor's
+/// `SHUTDOWNCMD` calls (`patronus poweroff-request`). The init system
+/// stops every service in dependency order (supervised daemons, the
+/// database) before it halts. Returns the command that was run.
+pub fn poweroff_request() -> Result<Vec<String>> {
+    let systemd = Path::new("/run/systemd/system").is_dir();
+    let argv: Vec<String> = power_argv("shutdown", systemd)
+        .ok_or_else(|| Error::Config("no power-off command for this init system".into()))?
+        .into_iter()
+        .map(String::from)
+        .collect();
+    tracing::warn!("power-off requested (UPS or operator); running {argv:?}");
+    let st = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .status()
+        .map_err(|e| Error::Service(format!("{}: {e}", argv[0])))?;
+    if st.success() {
+        Ok(argv)
+    } else {
+        Err(Error::Service(format!("{} exited with {st}", argv.join(" "))))
+    }
+}
+
 fn power(action: &str) -> Result<Value> {
     let systemd = Path::new("/run/systemd/system").is_dir();
     let argv = power_argv(action, systemd)
