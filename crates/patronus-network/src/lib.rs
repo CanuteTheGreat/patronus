@@ -12,6 +12,7 @@ pub mod applyd;
 pub mod apsurvey;
 pub mod apwifi;
 pub mod bond;
+pub mod bootenv;
 pub mod bootguard;
 pub mod bridge;
 pub mod dhcp_client;
