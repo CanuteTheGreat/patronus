@@ -117,6 +117,20 @@ features_ap() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/features
   case "$f" in *'"feature":"dhcp"'*'access point'*) ;; *) echo "dhcp not explained as the main router's job: $f"; return 1;; esac
   # the guest network is the main router's job: listed with that reason, never silently missing
   case "$f" in *'"feature":"guest"'*'access point'*) ;; *) echo "guest network not explained as the main router's job: $f"; return 1;; esac; }
+# Languages + API description (docs/I18N.md, docs/API.md): the OpenAPI document and the reference page are served to a
+# signed-in session only; an account's language (German) translates the page and an API error; the setting is restored.
+i18n_docs() { rm -f "$W/jar"
+  c=$(curl -sk -o /dev/null -w '%{http_code}' -m 30 https://127.0.0.1:$WEBP/api/openapi.json); [ "$c" = 401 ] || { echo "openapi.json without a session: HTTP $c"; return 1; }
+  c=$(curl -sk -H 'accept-language: de-DE,de;q=0.9' -m 30 https://127.0.0.1:$WEBP/api/status); case "$c" in *'Anmeldung erforderlich'*) ;; *) echo "German API error: $c"; return 1;; esac
+  login || return 1
+  c=$(wapi https://127.0.0.1:$WEBP/api/openapi.json); o=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$o" '"openapi":"3.1.0"' '"/api/firewall/rules"' '"/api/i18n/me"' || { echo "openapi.json: $c ${o:0:200}"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/api/docs); [ "$c" = 200 ] && grep -q 'id="api-list"' "$W/api.json" || { echo "/api/docs: $c"; return 1; }
+  c=$(wapi -X PUT -d '{"language":"de"}' https://127.0.0.1:$WEBP/api/i18n/me); [ "$c" = 200 ] || { echo "PUT /api/i18n/me: $c $(cat "$W/api.json")"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/api/docs); grep -q 'API-Referenz' "$W/api.json" && ! grep -q '>API reference<' "$W/api.json" || { echo "German /api/docs: $c"; wapi -X PUT -d '{"language":""}' https://127.0.0.1:$WEBP/api/i18n/me >/dev/null; return 1; }
+  c=$(wapi -X PUT -d '{"language":"xx"}' https://127.0.0.1:$WEBP/api/i18n/me); r=$(cat "$W/api.json")
+  wapi -X PUT -d '{"language":""}' https://127.0.0.1:$WEBP/api/i18n/me >/dev/null
+  [ "$c" = 400 ] && case "$r" in *"Ungültige Sprache 'xx'"*) ;; *) false;; esac || { echo "bad language: $c $r"; return 1; }; }
 ap_pages() { c=$(wapi https://127.0.0.1:$WEBP/dhcp); grep -q 'This unit is an access point' "$W/api.json" && [ "$c" = 200 ] || { echo "/dhcp: $c"; return 1; }
   c=$(wapi -X POST -d '{"start":"192.0.2.100","end":"192.0.2.150"}' https://127.0.0.1:$WEBP/api/dhcp/pools); [ "$c" = 409 ] || { echo "dhcp pool on an AP: HTTP $c"; return 1; }
   c=$(wapi https://127.0.0.1:$WEBP/svc/guest); grep -q 'This unit is an access point' "$W/api.json" && [ "$c" = 200 ] || { echo "/svc/guest: $c"; return 1; }
@@ -555,6 +569,7 @@ if has_feature syslog; then
   check "Syslog page: a TCP collector is refused (busybox forwards over UDP only), nothing written" syslog_tcp_refused
 else echo "SKIP: Syslog (not in FEATURES=$FEATURES)" | tee -a "$RES/results.txt"; fi
 check "features: role ap, Wi-Fi backend, \"not available\" list with reasons" features_ap
+check "languages: OpenAPI document and reference page behind the sign-in, German page and API error on request" i18n_docs
 check "AP role: router-only pages explain the main router, their APIs refuse changes (409); Wi-Fi page served" ap_pages
 check "dashboard widgets + system activity: both APIs answer 200 on the booted image, a layout round-trips, an unknown widget id is 400" dash_activity
 check "Wi-Fi channel plan: automatic channel (ACS) by default on both radios, width/DFS/channel lists/survey rounds settable, bad values 400" wifi_chanplan
