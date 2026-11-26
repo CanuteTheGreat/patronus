@@ -2,25 +2,27 @@
  "key": "patronus",
  "repo": "patronus",
  "name": "Patronus",
- "version": "0.x",
  "banner": "Daily builds for testing. Not for production.",
  "tagline": "Patronus is a free, Gentoo-based firewall and router with an SD-WAN dashboard, written in Rust. Pre-1.0.",
- "lead": "A Gentoo-based firewall and router with an SD-WAN dashboard, written in Rust and enforced by the kernel's nftables.",
+ "lead": "A Gentoo-based firewall and router written in Rust and enforced by the kernel's nftables: a full appliance on x86_64 and aarch64, the same web UI on small home routers, and an SD-WAN dashboard.",
  "logo_w": 227,
  "logo_h": 340,
- "what_html": "<p>Patronus is a firewall and router for Gentoo, aimed at the space pfSense and OPNsense occupy. It configures nftables, routing, VPNs and SD-WAN from a web UI and an API. It ships as an ebuild whose USE flags choose what is compiled in.</p><p>It is a one-person project in early development. Every claim in its README is tied to a test in CI; features that are not finished are listed without claims.</p>",
- "status": "Patronus is pre-1.0. Configuration and on-disk formats can still change between builds. Do not put it in front of a network you cannot afford to lose.",
+ "what_html": "<p>Patronus is a firewall and router aimed at the space pfSense and OPNsense occupy. From a web UI, an API and GitOps it configures nftables rules, aliases, GeoIP and threat feeds; interfaces with VLANs, bonds, bridges and PPPoE; multi-WAN failover and policy routing; WireGuard and IPsec (site-to-site and road warriors); DHCP, DNS and NTP; device segmentation, per-device DNS policy and a guest network; high availability with state sync; Suricata IDS/IPS; BGP/OSPF; and traffic insight. It ships as an ebuild whose USE flags choose what is compiled in, and every image comes in an OpenRC and a systemd variant.</p><p>It runs in tiers from one code base. The standard tier is a Gentoo system installed from the ISO. The embedded tier puts a Gentoo-built musl userland with the same web UI on routers OpenWrt supports, keeping OpenWrt's kernel and drivers: so far the GL.iNet GL-AR750S (MIPS) and GL-AX1800 (aarch64), tested on real units, with signed upgrades and a bootloader rollback.</p><p>It is a one-person project in early development. Every claim in its README is tied to a test in CI (the claims ledger), and the <a href=\"https://github.com/CanuteTheGreat/patronus/blob/main/docs/design/pfsense-opnsense-parity.md\">pfSense / OPNsense parity audit</a> lists what is still missing.</p>",
+ "status": "Patronus is at version {version}, published as daily builds of the main branch. Configuration and on-disk formats can still change between builds. Do not put it in front of a network you cannot afford to lose.",
  "works": [
-  "Daily ISOs for x86_64 and aarch64: a QEMU test boots, installs (unattended, serial wizard, VGA wizard; UEFI and BIOS on x86_64), reboots from disk and logs in to the web UI.",
-  "Nightly live traffic tests of the firewall and SD-WAN paths in network namespaces, and an installer test on a real ZFS root.",
-  "A claims ledger: each README claim names the CI tests that prove it, and CI fails if a claim loses its proof."
+  "Daily ISOs for x86_64 and aarch64, OpenRC and systemd: QEMU tests install each one with the graphical installer, the text wizard and an answer file (UEFI and BIOS on x86_64), reboot from disk and log in to the web UI. Only images that pass are published, each signed and with an SBOM.",
+  "The installer can put WAN, LAN and a management network on bonds and VLAN tags (DHCP, static or PPPoE WAN); a test cuts one bond member and the web UI stays reachable on the management VLAN.",
+  "Live traffic tests in network namespaces for each feature in the README (firewall and NAT, multi-WAN failover, VPNs, DHCP and DNS, segmentation, guest network, HA, IDS); CI fails if a README claim loses its test.",
+  "Crash and reboot safety: 30 power-cut rounds without losing or corrupting a saved rule, and a regression test that the firewall comes back after a failed first start at boot.",
+  "Embedded router images for the GL-AR750S and GL-AX1800, OpenRC and systemd: built, checked against the flash size, booted in a QEMU gate with the web UI, and upgraded with a bootloader rollback.",
+  "Wi-Fi features (per-device passphrases, automatic channel, band steering, Wi-Fi uplink) proven with real 802.11 associations on simulated radios."
  ],
  "gaps": [
-  "No stable release. No in-place upgrade or rollback test of an installed appliance yet.",
-  "A bug found on real hardware: the firewall service did not start after a reboot. A fix is in progress; the roadmap keeps this open until CI covers it.",
-  "A CPU-specific crash on Intel (fixed on main, not yet confirmed on that machine).",
-  "The graphical installer is in progress; today the installer is a text wizard.",
-  "Secure Boot is not supported. The automated security audit in the repo is not an independent review."
+  "No stable release yet (0.x versions only), and no release-to-release upgrade and rollback test of an installed appliance.",
+  "In progress, not merged: a security suite (managed IDS rule sets, DNS filtering catalog, brute-force bans, a LAN scan, CVE exposure of the router's own packages), captive portal, reverse proxy with ACME certificates.",
+  "Secure Boot is not supported.",
+  "aarch64 ISOs are tested under QEMU emulation; Wi-Fi is proven on simulated radios, and real radios depend on their drivers.",
+  "The automated security audit in the repo is not an independent review."
  ],
  "isos": [
   [
@@ -40,8 +42,8 @@
    "Assigning WAN and LAN interfaces"
   ],
   [
-   "installer/patronus/05b-wan-lan-addressing-filled.png",
-   "WAN and LAN addressing"
+   "installer/patronus/07d-bonds-vlans-management-on.png",
+   "Bonds, VLANs and a management network"
   ],
   [
    "installer/patronus/09-finished.png",
