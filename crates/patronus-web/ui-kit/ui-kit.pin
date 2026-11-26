@@ -1,11 +1,10 @@
 # Shared ui-kit (Horcrux repo, path ui-kit/), vendored by commit. ci/check-ui-kit-pin.py checks every
 # sha256 below against the vendored file; `--upstream DIR` also checks a horcrux checkout at `commit`.
-# commit = pending: v0.1 is not committed in horcrux yet (files taken from the ui-system-1 work tree);
-# re-pin to the horcrux main commit once ui-kit/ lands there (only this line changes if the files match).
+# Bump: copy ui-kit/{tokens.css,components.css,ui.js} from a horcrux commit, set `commit` and the sha256 lines.
 version = 0.1
 repo = https://github.com/CanuteTheGreat/horcrux
 path = ui-kit
-commit = pending
+commit = f1924d1776faed54936662537ae5c8d0900f8c33
 sha256 tokens.css = a3ded6560c627fec3808a2a4258efcebd71528dd9c64324379524af95c7046b9
 sha256 components.css = bb7f8f0e1a4594947f78a6015902135fa3b40a95535fb39c10743cfdd69dfa2f
 sha256 ui.js = 4782579f42bac70bbfe8700fac798e361194d1d229f6a3efdbaac126f21e3ad3
