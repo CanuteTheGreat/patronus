@@ -283,6 +283,14 @@ that are not finished are listed separately under
   watches an interface and alerts on your rules, or runs inline where `drop`
   rules really drop packets; the rules are checked by Suricata before they
   replace the running ones. [C51]
+- Intrusion detection rule sets (USE=intrusion-detection): ET Open, the abuse.ch
+  lists and your own URLs are downloaded by the product itself (a new one at
+  once, the rest in a nightly window, or with one button), loaded with
+  `suricata -T` before they replace the running ones (a broken download is
+  refused and the old set keeps running); a policy per rule set, category or
+  classtype and a per-SID override turns rules into alert, drop or off; an
+  alert browser filters by time, address and rule, ranks the top talkers and
+  suppresses or limits a rule from one alert. [C87]
 - Dynamic routing (USE=dynamic-routing): BGP and OSPF through FRRouting, set up
   on the BGP / OSPF page; learned routes are installed in the kernel and the
   session state is shown live. [C52]

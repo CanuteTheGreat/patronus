@@ -7,6 +7,7 @@
 <style>
     pre.svc-pre { background: var(--surface-2); padding: 8px 10px; border-radius: 6px; max-height: 260px; overflow: auto; font-size: 0.8em; white-space: pre-wrap; }
     .svc-help { color: var(--muted); font-size: 0.8em; }
+    .svc-scroll { overflow-x: auto; max-width: 100%; }
 </style>
 {% endblock %}
 
@@ -126,7 +127,7 @@
             } else td.textContent = renderValue(v);
             tr.appendChild(td); t.appendChild(tr);
         }
-        box.appendChild(t);
+        const sw = document.createElement('div'); sw.className = 'svc-scroll'; sw.appendChild(t); box.appendChild(sw);
     }
     function idsTable(head, rows) {
         const t = document.createElement('table'); t.className = 'lan';
@@ -178,7 +179,7 @@
             }
             tr.appendChild(td); t.appendChild(tr);
         }
-        wrap.appendChild(t);
+        const sw = document.createElement('div'); sw.className = 'svc-scroll'; sw.appendChild(t); wrap.appendChild(sw);
         if (!rows.length) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'Nothing configured.'; wrap.appendChild(p); }
         if (CAN_MODIFY) {
             const form = document.createElement('form'); form.className = 'lan-form'; form.id = 'svc-form-' + c.key;
