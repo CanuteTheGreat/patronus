@@ -423,7 +423,7 @@ async function fwFeedDownload() {
     </table>
     {% endif %}
     {% if is_admin %}
-    <form class="lan-form" id="user-form" onsubmit="return submitJson(event, 'POST', '/api/system/users')">
+    <form class="lan-form" id="user-form" onsubmit="return submitJson(event, 'POST', '/api/system/users')" data-dialog="Add account">
         <label>Username <input name="username" required></label>
         <label>Password (12+ characters) <input name="password" type="password" autocomplete="new-password" required></label>
         <label>Role <select name="role"><option value="readonly">read-only</option><option value="operator">operator</option><option value="admin">admin</option></select></label>
@@ -438,7 +438,7 @@ async function fwFeedDownload() {
         the group's privileges (instead of its role); admins always have everything. Enforced on every page and API call.</p>
     <p class="empty" id="groups-empty">No groups yet.</p>
     <table class="lan" id="groups-table"><thead><tr><th>Group</th><th>Privileges</th><th>Members</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
-    <form class="lan-form" id="group-form" onsubmit="return saveGroup(event)">
+    <form class="lan-form" id="group-form" onsubmit="return saveGroup(event)" data-dialog="Add group">
         <label>Name <input name="name" required></label>
         <label>Description <input name="description"></label>
         <div id="group-areas"></div>
@@ -457,7 +457,7 @@ async function fwFeedDownload() {
         file is encrypted (AES-256-GCM, Argon2id key) before it leaves this box; restore an encrypted file by uploading it with the passphrase.</p>
     <p class="empty" id="backup-targets-empty">No remote targets.</p>
     <table class="lan" id="backup-targets-table"><thead><tr><th>Name</th><th>URL</th><th>Every</th><th>Encrypted</th><th>Last run</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
-    <form class="lan-form" id="backup-target-form" onsubmit="return addBackupTarget(event)">
+    <form class="lan-form" id="backup-target-form" onsubmit="return addBackupTarget(event)" data-dialog="Add target">
         <label>Name <input name="name" required></label>
         <label>URL <input name="url" placeholder="https://dav.example.net/patronus" required></label>
         <label>User <input name="username" autocomplete="off"></label>
@@ -480,7 +480,7 @@ async function fwFeedDownload() {
     </table>
     <p class="empty" id="api-keys-empty" style="display:none">No API keys.</p>
     {% if is_admin %}
-    <form class="lan-form" id="api-key-form" onsubmit="return createApiKey(event)">
+    <form class="lan-form" id="api-key-form" onsubmit="return createApiKey(event)" data-dialog="Create key">
         <label>Name <input name="name" required></label>
         <label>Scope <select name="scope"><option value="readonly">read-only</option><option value="operator">operator</option></select></label>
         <label>Expires in days (empty = never) <input name="expires_in_days" type="number" min="1" max="3650"></label>
@@ -664,7 +664,7 @@ async function fwFeedDownload() {
         <tbody></tbody>
     </table>
     <p class="empty" id="auth-servers-empty" style="display:none">No RADIUS servers: only local accounts can log in.</p>
-    <form class="lan-form" id="auth-server-form" onsubmit="return addAuthServer(event)">
+    <form class="lan-form" id="auth-server-form" onsubmit="return addAuthServer(event)" data-dialog="Add RADIUS server">
         <label>Name <input name="name" required></label>
         <label>Host <input name="host" required placeholder="radius.example.net"></label>
         <label>Port <input name="port" type="number" value="1812"></label>
@@ -725,7 +725,7 @@ async function fwFeedDownload() {
     {% if is_admin %}
     <h3 class="text-sm">Notification channels</h3>
     <table class="lan" id="hooks-table"><thead><tr><th>Name</th><th>Type</th><th>Destination</th><th>Events</th><th>Last delivery</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
-    <form class="lan-form" id="hook-form" onsubmit="return createHook(event)">
+    <form class="lan-form" id="hook-form" onsubmit="return createHook(event)" data-dialog="Add channel">
         <label>Name <input name="name" required></label>
         <label>Type <select name="channel" onchange="hookFields(this.form)">
             <option value="email">Email (SMTP)</option><option value="ntfy">ntfy push</option>

@@ -46,7 +46,7 @@
         </tbody>
     </table>{% endif %}
     {% if can_modify %}
-    <form class="lan-form" id="wg-tunnel-form" onsubmit="return saveTunnel(event)">
+    <form class="lan-form" id="wg-tunnel-form" onsubmit="return saveTunnel(event)" data-dialog="Add tunnel">
         <input type="hidden" name="_editing" value="">
         <label>Interface <input name="name" placeholder="wg0 (automatic)"></label>
         <label>Listen port <input type="number" name="listen_port" placeholder="51820" min="1" max="65535"></label>
@@ -95,7 +95,7 @@
     </table>{% endif %}
     <div id="qr-box" style="display:none; margin: 8px 0;"><img id="qr-img" alt="WireGuard client QR code" width="280" height="280"></div>
     {% if can_modify && !tunnels.is_empty() %}
-    <form class="lan-form" id="wg-peer-form" onsubmit="return savePeer(event)">
+    <form class="lan-form" id="wg-peer-form" onsubmit="return savePeer(event)" data-dialog="Add peer">
         <input type="hidden" name="_editing" value="">
         <label>Name <input name="name" placeholder="laptop" required></label>
         <label>Tunnel <select name="interface">{% for t in tunnels %}<option value="{{ t.name }}">{{ t.name }}</option>{% endfor %}</select></label>
@@ -146,7 +146,7 @@
         </tbody>
     </table>{% endif %}
     {% if can_modify %}
-    <form class="lan-form" id="ipsec-form" onsubmit="return saveIpsec(event)">
+    <form class="lan-form" id="ipsec-form" onsubmit="return saveIpsec(event)" data-dialog="Add tunnel">
         <input type="hidden" name="_editing" value="">
         <label>Name <input name="name" placeholder="site-b" required></label>
         <label>Local address <input name="local_address" placeholder="203.0.113.2 (empty = any)"></label>
@@ -180,7 +180,7 @@
     <table class="lan" id="rw-profiles"><thead><tr><th>Profile</th><th>Auth</th><th>Server name</th><th>Pool</th><th>Reaches</th><th>Users</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
     <p><button class="btn btn-secondary btn-sm" type="button" onclick="window.location = '/api/vpn/ipsec/roadwarrior/ca'">Download the CA certificate (PEM)</button></p>
     {% if can_modify %}
-    <form class="lan-form" id="rw-profile-form" onsubmit="return rwSaveProfile(event)">
+    <form class="lan-form" id="rw-profile-form" onsubmit="return rwSaveProfile(event)" data-dialog="Add profile">
         <input type="hidden" name="_editing" value="">
         <label>Name <input name="name" placeholder="phones" required></label>
         <label>Authentication <select name="auth"><option value="eap">password (EAP-MSCHAPv2)</option><option value="cert">client certificate</option></select></label>
@@ -193,7 +193,7 @@
         <label>Description <input name="description"></label>
         <button class="btn btn-primary btn-sm" type="submit" id="rw-profile-submit">Add profile</button>
     </form>
-    <form class="lan-form" id="rw-user-form" onsubmit="return rwSaveUser(event)">
+    <form class="lan-form" id="rw-user-form" onsubmit="return rwSaveUser(event)" data-dialog="Add user">
         <label>Profile <select name="profile" id="rw-user-profile"></select></label>
         <label>User name <input name="username" placeholder="alice" required></label>
         <label>Password <input name="password" type="password" placeholder="empty = generate (EAP profiles)" autocomplete="new-password"></label>
@@ -267,7 +267,7 @@
     function editing(form, key, btn, label) {
         form.elements['_editing'].value = key;
         document.getElementById(btn).textContent = label;
-        form.scrollIntoView({behavior: 'smooth'});
+        lanShowForm(form, label);
     }
     function saveTunnel(ev) {
         ev.preventDefault();
@@ -399,7 +399,7 @@
         f.elements['pool'].value = p.pool; f.elements['dns'].value = p.dns; f.elements['local_ts'].value = p.local_ts;
         f.elements['enabled'].checked = p.enabled; f.elements['description'].value = p.description || '';
         document.getElementById('rw-profile-submit').textContent = 'Save profile ' + p.name;
-        f.scrollIntoView({behavior: 'smooth'});
+        lanShowForm(f, 'Edit profile ' + p.name);
     }
     async function rwSaveProfile(ev) {
         ev.preventDefault();

@@ -44,7 +44,7 @@
         {% endfor %}
         </tbody>
     </table>{% endif %}
-    <form class="lan-form" id="gateway-form" onsubmit="return saveGateway(event)">
+    <form class="lan-form" id="gateway-form" onsubmit="return saveGateway(event)" data-dialog="Add gateway">
         <input type="hidden" name="_editing" value="">
         <label>Name <input name="name" placeholder="WAN_GW" required></label>
         <label>Interface <input name="interface" placeholder="@wan" required></label>
@@ -91,7 +91,7 @@
         {% endfor %}
         </tbody>
     </table>{% endif %}
-    <form class="lan-form" id="group-form" onsubmit="return saveGroup(event)">
+    <form class="lan-form" id="group-form" onsubmit="return saveGroup(event)" data-dialog="Add group">
         <input type="hidden" name="_editing" value="">
         <label>Name <input name="name" placeholder="WAN_FAILOVER" required></label>
         <label>Members <input name="members" placeholder="WAN_GW:1, BACKUP_GW:2" size="34" required></label>
@@ -148,7 +148,7 @@
         {% endfor %}
         </tbody>
     </table>{% endif %}
-    <form class="lan-form" id="route-form" onsubmit="return saveRoute(event)">
+    <form class="lan-form" id="route-form" onsubmit="return saveRoute(event)" data-dialog="Add route">
         <input type="hidden" name="_editing" value="">
         <label>Destination <input name="destination" placeholder="10.20.0.0/16" required></label>
         <label>Gateway (IP or gateway name) <input name="gateway" placeholder="192.168.1.2"></label>
@@ -183,7 +183,7 @@
     function editing(form, key, btn, label) {
         form.elements['_editing'].value = key;
         document.getElementById(btn).textContent = label;
-        form.scrollIntoView({behavior: 'smooth'});
+        lanShowForm(form, label);
     }
     function saveGateway(ev) {
         ev.preventDefault();

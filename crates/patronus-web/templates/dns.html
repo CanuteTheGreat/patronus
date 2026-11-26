@@ -68,7 +68,7 @@
         {% endfor %}
         </tbody>
     </table>{% endif %}
-    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dns/hosts')">
+    <form class="lan-form" id="dns-host-form" onsubmit="return submitJson(event, 'POST', '/api/dns/hosts')" data-dialog="Add host override">
         <label>Host <input name="hostname" placeholder="nas" required></label>
         <label>Domain <input name="domain" placeholder="home.arpa" required></label>
         <label>Address <input name="address" placeholder="192.168.1.5" required></label>
@@ -89,7 +89,7 @@
         {% endfor %}
         </tbody>
     </table>{% endif %}
-    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dns/domains')">
+    <form class="lan-form" id="dns-domain-form" onsubmit="return submitJson(event, 'POST', '/api/dns/domains')" data-dialog="Add domain override">
         <label>Domain <input name="domain" placeholder="corp.example" required></label>
         <label>Server <input name="server" placeholder="10.0.0.53 or 10.0.0.53@5353" required></label>
         <label>Description <input name="description"></label>
@@ -109,7 +109,7 @@
         {% endfor %}
         </tbody>
     </table>{% endif %}
-    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dns/blocklist')">
+    <form class="lan-form" id="dns-block-form" onsubmit="return submitJson(event, 'POST', '/api/dns/blocklist')" data-dialog="Block a domain">
         <label>Domain <input name="domain" placeholder="ads.example" required></label>
         <label>Description <input name="description"></label>
         <button class="btn btn-primary btn-sm" type="submit">Block</button>
@@ -133,7 +133,7 @@
     </table>
     <button class="btn btn-secondary btn-sm" onclick="call('POST', '/api/ddns/update')">Update now</button>
     {% endif %}
-    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/ddns')">
+    <form class="lan-form" id="ddns-form" onsubmit="return submitJson(event, 'POST', '/api/ddns')" data-dialog="Add client">
         <label>Provider
             <select name="provider">
                 <option value="dyndns2">DynDNS2 protocol (dyndns, No-IP, ...)</option>
