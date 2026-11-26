@@ -522,7 +522,9 @@ mod tests {
 
     #[test]
     fn env_wrapped_commands_are_identified_by_the_program_they_run() {
-        let id = |v: &[&str]| identity(v.iter().copied());
+        fn id<'a>(v: &[&'a str]) -> Option<&'a str> {
+            identity(v.iter().copied())
+        }
         assert_eq!(
             id(&["/usr/bin/env", "A=1", "B=2", "/usr/sbin/upsd", "-F"]),
             Some("/usr/sbin/upsd")
