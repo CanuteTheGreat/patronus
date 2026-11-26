@@ -1,0 +1,13 @@
+    {% if !uplinks.is_empty() %}
+    <div class="stat-card" id="uplinks-card">
+        <h2>Uplinks</h2>
+        {% for u in uplinks %}
+        <div class="label uplink-row" data-uplink="{{ u.name }}"><strong>{{ u.name }}</strong> &middot;
+            <span class="{{ u.class }}">{{ u.state }}{% if !u.warning.is_empty() %}, warning: {{ u.warning }}{% endif %}</span>{% if !u.detail.is_empty() %} &middot; {{ u.detail }}{% endif %}</div>
+        {% endfor %}
+        {% for e in uplink_events %}
+        <div class="label uplink-event" data-severity="{{ e.severity }}">{{ e.when }} &middot; {{ e.text }}</div>
+        {% endfor %}
+        <div class="label"><a href="/routing">Routing and gateway groups</a></div>
+    </div>
+    {% endif %}

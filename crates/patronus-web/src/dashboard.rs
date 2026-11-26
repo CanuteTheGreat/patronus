@@ -140,6 +140,14 @@ pub const REGISTRY: &[WidgetDef] = &[
         Gate::Always,
     ),
     w(
+        "uplinks",
+        "Uplinks",
+        true,
+        false,
+        MinRole::ReadOnly,
+        Gate::Always,
+    ),
+    w(
         "system",
         "System",
         true,

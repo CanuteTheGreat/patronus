@@ -189,11 +189,18 @@ pub async fn dashboard(State(state): State<AppState>, user: crate::auth::AuthUse
     } else {
         vec![]
     };
+    let (uplinks, uplink_events) = if drawn("uplinks") {
+        uplink_tile(&state).await
+    } else {
+        (vec![], vec![])
+    };
     let (mut widgets, hidden_widgets) = crate::dashboard::split(&layout);
     // A tile without data draws nothing (no DHCP server, no interface rates).
     widgets.retain(|w| match w.id {
         "dhcp" => dhcp_leases.is_some(),
         "traffic" => !traffic.is_empty(),
+        // No gateway configured: no tile.
+        "uplinks" => !uplinks.is_empty(),
         _ => true,
     });
     let settings = patronus_config::dashboard::load(&state.config_store).await;
@@ -211,6 +218,8 @@ pub async fn dashboard(State(state): State<AppState>, user: crate::auth::AuthUse
         dhcp_leases,
         iface_rows,
         traffic,
+        uplinks,
+        uplink_events,
         widgets,
         hidden_widgets,
         refresh_seconds: settings.refresh_seconds,
@@ -218,6 +227,60 @@ pub async fn dashboard(State(state): State<AppState>, user: crate::auth::AuthUse
         customized,
     };
     render(&template, "dashboard")
+}
+
+/// The Uplinks tile: every gateway's state (with its warning level) and the
+/// last gateway events. Both empty when no gateway is configured.
+async fn uplink_tile(
+    state: &AppState,
+) -> (
+    Vec<crate::templates::DashUplink>,
+    Vec<crate::templates::DashUplinkEvent>,
+) {
+    let st = state
+        .routing
+        .status()
+        .await
+        .unwrap_or(serde_json::Value::Null);
+    let (gateways, _, _) = super::api::routing::views(&st);
+    let uplinks: Vec<crate::templates::DashUplink> = gateways
+        .into_iter()
+        .map(|g| crate::templates::DashUplink {
+            class: if !g.warning.is_empty() && g.state_class == "ok" {
+                "warn"
+            } else {
+                g.state_class
+            },
+            detail: [g.rtt, g.loss]
+                .into_iter()
+                .filter(|x| !x.is_empty())
+                .collect::<Vec<_>>()
+                .join(" / "),
+            warning: g.warning,
+            state: g.state,
+            name: g.name,
+        })
+        .collect();
+    if uplinks.is_empty() {
+        return (uplinks, Vec::new());
+    }
+    let mut events: Vec<crate::templates::DashUplinkEvent> =
+        crate::state::telemetry::events(&state.config_store, 0, None, 1000)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|e| e.kind.starts_with("gateway_") || e.kind == "group_failover")
+            .map(|e| crate::templates::DashUplinkEvent {
+                when: chrono::DateTime::from_timestamp(e.ts, 0)
+                    .map(|t| t.format("%m-%d %H:%M").to_string())
+                    .unwrap_or_default(),
+                severity: e.severity,
+                text: e.detail,
+            })
+            .collect();
+    events.reverse();
+    events.truncate(5);
+    (uplinks, events)
 }
 
 /// Firewall rules page (rules, NAT, aliases, schedules).

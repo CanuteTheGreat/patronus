@@ -218,6 +218,14 @@ pub struct GatewayView {
     pub monitor_enabled: bool,
     pub loss_threshold: u64,
     pub latency_threshold: u64,
+    pub loss_warn: u64,
+    pub latency_warn: u64,
+    /// DNS servers of this uplink, comma separated
+    pub dns_servers: String,
+    /// `loss`, `latency` or empty
+    pub warning: String,
+    /// "N connections deleted 12 s ago: why", or empty
+    pub killed: String,
     pub failback_delay: u64,
     pub failback_ramp: u64,
     pub state: String,
@@ -239,6 +247,8 @@ pub struct MemberView {
 pub struct GroupView {
     pub name: String,
     pub trigger: String,
+    pub sticky_secs: u64,
+    pub kill_states: String,
     pub members: Vec<MemberView>,
     pub members_spec: String,
     pub description: String,
@@ -332,6 +342,26 @@ pub fn views(st: &Value) -> (Vec<GatewayView>, Vec<GroupView>, Vec<RouteView>) {
                 monitor_enabled: g["monitor_enabled"].as_bool().unwrap_or(true),
                 loss_threshold: g["loss_threshold"].as_u64().unwrap_or(20),
                 latency_threshold: g["latency_threshold"].as_u64().unwrap_or(500),
+                loss_warn: g["loss_warn"].as_u64().unwrap_or(0),
+                latency_warn: g["latency_warn"].as_u64().unwrap_or(0),
+                dns_servers: g["dns_servers"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default(),
+                warning: s(g, "warning"),
+                killed: match (g["killed"]["at"].as_i64(), g["killed"]["count"].as_u64()) {
+                    (Some(at), Some(n)) => format!(
+                        "{n} connection(s) deleted {} s ago: {}",
+                        (chrono::Utc::now().timestamp() - at).max(0),
+                        s(&g["killed"], "why")
+                    ),
+                    _ => String::new(),
+                },
                 failback_delay: g["failback_delay"].as_u64().unwrap_or(0),
                 failback_ramp: g["failback_ramp"].as_u64().unwrap_or(0),
                 state_class: state_class(&state),
@@ -372,6 +402,15 @@ pub fn views(st: &Value) -> (Vec<GatewayView>, Vec<GroupView>, Vec<RouteView>) {
             GroupView {
                 name: s(g, "name"),
                 trigger: s(g, "trigger"),
+                sticky_secs: g["sticky_secs"].as_u64().unwrap_or(0),
+                kill_states: {
+                    let k = s(g, "kill_states");
+                    if k.is_empty() {
+                        "down".into()
+                    } else {
+                        k
+                    }
+                },
                 members_spec: members
                     .iter()
                     .map(|m| format!("{}:{}:{}", m.gateway, m.tier, m.weight))
