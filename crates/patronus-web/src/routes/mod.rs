@@ -202,9 +202,10 @@ enum MetricsGate {
 
 async fn metrics_gate(
     app_state: &crate::AppState,
-    req: &axum::http::Request<axum::body::Body>,
+    peer: Option<std::net::IpAddr>,
+    auth: Option<String>,
 ) -> MetricsGate {
-    use axum::http::{header, StatusCode};
+    use axum::http::StatusCode;
     use axum::response::IntoResponse;
     let Ok(p) = patronus_network::monagent::metrics_policy(&app_state.config_store).await else {
         return MetricsGate::Normal;
@@ -218,10 +219,6 @@ async fn metrics_gate(
                 .into_response(),
         );
     }
-    let peer = req
-        .extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .map(|c| c.0.ip());
     if !p.allows_source(peer) {
         return MetricsGate::Deny(
             (
@@ -231,11 +228,7 @@ async fn metrics_gate(
                 .into_response(),
         );
     }
-    let auth = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
-    if p.token_matches(auth) {
+    if p.token_matches(auth.as_deref()) {
         MetricsGate::Token
     } else {
         MetricsGate::Normal
@@ -281,7 +274,16 @@ async fn require_session(
     // The typed /metrics settings (Prometheus metrics page): the switch and the
     // allowed source network bind everyone; a scrape token replaces the login.
     if path == "/metrics" {
-        match metrics_gate(&app_state, &req).await {
+        let peer = req
+            .extensions()
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|c| c.0.ip());
+        let auth = req
+            .headers()
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        match metrics_gate(&app_state, peer, auth).await {
             MetricsGate::Deny(r) => return r,
             MetricsGate::Token => return next.run(req).await,
             MetricsGate::Normal => {}

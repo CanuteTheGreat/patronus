@@ -97,6 +97,10 @@ src_install() {
 	insinto /etc/conf.d
 	newins files/patronus-boot-entry.confd patronus-boot-entry
 
+	keepdir /var/lib/patronus-monagent
+	fowners patronus:patronus /var/lib/patronus-monagent
+	fperms 0755 /var/lib/patronus-monagent
+
 	keepdir /var/lib/patronus /var/log/patronus /var/lib/patronus/feeds \
 		/etc/patronus/rules.d /etc/patronus/openvpn /etc/patronus/ipsec /etc/patronus/unbound \
 		/etc/patronus/certificates /etc/patronus/tls

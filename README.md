@@ -273,6 +273,18 @@ that are not finished are listed separately under
   exports flow records (v5, v9 or IPFIX) to a collector. [C47]
 - IGMP proxy (USE=igmp): igmpproxy forwards multicast streams from the WAN to
   LAN interfaces, with the firewall rules it needs generated for it. [C48]
+- Zabbix agent 2 (USE=zabbix-agent, off by default): a Zabbix server monitors the
+  router. The agent listens on the LAN interface only, runs as its own
+  unprivileged account, never runs remote commands, can require a TLS pre-shared
+  key (never shown again), and answers host, gateway, firewall, connection and
+  service items. [C140]
+- Telegraf (USE=telegraf, off by default): host, network, connection and firewall
+  metrics served to a Prometheus scraper on the LAN or pushed to InfluxDB, with the
+  inputs, interval and credentials set on one page; the token is never shown again
+  and the generated configuration cannot be broken out of by what you type. [C141]
+- Prometheus metrics endpoint: `/metrics` can be switched off, limited to one
+  source network and read with a scrape token instead of a login, from the
+  Metrics endpoint page. [C142]
 - NAT64 / DNS64 (USE=nat64): IPv6-only clients reach IPv4-only servers through
   tayga, and Unbound answers AAAA queries for IPv4-only names with addresses
   in the NAT64 prefix. [C49]

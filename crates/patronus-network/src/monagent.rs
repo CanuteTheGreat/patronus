@@ -23,11 +23,9 @@
 //! every 30 s while an agent is enabled, so neither agent needs a login: the
 //! Zabbix helper and Telegraf's `inputs.file` read that file.
 
-use crate::lan::{self, invalid, LanEnv};
-use crate::supervise::{which, write_atomic, NetPaths, Supervisor, DEFAULT_STATE_DIR};
-use crate::svc::{self, Coll, Field, Kind, Settings, Spec, Svc, SECRET_MASK};
+use crate::supervise::{NetPaths, DEFAULT_STATE_DIR};
+use crate::svc::{Field, Kind, Settings, Spec, Svc};
 use async_trait::async_trait;
-use patronus_config::applier::{Applier, ApplyReport, Phase};
 use patronus_config::store::ConfigStore;
 use patronus_core::{Error, Result};
 use serde_json::{json, Value};
@@ -35,14 +33,27 @@ use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
+#[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
+use crate::lan::{self, invalid, LanEnv};
+#[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
+use crate::supervise::{which, write_atomic, Supervisor};
+#[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
+use crate::svc::{self, Coll, SECRET_MASK};
+#[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
+use patronus_config::applier::{Applier, ApplyReport, Phase};
+
 pub const DEFAULT_BASE: &str = "/var/lib/patronus-monagent";
 /// File name of the metrics snapshot inside the base directory.
 pub const SNAPSHOT: &str = "metrics.prom";
 /// A snapshot older than this is not trusted by the Zabbix helper.
 pub const SNAPSHOT_MAX_AGE_SECS: u64 = 180;
+#[cfg(feature = "zabbix-agent")]
 pub const ZABBIX_INSTANCE: &str = "zabbix-agent2";
+#[cfg(feature = "telegraf")]
 pub const TELEGRAF_INSTANCE: &str = "telegraf";
+#[cfg(feature = "zabbix-agent")]
 pub const ZABBIX_USER: &str = "zabbix";
+#[cfg(feature = "telegraf")]
 pub const TELEGRAF_USER: &str = "telegraf";
 
 /// Directory of the generated agent files and the metrics snapshot.
@@ -182,6 +193,7 @@ pub fn conf_val(s: &str) -> String {
         .to_string()
 }
 
+#[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
 fn user_exists(name: &str) -> bool {
     nix::unistd::User::from_name(name)
         .ok()
@@ -189,6 +201,7 @@ fn user_exists(name: &str) -> bool {
         .is_some()
 }
 
+#[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
 fn group_gid(name: &str) -> Option<u32> {
     nix::unistd::Group::from_name(name)
         .ok()
@@ -198,6 +211,7 @@ fn group_gid(name: &str) -> Option<u32> {
 
 /// The system host name as a `Token` (what Zabbix and a monitoring server
 /// should call this box), `patronus` when it cannot be read.
+#[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
 pub fn system_hostname() -> String {
     let h = std::fs::read_to_string("/proc/sys/kernel/hostname")
         .unwrap_or_default()
@@ -206,6 +220,7 @@ pub fn system_hostname() -> String {
     token_or(&h, "patronus")
 }
 
+#[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
 fn token_or(s: &str, fallback: &str) -> String {
     let t: String = s
         .chars()
@@ -221,6 +236,7 @@ fn token_or(s: &str, fallback: &str) -> String {
 
 /// Create `dir` with `mode`; owner root, group `group` when it exists
 /// (best effort: an unprivileged test run keeps its own owner).
+#[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
 fn ensure_dir(dir: &Path, mode: u32, owner: Option<&str>, group: Option<&str>) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(dir)
@@ -231,6 +247,7 @@ fn ensure_dir(dir: &Path, mode: u32, owner: Option<&str>, group: Option<&str>) -
     Ok(())
 }
 
+#[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
 fn chown_names(p: &Path, owner: Option<&str>, group: Option<&str>) {
     let uid = owner.and_then(|o| {
         nix::unistd::User::from_name(o)
@@ -245,6 +262,7 @@ fn chown_names(p: &Path, owner: Option<&str>, group: Option<&str>) {
 }
 
 /// Write a generated file group-readable by the agent's account.
+#[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
 fn put_file(path: &Path, content: &str, mode: u32, group: Option<&str>) -> Result<()> {
     write_atomic(path, content, mode)?;
     chown_names(path, Some("root"), group);
@@ -254,6 +272,7 @@ fn put_file(path: &Path, content: &str, mode: u32, group: Option<&str>) -> Resul
 /// Command line that runs `argv` as `user` (no extra capabilities unless
 /// `caps` names some, for example `net_admin`); `argv` unchanged when the
 /// account or `setpriv` does not exist.
+#[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
 fn privileged_argv(user: &str, caps: &[&str], argv: Vec<String>) -> (Vec<String>, bool) {
     let Some(sp) = which("setpriv") else {
         return (argv, false);
@@ -283,6 +302,7 @@ fn privileged_argv(user: &str, caps: &[&str], argv: Vec<String>) -> (Vec<String>
 
 /// First IPv4 (else non-link-local IPv6) address on the devices `spec`
 /// resolves to: what an agent listens on.
+#[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
 async fn listen_addr(store: &ConfigStore, env: &LanEnv, spec: &str) -> Result<(String, IpAddr)> {
     let devs = lan::resolve_iface(store, spec).await?;
     if devs.is_empty() {
@@ -312,6 +332,7 @@ async fn listen_addr(store: &ConfigStore, env: &LanEnv, spec: &str) -> Result<(S
     )))
 }
 
+#[cfg(any(feature = "zabbix-agent", feature = "telegraf"))]
 fn fmt_listen(ip: IpAddr, port: i64) -> String {
     match ip {
         IpAddr::V4(a) => format!("{a}:{port}"),
@@ -518,10 +539,10 @@ pub fn zabbix_item(key: &str, arg: &str, prom: &str, loadavg: &str) -> Result<St
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "zabbix-agent")]
-pub use zabbix::*;
+pub use zabbix::{check_psk, ZabbixApplier, ZabbixConf, ZabbixSvc, ZABBIX_SPEC};
 
 #[cfg(feature = "zabbix-agent")]
-mod zabbix {
+pub mod zabbix {
     use super::*;
 
     static FIELDS: [Field; 8] = [
@@ -577,7 +598,7 @@ mod zabbix {
         if psk == SECRET_MASK || psk.is_empty() {
             return Ok(());
         }
-        if psk.len() >= 32 && psk.len() % 2 == 0 && psk.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if psk.len() >= 32 && psk.len().is_multiple_of(2) && psk.bytes().all(|b| b.is_ascii_hexdigit()) {
             Ok(())
         } else {
             Err(invalid(
@@ -681,7 +702,7 @@ mod zabbix {
 
         async fn conf(&self, store: &ConfigStore) -> Result<(String, String, String)> {
             let s = Settings::load(store, &ZABBIX_SPEC).await?;
-            let servers: Vec<String> = svc::raw_rows(store, &ZABBIX_ZABBIX_SPEC.colls[0])
+            let servers: Vec<String> = svc::raw_rows(store, &ZABBIX_SPEC.colls[0])
                 .await?
                 .iter()
                 .filter_map(|r| r["host"].as_str().map(str::to_string))
@@ -781,8 +802,13 @@ mod zabbix {
                     conf_path.to_string_lossy().into_owned(),
                 ],
             );
-            let started =
-                svc::ensure_daemon(&self.sup, ZABBIX_INSTANCE, argv, Vec::new()).await?;
+            // the files are already in place (owned by the agent's group); listing them makes
+            // the supervisor's fingerprint cover their content, so a changed config restarts it
+            let mut files = vec![(conf_path.clone(), conf.clone(), 0o640)];
+            if !psk.is_empty() {
+                files.push((dir.join("psk.key"), format!("{psk}\n"), 0o640));
+            }
+            let started = svc::ensure_daemon(&self.sup, ZABBIX_INSTANCE, argv, files).await?;
             rep.applied(format!(
                 "Zabbix agent {} on {listen}{}",
                 if started {
@@ -837,10 +863,12 @@ mod zabbix {
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "telegraf")]
-pub use telegraf::*;
+pub use telegraf::{
+    check_tables, check_url, Inputs, TelegrafApplier, TelegrafConf, TelegrafSvc, OUTPUTS, TELEGRAF_SPEC,
+};
 
 #[cfg(feature = "telegraf")]
-mod telegraf {
+pub mod telegraf {
     use super::*;
 
     pub const OUTPUTS: &[&str] = &["prometheus_client", "influxdb_v2", "influxdb_v1"];
@@ -870,7 +898,6 @@ mod telegraf {
         Field::new("in_diskio", "Disk I/O", Kind::Bool).def("0"),
         Field::new("in_system", "Load and uptime", Kind::Bool).def("1"),
         Field::new("in_conntrack", "Connection tracking", Kind::Bool).def("1"),
-    
         Field::new("in_nft", "Firewall counters (nftables)", Kind::Bool)
             .def("0")
             .help("named counters of the firewall tables; runs Telegraf with CAP_NET_ADMIN"),
@@ -1222,8 +1249,8 @@ mod telegraf {
                     conf_path.to_string_lossy().into_owned(),
                 ],
             );
-            let started =
-                svc::ensure_daemon(&self.sup, TELEGRAF_INSTANCE, argv, Vec::new()).await?;
+            let files = vec![(conf_path.clone(), conf.clone(), 0o640)];
+            let started = svc::ensure_daemon(&self.sup, TELEGRAF_INSTANCE, argv, files).await?;
             rep.applied(format!(
                 "Telegraf {}{}{}",
                 if started {
@@ -1286,6 +1313,8 @@ mod telegraf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lan;
+    use crate::svc::{self, SECRET_MASK};
 
     const PROM: &str = "# HELP patronus_gateway_up x\n# TYPE patronus_gateway_up gauge\n\
         patronus_gateway_up{gateway=\"WAN\"} 1\npatronus_gateway_up{gateway=\"LTE \\\"b\\\"\"} 0\n\
@@ -1629,7 +1658,7 @@ mod tests {
             }
             for bad in [
                 "ftp://x", "http://", "http://a b", "http://a\"b", "http://u:p@h", "http://h:99999",
-                "http://h/\n", "http://h\\x", "javascript:1",
+                "http://h/a\nb", "http://h\\x", "javascript:1",
             ] {
                 assert!(telegraf::check_url(bad).is_err(), "{bad}");
             }

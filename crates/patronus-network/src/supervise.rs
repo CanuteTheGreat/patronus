@@ -522,6 +522,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_setpriv_wrapper_is_looked_through() {
+        let w = [
+            "/usr/bin/setpriv", "--reuid=zabbix", "--regid=zabbix", "--init-groups", "--",
+            "/usr/sbin/zabbix_agent2", "-f",
+        ];
+        assert_eq!(real_program(&w), "/usr/sbin/zabbix_agent2");
+        assert_eq!(real_program(&["/usr/bin/igmpproxy", "-n"]), "/usr/bin/igmpproxy");
+        assert_eq!(real_program(&["setpriv"]), "setpriv", "no -- : nothing to look through");
+        assert_eq!(real_program(&[]), "");
+    }
+
+    #[test]
     fn instance_lock_is_exclusive_per_instance() {
         let d = tempfile::tempdir().unwrap();
         let p = NetPaths::under(d.path());

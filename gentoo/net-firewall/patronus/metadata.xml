@@ -29,6 +29,8 @@
 		<flag name="plugins">Signed plugins and optional components (Packages page, patronus plugin)</flag>
 		<flag name="syslog">Forward the system log to remote collectors from the web UI (rsyslog)</flag>
 		<flag name="igmp">IGMP proxy for multicast forwarding (igmpproxy)</flag>
+		<flag name="zabbix-agent">Optional Zabbix agent 2 (7.x) page: monitors the router from a Zabbix server, LAN only, no remote commands</flag>
+		<flag name="telegraf">Optional Telegraf page: Prometheus client on the LAN or InfluxDB push, typed inputs</flag>
 		<flag name="uci-import">patronus import-uci: one-step migration from an OpenWrt router configuration (sysupgrade backup or the running router over ssh)</flag>
 		<flag name="wifi-client">Wi-Fi client (station) uplink: use a wireless network as WAN or backup WAN through wpa_supplicant</flag>
 		<flag name="mdns">mDNS repeater: Bonjour/AirPlay/printer discovery across LAN segments (avahi-daemon reflector)</flag>
