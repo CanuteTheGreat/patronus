@@ -57,6 +57,8 @@ pub enum ResourceKind {
     IpsecRoadWarrior,
     /// RBAC group (`privileges: {firewall: write, vpn: read}`).
     Group,
+    /// Notification matcher tree (all / any / not, calendar windows).
+    NotifyMatcher,
 }
 
 /// Resource metadata
@@ -442,7 +444,8 @@ impl ConfigParser {
                 | ResourceKind::IpsecTunnel
                 | ResourceKind::IpsecRoadWarrior
                 | ResourceKind::User
-                | ResourceKind::Group,
+                | ResourceKind::Group
+                | ResourceKind::NotifyMatcher,
                 ResourceSpec::Generic(v),
             ) if v.is_object() => {}
             _ => {
