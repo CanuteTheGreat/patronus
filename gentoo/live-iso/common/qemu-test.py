@@ -38,6 +38,17 @@ PROJECTS = {
                      services=["patronus-firewall", "patronus-applyd", "patronus-web"], forward=True,
                      dbfiles=["/var/lib/patronus/config.db"], dbuser="patronus", logdirs=["/var/log/patronus"]),
 }
+def installer_profile():
+    """The project's installer profile (project/overlay/etc/live-installer/profile.toml of this tree): the screens the text flow meets."""
+    f = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "project", "overlay", "etc", "live-installer", "profile.toml")
+    try:
+        import tomllib
+        with open(f, "rb") as fh:
+            return tomllib.load(fh)
+    except (OSError, ImportError, ValueError):
+        return {}
+
+
 PW = "Kx9!mQv2-tle-77Zp"          # >= 12 chars, mixed: passes the installer's strength rules
 PW_DISK = "Dq4#sB8-luks-63Nw"       # the disk passphrase (xfs-luks): the installer refuses any account password equal to it (secretcheck), so it is its own secret
 PW2, PW3 = "Rv7#nQ4-zeta-91Lk", "Tb3$wH8-omega-52Ud"   # console-menu password reset / factory reset
@@ -1421,6 +1432,7 @@ class Runner:
                 kb.key("UP")                               # -> 'ZFS layout'
                 kb.key("RIGHT")
                 shot("03b-filesystem-zfs-mirror")
+                kb.key("TAB")                              # -> 'ZFS pool name' (advanced text row under the layout; keeps rpool)
                 kb.key("TAB")
                 if p == "horcrux":
                     kb.key("TAB")                          # -> 'TEST MACHINE: NO disk encryption' (advanced row added by b9d3838; the VGA zfs-mirror run pressed ENTER on 'Show advanced options' and sat on the disk screen for 1700 s)
@@ -1467,8 +1479,15 @@ class Runner:
             kb.key("CLEAR"); kb.text(f"{a.lan_ip}/24")
             shot("07b-wan-lan-addressing-filled")
             kb.key("TAB"); kb.key("ENTER", 1)
+            if installer_profile().get("net_bonds_vlans"):  # the optional bonds / VLANs / management network screen (liveinst netvirt.enabled)
+                wait(r"\] Bonds, VLANs and management network", "07c-bonds-vlans-management")
+                if vga:                                    # docs: the rows the first box reveals; untick again, this flow installs plain ports
+                    kb.key("SPACE", 1); shot("07d-bonds-vlans-management-on"); kb.key("SPACE", 1)
+                kb.key("TAB"); kb.key("TAB"); kb.key("ENTER", 1)   # 'Show advanced options' -> buttons -> Next
         wait(r"\] Services", "08-services")
         kb.key("TAB")                                      # optional services list -> buttons
+        if installer_profile().get("update_channels") and installer_profile().get("update_channel_file"):
+            kb.key("TAB")                                  # the update channel choice (liveinst updchan.enabled): default kept
         kb.key("ENTER", 1)
         wait(r"\] Security hardening", "09-hardening")
         if a.ssh_password_opt_in or a.console_open:

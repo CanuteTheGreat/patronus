@@ -153,6 +153,12 @@ enum Commands {
         action: ConfigCommands,
     },
 
+    /// Interface roles (WAN, LAN, OPT1..N)
+    Interfaces {
+        #[command(subcommand)]
+        action: InterfacesCommands,
+    },
+
     /// GitOps: apply the firewall/NAT/interface/route resources kept in a
     /// git repository ([gitops] in patronus.toml; USE=gitops)
     #[cfg(feature = "gitops")]
@@ -717,6 +723,42 @@ enum FirewallCommands {
 
     /// Flush all Patronus-managed nftables rules
     Flush,
+
+    /// Show the firewall log (rules with Log on, threat-feed drops): the newest lines, oldest first
+    Log {
+        /// How many of the newest lines
+        #[arg(short = 'n', long, default_value_t = 30)]
+        lines: i64,
+        /// Keep printing new lines (Ctrl+C ends)
+        #[arg(short, long)]
+        follow: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum InterfacesCommands {
+    /// Set the WAN / LAN / OPT roles (replaces every role; a revision is kept for rollback).
+    /// Run `patronus apply` (or restart patronus-firewall) afterwards to apply them.
+    Assign {
+        /// Take the roles from the [network] section of patronus.toml (wan_interface,
+        /// lan_interface, opt_interfaces): what the console menu writes
+        #[arg(long, conflicts_with_all = ["wan", "lan", "opt"])]
+        from_bootstrap: bool,
+        /// Bootstrap file [default: $PATRONUS_BOOTSTRAP or /etc/patronus/patronus.toml]
+        #[arg(long)]
+        bootstrap: Option<PathBuf>,
+        /// WAN interface
+        #[arg(long)]
+        wan: Option<String>,
+        /// LAN interface
+        #[arg(long)]
+        lan: Option<String>,
+        /// OPT interface (repeat: OPT1, OPT2 ... in order)
+        #[arg(long)]
+        opt: Vec<String>,
+    },
+    /// List the interfaces with a role
+    Roles,
 }
 
 #[derive(Subcommand)]
@@ -923,6 +965,27 @@ async fn main() -> anyhow::Result<()> {
         Commands::Applyd { socket, group } => {
             applyd::run(cli.db, socket, group).await?;
         }
+
+        Commands::Interfaces { action } => match action {
+            InterfacesCommands::Assign {
+                from_bootstrap,
+                bootstrap,
+                wan,
+                lan,
+                opt,
+            } => {
+                commands::interfaces::assign(
+                    cli.db.as_deref(),
+                    from_bootstrap,
+                    bootstrap,
+                    wan,
+                    lan,
+                    opt,
+                )
+                .await?
+            }
+            InterfacesCommands::Roles => commands::interfaces::roles(cli.db.as_deref()).await?,
+        },
 
         Commands::Config { action } => match action {
             ConfigCommands::Revisions => apply::list_revisions(cli.db.as_deref()).await?,

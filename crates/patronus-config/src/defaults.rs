@@ -101,6 +101,8 @@ pub fn default_bootstrap_path() -> PathBuf {
 pub struct Bootstrap {
     pub wan: Vec<String>,
     pub lan: Vec<String>,
+    /// `opt_interfaces = [...]`: OPT1, OPT2 ... in that order (roles opt1, opt2 ...)
+    pub opt: Vec<String>,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -117,6 +119,8 @@ struct NetworkSection {
     wan_interfaces: Vec<String>,
     #[serde(default)]
     lan_interfaces: Vec<String>,
+    #[serde(default)]
+    opt_interfaces: Vec<String>,
 }
 
 impl Bootstrap {
@@ -127,6 +131,7 @@ impl Bootstrap {
         let mut b = Bootstrap {
             wan: f.network.wan_interfaces,
             lan: f.network.lan_interfaces,
+            opt: f.network.opt_interfaces,
         };
         if let Some(w) = f.network.wan_interface {
             b.wan.insert(0, w);
@@ -136,9 +141,26 @@ impl Bootstrap {
         }
         b.wan.retain(|s| !s.trim().is_empty());
         b.lan.retain(|s| !s.trim().is_empty());
+        b.opt.retain(|s| !s.trim().is_empty());
         b.wan.dedup();
         b.lan.dedup();
+        b.opt.dedup();
         Ok(b)
+    }
+
+    /// (interface, role) pairs in file order: wan, lan, then opt1, opt2 ...
+    pub fn roles(&self) -> Vec<(String, String)> {
+        let mut v: Vec<(String, String)> = Vec::new();
+        for n in &self.wan {
+            v.push((n.clone(), "wan".into()));
+        }
+        for n in &self.lan {
+            v.push((n.clone(), "lan".into()));
+        }
+        for (i, n) in self.opt.iter().enumerate() {
+            v.push((n.clone(), format!("opt{}", i + 1)));
+        }
+        v
     }
 
     /// Load the bootstrap file; `Ok(None)` if it does not exist.
@@ -186,19 +208,17 @@ pub async fn ensure_defaults(
     if store.interface_roles().await?.is_empty() {
         if let Some(b) = bootstrap {
             let mut planned: Vec<(String, String)> = Vec::new();
-            for (role, names) in [("wan", &b.wan), ("lan", &b.lan)] {
-                for n in names {
-                    if existing.iter().any(|e| e == n) {
-                        planned.push((n.clone(), role.to_string()));
-                    } else {
-                        let w = format!(
-                            "patronus.toml names {role} interface {n:?}, which does not exist \
-                             (present: {}); not assigned",
-                            existing.join(", ")
-                        );
-                        tracing::warn!("{w}");
-                        rep.warnings.push(w);
-                    }
+            for (n, role) in b.roles() {
+                if existing.contains(&n) {
+                    planned.push((n, role));
+                } else {
+                    let w = format!(
+                        "patronus.toml names {role} interface {n:?}, which does not exist \
+                         (present: {}); not assigned",
+                        existing.join(", ")
+                    );
+                    tracing::warn!("{w}");
+                    rep.warnings.push(w);
                 }
             }
             // one transaction: no reader ever sees a half-assigned set (WAN without LAN)
@@ -254,6 +274,65 @@ pub async fn ensure_defaults(
         rep.defaults_seeded = true;
     }
     Ok(rep)
+}
+
+/// Make the store's WAN/LAN/OPT roles exactly those of `b` (the console menu's
+/// "Assign interfaces" after the first boot, `patronus interfaces assign`).
+/// Every named interface must exist and carry one role; there must be a WAN.
+/// Interfaces that had a role and are not named lose it. A config revision
+/// is kept first so the change can be rolled back. Returns the new roles.
+pub async fn reassign_roles(
+    store: &ConfigStore,
+    b: &Bootstrap,
+    existing: &[String],
+    actor: &str,
+) -> Result<Vec<(String, String)>> {
+    let roles = b.roles();
+    if b.wan.is_empty() {
+        return Err(Error::Config("no WAN interface given".into()));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for (n, role) in &roles {
+        if !existing.contains(n) {
+            return Err(Error::Config(format!(
+                "{} interface {n:?} does not exist (present: {})",
+                role.to_uppercase(),
+                existing.join(", ")
+            )));
+        }
+        if !seen.insert(n.clone()) {
+            return Err(Error::Config(format!("interface {n:?} is given two roles")));
+        }
+    }
+    let old = store.interface_roles().await?;
+    if old
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        == roles
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+    {
+        return Ok(roles);
+    }
+    store
+        .snapshot(actor, "before interface assignment (console)")
+        .await?;
+    for (n, _) in old.iter().filter(|(n, _)| !seen.contains(n)) {
+        store.set_interface_role(n, None).await?;
+    }
+    store.set_interface_roles(&roles).await?;
+    store
+        .audit(
+            actor,
+            "assign_interfaces",
+            "interfaces",
+            None,
+            &serde_json::json!({"before": old, "after": roles}),
+        )
+        .await?;
+    Ok(roles)
 }
 
 /// The default rows (see the module docs).
@@ -411,6 +490,7 @@ mod tests {
         let b = Bootstrap {
             wan: vec!["wan0".into()],
             lan: vec!["lan0".into(), "ghost0".into()],
+            ..Default::default()
         };
         let existing = vec!["lo".to_string(), "lan0".into(), "wan0".into()];
         let r = ensure_defaults(&s, Some(&b), &existing).await.unwrap();
@@ -543,6 +623,7 @@ mod tests {
             Some(Bootstrap {
                 wan: vec!["eth0".into()],
                 lan: vec![],
+                ..Default::default()
             })
         );
         // a directory where the file should be: a real error, not "no file"
@@ -573,12 +654,69 @@ mod tests {
         let b = Bootstrap {
             wan: vec!["eth0".into()],
             lan: vec!["eth1".into()],
+            ..Default::default()
         };
         ensure_defaults(&s, Some(&b), &["eth0".into(), "eth1".into(), "eth5".into()])
             .await
             .unwrap();
         assert_eq!(s.interfaces_with_role("lan").await.unwrap(), vec!["eth5"]);
         assert!(s.interfaces_with_role("wan").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn opt_interfaces_seed_and_reassign_replaces_every_role() {
+        let b = Bootstrap::parse(
+            "[network]\nwan_interface = \"eth0\"\nlan_interface = \"eth1\"\nopt_interfaces = [\"eth2\", \"eth3\"]\n",
+        )
+        .unwrap();
+        assert_eq!(b.opt, vec!["eth2", "eth3"]);
+        let ex: Vec<String> = ["eth0", "eth1", "eth2", "eth3", "eth4"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        ensure_defaults(&s, Some(&b), &ex).await.unwrap();
+        assert_eq!(s.interfaces_with_role("opt2").await.unwrap(), vec!["eth3"]);
+        // console reassignment after the first boot: WAN moves, eth3 loses its role, eth4 is OPT1
+        let nb = Bootstrap {
+            wan: vec!["eth1".into()],
+            lan: vec!["eth0".into()],
+            opt: vec!["eth4".into()],
+        };
+        let revs_before = s.list_revisions().await.unwrap().len();
+        let r = reassign_roles(&s, &nb, &ex, "console").await.unwrap();
+        assert_eq!(r.len(), 3);
+        let mut now = s.interface_roles().await.unwrap();
+        now.sort();
+        assert_eq!(
+            now,
+            vec![
+                ("eth0".to_string(), "lan".to_string()),
+                ("eth1".into(), "wan".into()),
+                ("eth4".into(), "opt1".into())
+            ]
+        );
+        assert_eq!(s.list_revisions().await.unwrap().len(), revs_before + 1);
+        // unchanged: no new revision
+        reassign_roles(&s, &nb, &ex, "console").await.unwrap();
+        assert_eq!(s.list_revisions().await.unwrap().len(), revs_before + 1);
+        // refused: missing interface, two roles, no WAN (and nothing changed)
+        let bad = Bootstrap {
+            opt: vec!["eth9".into()],
+            ..nb.clone()
+        };
+        assert!(reassign_roles(&s, &bad, &ex, "console").await.is_err());
+        let twice = Bootstrap {
+            opt: vec!["eth0".into()],
+            ..nb.clone()
+        };
+        assert!(reassign_roles(&s, &twice, &ex, "console").await.is_err());
+        let nowan = Bootstrap {
+            wan: vec![],
+            ..nb.clone()
+        };
+        assert!(reassign_roles(&s, &nowan, &ex, "console").await.is_err());
+        assert_eq!(s.interfaces_with_role("wan").await.unwrap(), vec!["eth1"]);
     }
 
     #[test]

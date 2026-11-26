@@ -1136,6 +1136,7 @@ mod tests {
         let b = Bootstrap {
             wan: wan.iter().map(|s| s.to_string()).collect(),
             lan: lan.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
         };
         let existing: Vec<String> = wan.iter().chain(lan).map(|s| s.to_string()).collect();
         ensure_defaults(&s, Some(&b), &existing).await.unwrap();
