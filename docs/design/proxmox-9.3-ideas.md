@@ -188,9 +188,9 @@ a keyboard-only add/edit/delete of a firewall rule, and every page's screenshot 
 `qemu-gate.py` `ui_kit`).
 
 Router-tier cost, measured on the GL-AX1800 openrc image (QEMU aarch64 under TCG, main before the kit vs ui-kit-3):
-root squashfs 18,563,072 -> 18,604,032 bytes (+40 KiB, +0.22 %), the multicall patronus-cli 16,048,944 -> 16,376,624 bytes
-(+320 KiB uncompressed), NAND budget unchanged (383 free LEBs), patronus-web RSS after a full Firefox crawl of the unit
-22,760 -> 23,064 kB (+0.3 MB).
+root squashfs 18,563,072 -> 18,620,416 bytes (+56 KiB, +0.31 %), the multicall patronus-cli 16,048,944 -> 16,507,696 bytes
+(+448 KiB uncompressed), NAND budget unchanged (383 free LEBs), patronus-web RSS after a full Firefox crawl of the unit
+22,760 -> 23,312 kB (+0.5 MB).
 
 ## Related plan: pfSense / OPNsense parity
 

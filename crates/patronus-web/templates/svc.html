@@ -182,7 +182,7 @@
             q.dataset.uiFilter = gid; right.appendChild(q);
         }
         tb.appendChild(left); tb.appendChild(right);
-        if (left.childNodes.length || right.childNodes.length) wrap.appendChild(tb);
+        if (rows.length && (left.childNodes.length || right.childNodes.length)) wrap.appendChild(tb);
         const t = document.createElement('table'); t.className = 'lan ui-grid'; t.dataset.uiGrid = gid;
         const thead = document.createElement('thead'), head = document.createElement('tr');
         for (const f of c.fields) { const th = document.createElement('th'); th.textContent = f.label; th.dataset.sort = ''; if (f.type === 'number') { th.dataset.type = 'num'; th.className = 'num'; } head.appendChild(th); }
@@ -210,7 +210,12 @@
         }
         const gw = document.createElement('div'); gw.className = 'ui-grid-wrap svc-scroll'; gw.tabIndex = 0; gw.setAttribute('role', 'region'); gw.setAttribute('aria-label', c.title); gw.appendChild(t);
         if (rows.length) wrap.appendChild(gw);
-        else { const p = document.createElement('div'); p.className = 'ui-empty'; p.innerHTML = '<strong>Nothing configured</strong>'; if (CAN_MODIFY) p.appendChild(document.createTextNode('Use Add entry to create the first one.')); wrap.appendChild(p); }
+        else {
+            const p = document.createElement('div'); p.className = 'ui-empty'; p.innerHTML = '<strong>Nothing configured</strong>';
+            const add = left.querySelector('button');
+            if (add) { const q = document.createElement('p'); q.appendChild(add); p.appendChild(q); }
+            wrap.appendChild(p);
+        }
         if (dlg) wrap.appendChild(dlg);
         return wrap;
     }
