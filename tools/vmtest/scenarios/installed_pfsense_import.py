@@ -182,12 +182,15 @@ def _kernel_state(m, fw, lan, opt, when):
     nft = fw.succeed("nft list ruleset")
     m.check(f"alias-set-loaded-{when}", "elements = { 80, 443 }" in nft, "web_ports")
     try:
-        fw.wait_until_succeeds("nft list ruleset | grep -q 'LAN web out' && nft list ruleset | grep -q 'IoT not to LAN'", 120, 3)
+        fw.wait_until_succeeds("nft list ruleset | grep -q 'tcp dport @alias_web_ports_ports accept' && "
+                               f"nft list ruleset | grep -q 'iifname \"{opt}.{VLAN_TAG}\" ip saddr {VLAN_IP.rsplit('.', 1)[0]}.0/24 ip daddr {LAN_IP.rsplit('.', 1)[0]}.0/24 meta l4proto tcp drop'",
+                               120, 3)
         ok = True
     except Exception:
         ok = False
     nft = fw.succeed("nft list ruleset")
-    m.check(f"imported-rules-loaded-{when}", ok, ok and "rule comments" or "\n".join(l.strip() for l in nft.splitlines() if "comment" in l)[:1500])
+    imported = [l.strip() for l in nft.splitlines() if "imported from a pfSense/OPNsense config.xml" in l]
+    m.check(f"imported-rules-loaded-{when}", ok, " | ".join(imported)[:1500] or "no rule with the import comment")
     m.check(f"port-forward-loaded-{when}", f"dnat" in nft and f"{FWD_TARGET}:{FWD_LOCAL}" in nft and f"dport {FWD_PORT}" in nft,
             "\n".join(l for l in nft.splitlines() if "dnat" in l)[:300])
 
