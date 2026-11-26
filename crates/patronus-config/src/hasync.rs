@@ -313,11 +313,8 @@ mod tests {
         (d, s)
     }
 
-    fn put(s: &ConfigStore, sql: &str) -> impl std::future::Future<Output = ()> + '_ {
-        let sql = sql.to_string();
-        async move {
-            sqlx::query(&sql).execute(s.pool().unwrap()).await.unwrap();
-        }
+    async fn put(s: &ConfigStore, sql: &str) {
+        sqlx::query(sql).execute(s.pool().unwrap()).await.unwrap();
     }
 
     #[tokio::test]
