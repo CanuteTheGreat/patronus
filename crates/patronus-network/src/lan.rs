@@ -993,6 +993,8 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::netflow::NetflowApplier::default()));
     #[cfg(feature = "igmp")]
     v.push(Arc::new(crate::igmp::IgmpApplier::default()));
+    #[cfg(feature = "smart")]
+    v.push(Arc::new(crate::smart::SmartApplier::default()));
     #[cfg(feature = "mdns")]
     v.push(Arc::new(crate::mdns::MdnsApplier::default()));
     #[cfg(feature = "nat64")]

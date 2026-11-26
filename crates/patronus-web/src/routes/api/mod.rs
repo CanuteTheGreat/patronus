@@ -25,6 +25,7 @@ pub mod seg_dns;
 pub mod seg_time;
 pub mod segmentation;
 pub mod setup;
+pub mod smart;
 pub mod states;
 pub mod status;
 pub mod svc;

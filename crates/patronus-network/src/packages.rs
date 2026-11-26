@@ -27,6 +27,13 @@ pub struct Component {
 
 pub const CATALOG: &[Component] = &[
     Component {
+        id: "smartmontools",
+        feature: "smart",
+        title: "S.M.A.R.T. disk health (smartmontools)",
+        atom: "sys-apps/smartmontools",
+        binary: "smartctl",
+    },
+    Component {
         id: "igmpproxy",
         feature: "igmp",
         title: "IGMP proxy",

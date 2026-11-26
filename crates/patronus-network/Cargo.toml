@@ -33,6 +33,8 @@ dynamic-routing = []
 syslog = []
 netflow = []
 igmp = []
+# S.M.A.R.T. disk health: needs smartctl (sys-apps/smartmontools) at runtime
+smart = []
 mdns = []
 nat64 = []
 l2tp = []

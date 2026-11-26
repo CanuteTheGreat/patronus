@@ -101,6 +101,14 @@ enum Commands {
         action: WifiChanCommands,
     },
 
+    /// S.M.A.R.T. disk health (USE=smart): the poller service, one look now, and the
+    /// state of every disk
+    #[cfg(feature = "smart")]
+    Smart {
+        #[command(subcommand)]
+        action: SmartCommands,
+    },
+
     /// Zero-touch provisioning: fetch the configuration named in the
     /// [provisioning] section of patronus.toml (url, optional
     /// passphrase_file for an encrypted bundle), import it and apply it.
@@ -469,6 +477,21 @@ enum BgpCommands {
     Routes,
 }
 
+#[cfg(feature = "smart")]
+#[derive(Subcommand)]
+enum SmartCommands {
+    /// The poller service (supervised, root): polls the disks and runs the scheduled and requested self-tests
+    Run,
+    /// One look at every disk now (needs root for smartctl)
+    Poll,
+    /// The state of every disk
+    Status {
+        /// machine-readable
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[cfg(feature = "wifi-ap")]
 #[derive(Subcommand)]
 enum WifiChanCommands {
@@ -809,6 +832,13 @@ async fn main() -> anyhow::Result<()> {
             UsersCommands::AddLocalAccount { name, groups, dir } => {
                 users::add_local_account(&name, &groups, dir)?
             }
+        },
+
+        #[cfg(feature = "smart")]
+        Commands::Smart { action } => match action {
+            SmartCommands::Run => commands::smart::run(cli.db).await?,
+            SmartCommands::Poll => commands::smart::poll(cli.db).await?,
+            SmartCommands::Status { json } => commands::smart::status(cli.db, json).await?,
         },
 
         #[cfg(feature = "wifi-ap")]

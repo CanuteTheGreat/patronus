@@ -9,6 +9,8 @@ net-dialup/ppp
 # Wi-Fi uplink (station mode WAN / backup WAN, USE=wifi-client): Patronus runs wpa_supplicant per uplink device and keeps
 # iwd (from the common package list) off that radio
 net-wireless/wpa_supplicant
+# S.M.A.R.T. disk health (USE=smart): smartctl, polled by the supervised patronus smart poller
+sys-apps/smartmontools
 net-misc/bridge-utils
 sys-apps/ethtool
 net-analyzer/tcpdump

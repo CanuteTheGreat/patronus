@@ -115,6 +115,26 @@ pub fn diff(prev: &BTreeMap<String, String>, cur: &BTreeMap<String, String>) -> 
                     ));
                 }
             }
+            "disk" => {
+                // S.M.A.R.T.: a disk changing level is one event; the level the poller already
+                // judged (with its hysteresis), so a disk hovering at a limit does not repeat
+                let was = old.map(String::as_str).unwrap_or("");
+                let (kind, sev) = match new.as_str() {
+                    "critical" => ("disk_smart_failing", "critical"),
+                    "warning" => ("disk_smart_warning", "warning"),
+                    "ok" if matches!(was, "warning" | "critical") => ("disk_smart_ok", "info"),
+                    _ => continue,
+                };
+                out.push(ev(
+                    kind,
+                    name,
+                    sev,
+                    format!(
+                        "disk {name}: {} -> {new}",
+                        if was.is_empty() { "unknown" } else { was }
+                    ),
+                ));
+            }
             "ha" => {
                 // a state appearing for the first time (HA just came up) is news too
                 out.push(ev(
@@ -287,6 +307,9 @@ pub const EVENT_KINDS: &[&str] = &[
     "tunnel_up",
     "tunnel_down",
     "ha_state",
+    "disk_smart_warning",
+    "disk_smart_failing",
+    "disk_smart_ok",
     "config_changed",
     "data_cap",
     "test",
@@ -1037,6 +1060,7 @@ pub async fn summary(state: &AppState) -> Value {
         "dhcp": { "leases": leases },
         "services": services,
         "ha": ha_summary(state).await,
+        "smart": smart_summary(store).await,
     })
 }
 
@@ -1320,7 +1344,28 @@ pub fn state_vector(s: &Value) -> BTreeMap<String, String> {
     if let Some(st) = s["ha"]["state"].as_str() {
         m.insert("ha:state".into(), st.to_string());
     }
+    for d in s["smart"].as_array().into_iter().flatten() {
+        if let (Some(n), Some(l)) = (d["device"].as_str(), d["level"].as_str()) {
+            m.insert(format!("disk:{n}"), l.to_string());
+        }
+    }
     m
+}
+
+/// The disks (device, level, reasons) the S.M.A.R.T. poller watches; empty when the feature is not built,
+/// monitoring is off, or notification is switched off (nothing to alert on).
+#[cfg(feature = "smart")]
+async fn smart_summary(store: &ConfigStore) -> Value {
+    json!(patronus_network::smart::alert_states(store)
+        .await
+        .into_iter()
+        .map(|(d, l, why)| json!({"device": d, "level": l.as_str(), "reasons": why}))
+        .collect::<Vec<_>>())
+}
+
+#[cfg(not(feature = "smart"))]
+async fn smart_summary(_store: &ConfigStore) -> Value {
+    json!([])
 }
 
 pub struct Watcher {
@@ -1348,6 +1393,19 @@ impl Watcher {
             None => Vec::new(),
         };
         self.prev = Some(cur);
+        // a disk event says why: the reasons the poller recorded
+        for e in out.iter_mut().filter(|e| e.kind.starts_with("disk_smart_")) {
+            if let Some(d) = s["smart"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|d| d["device"].as_str() == Some(e.subject.as_str()))
+            {
+                if let Some(r) = d["reasons"].as_str().filter(|r| !r.is_empty()) {
+                    e.detail = format!("{}: {r}", e.detail);
+                }
+            }
+        }
         let rev = s["config"]["last_change"]["id"].as_i64();
         if let (Some(old), Some(new)) = (self.last_rev, rev) {
             if new != old {
@@ -1399,6 +1457,43 @@ mod tests {
         v.iter()
             .map(|e| (e.kind.as_str(), e.subject.as_str()))
             .collect()
+    }
+
+    #[test]
+    fn disk_health_changes_become_one_event_each() {
+        let ok = m(&[("disk:/dev/sda", "ok"), ("disk:/dev/sdb", "ok")]);
+        assert!(diff(&ok, &ok).is_empty());
+        let warn = m(&[("disk:/dev/sda", "warning"), ("disk:/dev/sdb", "ok")]);
+        let e = diff(&ok, &warn);
+        assert_eq!(kinds(&e), vec![("disk_smart_warning", "/dev/sda")]);
+        assert_eq!(e[0].severity, "warning");
+        // no repeat while it stays; warning -> critical is a new event
+        assert!(diff(&warn, &warn).is_empty());
+        let crit = m(&[("disk:/dev/sda", "critical"), ("disk:/dev/sdb", "ok")]);
+        let e = diff(&warn, &crit);
+        assert_eq!(kinds(&e), vec![("disk_smart_failing", "/dev/sda")]);
+        assert_eq!(e[0].severity, "critical");
+        // recovery is reported; a disk that appears healthy is not news, one that appears failing is
+        let e = diff(&crit, &ok);
+        assert_eq!(kinds(&e), vec![("disk_smart_ok", "/dev/sda")]);
+        assert_eq!(e[0].severity, "info");
+        let new = m(&[("disk:/dev/sdc", "ok")]);
+        assert!(diff(&BTreeMap::new(), &new).is_empty());
+        let new = m(&[("disk:/dev/sdc", "critical")]);
+        assert_eq!(diff(&BTreeMap::new(), &new).len(), 1);
+        assert!(EVENT_KINDS.contains(&"disk_smart_failing"));
+    }
+
+    #[test]
+    fn the_summary_lists_the_disks_for_the_state_vector() {
+        let s = json!({"smart": [
+            {"device": "/dev/sda", "level": "critical", "reasons": "FAILED"},
+            {"device": "/dev/nvme0", "level": "ok", "reasons": ""},
+        ]});
+        let v = state_vector(&s);
+        assert_eq!(v.get("disk:/dev/sda").map(String::as_str), Some("critical"));
+        assert_eq!(v.get("disk:/dev/nvme0").map(String::as_str), Some("ok"));
+        assert!(state_vector(&json!({})).is_empty());
     }
 
     #[test]

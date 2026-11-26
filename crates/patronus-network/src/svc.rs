@@ -176,6 +176,8 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     v.push(Arc::new(crate::netflow::NetflowSvc));
     #[cfg(feature = "igmp")]
     v.push(Arc::new(crate::igmp::IgmpSvc));
+    #[cfg(feature = "smart")]
+    v.push(Arc::new(crate::smart::SmartSvc));
     #[cfg(feature = "mdns")]
     v.push(Arc::new(crate::mdns::MdnsSvc));
     #[cfg(feature = "nat64")]

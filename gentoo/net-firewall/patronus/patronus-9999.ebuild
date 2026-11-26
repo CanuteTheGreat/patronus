@@ -38,6 +38,7 @@ IUSE="
 	certificates acme certbot
 	ldap radius +totp +plugins
 	+segmentation wifi-ap +wifi-client +guest
+	+smart
 	+uci-import
 	geoip geoip2
 	+aliases +insight
@@ -104,6 +105,7 @@ RDEPEND="
 	ha? ( sys-cluster/keepalived net-firewall/conntrack-tools )
 	syslog? ( app-admin/rsyslog )
 	igmp? ( net-misc/igmpproxy )
+	smart? ( sys-apps/smartmontools )
 	mdns? ( net-dns/avahi )
 	net-analyzer/tcpdump
 	net-analyzer/traceroute
@@ -246,6 +248,7 @@ src_configure() {
 		$(usex syslog "syslog" "")
 		$(usex netflow "netflow" "")
 		$(usex igmp "igmp" "")
+		$(usex smart "smart" "")
 		$(usex mdns "mdns" "")
 		$(usex nat64 "nat64" "")
 		$(usex l2tp "l2tp" "")
@@ -394,6 +397,7 @@ src_install() {
 		use syslog && webfeatures+=( syslog )
 		use netflow && webfeatures+=( netflow )
 		use igmp && webfeatures+=( igmp )
+		use smart && webfeatures+=( smart )
 		use mdns && webfeatures+=( mdns )
 		use nat64 && webfeatures+=( nat64 )
 		use l2tp && webfeatures+=( l2tp )

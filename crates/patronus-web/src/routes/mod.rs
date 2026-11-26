@@ -51,6 +51,7 @@ pub fn build_router(
         .merge(api::qos::pages())
         .merge(api::insights::pages())
         .merge(api::packages::pages())
+        .merge(api::smart::pages())
         .merge(api::svc::pages())
         .merge(api::segmentation::pages())
         .merge(seg_time_pages())
@@ -418,6 +419,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "syslog",
         "netflow",
         "igmp",
+        "smart",
         "mdns",
         "nat64",
         "upnp",
@@ -487,6 +489,7 @@ pub fn absent_features(
         ("vlan", "VLANs"),
         ("netflow", "NetFlow export"),
         ("igmp", "IGMP proxy"),
+        ("smart", "S.M.A.R.T. disk health"),
         ("mdns", "mDNS repeater (device discovery across networks)"),
         ("nat64", "NAT64 / DNS64"),
         ("upnp", "UPnP / NAT-PMP"),
@@ -554,6 +557,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::insights::router())
         .merge(api::insight_history::router())
         .merge(api::packages::router())
+        .merge(api::smart::router())
         .merge(api::svc::router())
         .merge(api::segmentation::router())
         .merge(seg_time_router())

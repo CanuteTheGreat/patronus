@@ -861,6 +861,12 @@
                         </svg>
                         <span>Traffic insights</span>
                     </a>
+                    <a href="/smart" class="nav-item {% if page == "smart" %}active{% endif %}">
+                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2 3.6 3 8 3s8-1 8-3V7M4 7c0 2 3.6 3 8 3s8-1 8-3M4 7c0-2 3.6-3 8-3s8 1 8 3M4 12c0 2 3.6 3 8 3s8-1 8-3"></path>
+                        </svg>
+                        <span>Disk health</span>
+                    </a>
                     <a href="/segmentation/time" class="nav-item {% if page == "time-limits" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -1041,7 +1047,7 @@
         const have = new Set(d.features);
         const need = {'/vpn': ['wireguard', 'ipsec', 'openvpn', 'l2tp'], '/dhcp': ['dhcp'], '/dns': ['dns'], '/ntp': ['ntp'], '/ha': ['ha'], '/qos': ['qos'],
             '/segmentation': ['segmentation'], '/segmentation/time': ['segmentation'], '/segmentation/dns': ['dns'], '/packages': ['plugins'],
-            '/svc/syslog': ['syslog'], '/svc/netflow': ['netflow'], '/svc/igmp': ['igmp'], '/svc/mdns': ['mdns'], '/svc/nat64': ['nat64'], '/svc/l2tp': ['l2tp'],
+            '/svc/syslog': ['syslog'], '/svc/netflow': ['netflow'], '/svc/igmp': ['igmp'], '/smart': ['smart'], '/svc/smart': ['smart'], '/svc/mdns': ['mdns'], '/svc/nat64': ['nat64'], '/svc/l2tp': ['l2tp'],
             '/svc/ids': ['intrusion-detection'], '/svc/frr': ['dynamic-routing'], '/svc/guest': ['guest']};
         document.querySelectorAll('.sidebar-nav a.nav-item').forEach(a => {
             const f = need[a.getAttribute('href')];

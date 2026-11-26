@@ -1,0 +1,62 @@
+{
+  "json_format_version": [
+    1,
+    0
+  ],
+  "smartctl": {
+    "version": [
+      7,
+      3
+    ],
+    "exit_status": 0
+  },
+  "device": {
+    "name": "/dev/sdb",
+    "info_name": "/dev/sdb",
+    "type": "scsi",
+    "protocol": "SCSI"
+  },
+  "scsi_vendor": "CRAFTED",
+  "scsi_product": "SAS-DISK-1",
+  "scsi_model_name": "CRAFTED SAS-DISK-1",
+  "scsi_revision": "0001",
+  "scsi_version": "SPC-4",
+  "user_capacity": {
+    "blocks": 1172123568,
+    "bytes": 600127266816
+  },
+  "logical_block_size": 512,
+  "rotation_rate": 10000,
+  "serial_number": "CRAFTEDSAS0003",
+  "smart_support": {
+    "available": true,
+    "enabled": true
+  },
+  "smart_status": {
+    "passed": true
+  },
+  "temperature": {
+    "current": 34,
+    "drive_trip": 65
+  },
+  "power_on_time": {
+    "hours": 21000,
+    "minutes": 12
+  },
+  "scsi_grown_defect_list": 0,
+  "scsi_error_counter_log": {
+    "read": {
+      "errors_corrected_by_eccfast": 0,
+      "total_errors_corrected": 0,
+      "total_uncorrected_errors": 0
+    },
+    "write": {
+      "total_errors_corrected": 0,
+      "total_uncorrected_errors": 0
+    },
+    "verify": {
+      "total_errors_corrected": 0,
+      "total_uncorrected_errors": 0
+    }
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "json_format_version": [
+    1,
+    0
+  ],
+  "smartctl": {
+    "version": [
+      7,
+      3
+    ],
+    "svn_revision": "5338",
+    "platform_info": "x86_64-linux-6.1.0-56-amd64",
+    "build_info": "(local build)",
+    "argv": [
+      "smartctl",
+      "-a",
+      "--json",
+      "/dev/nvme0"
+    ],
+    "exit_status": 0
+  },
+  "local_time": {
+    "time_t": 1795661523,
+    "asctime": "Thu Nov 26 02:52:03 2026 UTC"
+  },
+  "device": {
+    "name": "/dev/nvme0",
+    "info_name": "/dev/nvme0",
+    "type": "nvme",
+    "protocol": "NVMe"
+  },
+  "model_name": "Crafted Worn NVMe",
+  "serial_number": "CRAFTEDNVME002",
+  "firmware_version": "8.2.2",
+  "nvme_pci_vendor": {
+    "id": 6966,
+    "subsystem_id": 6900
+  },
+  "nvme_ieee_oui_identifier": 5395456,
+  "nvme_controller_id": 0,
+  "nvme_version": {
+    "string": "1.4",
+    "value": 66560
+  },
+  "nvme_number_of_namespaces": 256,
+  "smart_support": {
+    "available": true,
+    "enabled": true
+  },
+  "smart_status": {
+    "passed": false,
+    "nvme": {
+      "value": 4
+    }
+  },
+  "nvme_smart_health_information_log": {
+    "critical_warning": 4,
+    "temperature": 45,
+    "available_spare": 8,
+    "available_spare_threshold": 10,
+    "percentage_used": 97,
+    "data_units_read": 1,
+    "data_units_written": 0,
+    "host_reads": 4,
+    "host_writes": 0,
+    "controller_busy_time": 0,
+    "power_cycles": 0,
+    "power_on_hours": 41000,
+    "unsafe_shutdowns": 300,
+    "media_errors": 12,
+    "num_err_log_entries": 0,
+    "warning_temp_time": 0,
+    "critical_comp_time": 0
+  },
+  "temperature": {
+    "current": 45
+  },
+  "power_cycle_count": 0,
+  "power_on_time": {
+    "hours": 0
+  }
+}

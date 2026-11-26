@@ -1,0 +1,32 @@
+{
+  "json_format_version": [
+    1,
+    0
+  ],
+  "smartctl": {
+    "version": [
+      7,
+      3
+    ],
+    "svn_revision": "5338",
+    "platform_info": "x86_64-linux-6.1.0-56-amd64",
+    "build_info": "(local build)",
+    "argv": [
+      "smartctl",
+      "-a",
+      "--json",
+      "/dev/vda"
+    ],
+    "messages": [
+      {
+        "string": "/dev/vda: Unable to detect device type",
+        "severity": "error"
+      }
+    ],
+    "exit_status": 1
+  },
+  "local_time": {
+    "time_t": 1795661523,
+    "asctime": "Thu Nov 26 02:52:03 2026 UTC"
+  }
+}
