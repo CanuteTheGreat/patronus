@@ -20,6 +20,7 @@ pub mod general;
 pub mod interfaces;
 pub mod lan;
 pub mod linkstate;
+pub mod multiwan;
 pub mod netconf;
 pub mod overlay;
 pub mod routes;
