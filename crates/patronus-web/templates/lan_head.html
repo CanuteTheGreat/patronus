@@ -5,7 +5,10 @@
     form.lan-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin: 8px 0; }
     /* a flex item never grows past the form: without min-width 0 a label took the intrinsic width of its textarea (cols) or input (size) and the page scrolled sideways on a phone */
     form.lan-form label { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-sm); color: var(--c-muted); min-width: 0; max-width: 100%; }
+    /* a checkbox sits in front of its label text on one line (stacked, it floated above its words in long forms) */
+    form.lan-form label:has(> input[type=checkbox]) { flex-direction: row; align-items: center; gap: 6px; align-self: center; }
     form.lan-form input, form.lan-form select { min-width: 120px; }
+    form.lan-form input[type=checkbox] { min-width: 0; }
     form.lan-form input, form.lan-form select, form.lan-form textarea { max-width: 100%; box-sizing: border-box; }
     .ok { color: var(--c-ok); font-weight: 600; }
     .bad { color: var(--c-crit); font-weight: 600; }
