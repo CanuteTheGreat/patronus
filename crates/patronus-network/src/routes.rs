@@ -171,6 +171,18 @@ pub struct Gateway {
     pub monitor_enabled: bool,
     pub loss_threshold: u32,
     pub latency_threshold: u32,
+    /// Packet loss (%) from which the gateway shows a warning but keeps
+    /// carrying traffic (0 = no warning level; below `loss_threshold`).
+    #[serde(default)]
+    pub loss_warn: u32,
+    /// Average round trip (ms) from which the gateway shows a warning
+    /// (0 = no warning level; below `latency_threshold`).
+    #[serde(default)]
+    pub latency_warn: u32,
+    /// DNS servers of this uplink: pinned to it, resolver upstreams while it
+    /// is usable.
+    #[serde(default)]
+    pub dns_servers: Vec<IpAddr>,
     /// Seconds a recovered gateway must stay healthy before it carries
     /// traffic again (0 = at once).
     pub failback_delay: u32,
@@ -232,6 +244,44 @@ impl Trigger {
     }
 }
 
+/// Which tracked connections a gateway group deletes (pfSense "kill states"):
+/// the flows that used a gateway when it leaves service, and with
+/// `DownRecovery` also the flows of the fallback members when a better one
+/// returns, so they move to it at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KillStates {
+    None,
+    #[default]
+    Down,
+    DownRecovery,
+}
+
+impl KillStates {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            KillStates::None => "none",
+            KillStates::Down => "down",
+            KillStates::DownRecovery => "down_recovery",
+        }
+    }
+    pub fn parse(s: &str) -> Result<Self> {
+        match s.trim() {
+            "" | "down" => Ok(KillStates::Down),
+            "none" => Ok(KillStates::None),
+            "down_recovery" => Ok(KillStates::DownRecovery),
+            o => Err(invalid(format!(
+                "kill states {o:?} (none, down or down_recovery)"
+            ))),
+        }
+    }
+}
+
+/// Longest sticky timeout (seconds): one week.
+pub const MAX_STICKY_SECS: u32 = 7 * 86_400;
+/// Most DNS servers one gateway may carry.
+pub const MAX_GATEWAY_DNS: usize = 4;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Member {
     pub gateway: String,
@@ -244,6 +294,12 @@ pub struct GatewayGroup {
     pub name: String,
     pub trigger: Trigger,
     pub members: Vec<Member>,
+    /// Seconds a client address keeps the member it was given (0 = off).
+    #[serde(default)]
+    pub sticky_secs: u32,
+    /// Which tracked connections are deleted when membership changes.
+    #[serde(default)]
+    pub kill_states: KillStates,
     pub description: Option<String>,
 }
 
@@ -323,7 +379,8 @@ pub async fn load(store: &ConfigStore) -> Result<RoutingConfig> {
     for r in sqlx::query(
         "SELECT name, interface, family, address, monitor_ip, monitor_enabled,
                 loss_threshold, latency_threshold, description, failback_delay, failback_ramp,
-                monitor_ips, monitor_reliability, monitor_interval, monitor_down, monitor_up
+                monitor_ips, monitor_reliability, monitor_interval, monitor_down, monitor_up,
+                loss_warn, latency_warn, dns_servers
          FROM route_gateways ORDER BY name",
     )
     .fetch_all(pool)
@@ -345,6 +402,9 @@ pub async fn load(store: &ConfigStore) -> Result<RoutingConfig> {
             monitor_enabled: r.get::<i64, _>(5) != 0,
             loss_threshold: r.get::<i64, _>(6).clamp(1, 100) as u32,
             latency_threshold: r.get::<i64, _>(7).max(1) as u32,
+            loss_warn: r.get::<i64, _>(16).clamp(0, 100) as u32,
+            latency_warn: r.get::<i64, _>(17).clamp(0, 60_000) as u32,
+            dns_servers: parse_ip_list("gateway DNS servers", r.get(18))?,
             failback_delay: r.get::<i64, _>(9).clamp(0, MAX_FAILBACK_SECS as i64) as u32,
             failback_ramp: r.get::<i64, _>(10).clamp(0, MAX_FAILBACK_SECS as i64) as u32,
             description: r.get(8),
@@ -352,7 +412,10 @@ pub async fn load(store: &ConfigStore) -> Result<RoutingConfig> {
         });
     }
     for r in
-        sqlx::query("SELECT name, trigger, description FROM route_gateway_groups ORDER BY name")
+        sqlx::query(
+            "SELECT name, trigger, description, sticky_secs, kill_states \
+             FROM route_gateway_groups ORDER BY name",
+        )
             .fetch_all(pool)
             .await
             .map_err(db_err("read gateway groups"))?
@@ -377,6 +440,9 @@ pub async fn load(store: &ConfigStore) -> Result<RoutingConfig> {
             trigger: Trigger::parse(&r.get::<String, _>(1))
                 .map_err(|e| Error::Config(format!("gateway group {name}: {e}")))?,
             description: r.get(2),
+            sticky_secs: r.get::<i64, _>(3).clamp(0, MAX_STICKY_SECS as i64) as u32,
+            kill_states: KillStates::parse(&r.get::<String, _>(4))
+                .map_err(|e| Error::Config(format!("gateway group {name}: {e}")))?,
             members,
             name,
         });
@@ -496,6 +562,15 @@ pub struct GatewayInput {
     pub failback_delay: Option<u32>,
     #[serde(default)]
     pub failback_ramp: Option<u32>,
+    /// Warning level: packet loss in % (0 = none).
+    #[serde(default)]
+    pub loss_warn: Option<u32>,
+    /// Warning level: round trip in ms (0 = none).
+    #[serde(default)]
+    pub latency_warn: Option<u32>,
+    /// DNS servers of this uplink (comma/space separated addresses).
+    #[serde(default)]
+    pub dns_servers: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
 }
@@ -577,6 +652,45 @@ impl GatewayInput {
         if !(1..=60_000).contains(&latency_threshold) {
             return Err(invalid("latency threshold (1-60000 ms)"));
         }
+        let loss_warn = self.loss_warn.unwrap_or(0);
+        if loss_warn >= loss_threshold && loss_warn != 0 {
+            return Err(invalid(format!(
+                "loss warning {loss_warn} % (0 = off, below the down threshold of {loss_threshold} %)"
+            )));
+        }
+        let latency_warn = self.latency_warn.unwrap_or(0);
+        if latency_warn != 0 && latency_warn >= latency_threshold {
+            return Err(invalid(format!(
+                "latency warning {latency_warn} ms (0 = off, below the down threshold of {latency_threshold} ms)"
+            )));
+        }
+        let mut dns_servers: Vec<IpAddr> = Vec::new();
+        for t in self
+            .dns_servers
+            .as_deref()
+            .unwrap_or("")
+            .split([',', ' ', '\n'])
+            .filter(|t| !t.trim().is_empty())
+        {
+            let ip = opt_ip("DNS server", Some(t.trim()))?.unwrap_or(IpAddr::from([0, 0, 0, 0]));
+            if Family::of(&ip) != family {
+                return Err(invalid(format!(
+                    "DNS server {ip}: not an {} address (a gateway's DNS servers use its family)",
+                    if family.v6() { "IPv6" } else { "IPv4" }
+                )));
+            }
+            if ip.is_unspecified() || ip.is_multicast() || ip.is_loopback() {
+                return Err(invalid(format!("DNS server {ip}")));
+            }
+            if !dns_servers.contains(&ip) {
+                dns_servers.push(ip);
+            }
+        }
+        if dns_servers.len() > MAX_GATEWAY_DNS {
+            return Err(invalid(format!(
+                "DNS servers (at most {MAX_GATEWAY_DNS} per gateway)"
+            )));
+        }
         let failback_delay = self.failback_delay.unwrap_or(0);
         if failback_delay > MAX_FAILBACK_SECS {
             return Err(invalid(format!(
@@ -603,6 +717,9 @@ impl GatewayInput {
             monitor_enabled: self.monitor_enabled.unwrap_or(true),
             loss_threshold,
             latency_threshold,
+            loss_warn,
+            latency_warn,
+            dns_servers,
             failback_delay,
             failback_ramp,
             description: check_description(self.description.as_deref())?,
@@ -674,8 +791,8 @@ pub async fn save_gateway(store: &ConfigStore, existing: Option<&str>, g: &Gatew
         "INSERT INTO route_gateways (name, interface, family, address, monitor_ip,
             monitor_enabled, loss_threshold, latency_threshold, description, updated_at,
             failback_delay, failback_ramp, monitor_ips, monitor_reliability, monitor_interval,
-            monitor_down, monitor_up)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            monitor_down, monitor_up, loss_warn, latency_warn, dns_servers)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET interface = excluded.interface,
             family = excluded.family, address = excluded.address,
             monitor_ip = excluded.monitor_ip, monitor_enabled = excluded.monitor_enabled,
@@ -686,7 +803,9 @@ pub async fn save_gateway(store: &ConfigStore, existing: Option<&str>, g: &Gatew
             failback_ramp = excluded.failback_ramp, monitor_ips = excluded.monitor_ips,
             monitor_reliability = excluded.monitor_reliability,
             monitor_interval = excluded.monitor_interval,
-            monitor_down = excluded.monitor_down, monitor_up = excluded.monitor_up",
+            monitor_down = excluded.monitor_down, monitor_up = excluded.monitor_up,
+            loss_warn = excluded.loss_warn, latency_warn = excluded.latency_warn,
+            dns_servers = excluded.dns_servers",
     )
     .bind(&g.name)
     .bind(&g.interface)
@@ -711,6 +830,15 @@ pub async fn save_gateway(store: &ConfigStore, existing: Option<&str>, g: &Gatew
     .bind(g.monitor_interval as i64)
     .bind(g.monitor_down as i64)
     .bind(g.monitor_up as i64)
+    .bind(g.loss_warn as i64)
+    .bind(g.latency_warn as i64)
+    .bind(
+        g.dns_servers
+            .iter()
+            .map(|a| a.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+    )
     .execute(pool)
     .await
     .map_err(db_err("write gateway"))?;
@@ -782,6 +910,12 @@ pub struct GroupInput {
     #[serde(default)]
     pub trigger: Option<String>,
     pub members: MembersInput,
+    /// Sticky connections: seconds a client keeps its WAN (0 = off).
+    #[serde(default)]
+    pub sticky_secs: Option<u32>,
+    /// none | down | down_recovery (default down).
+    #[serde(default)]
+    pub kill_states: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
 }
@@ -840,9 +974,17 @@ impl GroupInput {
                 weight: m.weight,
             });
         }
+        let sticky_secs = self.sticky_secs.unwrap_or(0);
+        if sticky_secs > MAX_STICKY_SECS {
+            return Err(invalid(format!(
+                "sticky timeout (0 = off, at most {MAX_STICKY_SECS} seconds)"
+            )));
+        }
         Ok(GatewayGroup {
             name: check_name("gateway group", &self.name)?,
             trigger: Trigger::parse(self.trigger.as_deref().unwrap_or(""))?,
+            sticky_secs,
+            kill_states: KillStates::parse(self.kill_states.as_deref().unwrap_or(""))?,
             members,
             description: check_description(self.description.as_deref())?,
         })
@@ -912,15 +1054,19 @@ pub async fn save_group(
     }
     let mut tx = store.pool()?.begin().await.map_err(db_err("begin"))?;
     sqlx::query(
-        "INSERT INTO route_gateway_groups (name, trigger, description, updated_at)
-         VALUES (?, ?, ?, ?)
+        "INSERT INTO route_gateway_groups (name, trigger, description, updated_at,
+            sticky_secs, kill_states)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET trigger = excluded.trigger,
-            description = excluded.description, updated_at = excluded.updated_at",
+            description = excluded.description, updated_at = excluded.updated_at,
+            sticky_secs = excluded.sticky_secs, kill_states = excluded.kill_states",
     )
     .bind(&g.name)
     .bind(g.trigger.as_str())
     .bind(&g.description)
     .bind(now())
+    .bind(g.sticky_secs as i64)
+    .bind(g.kill_states.as_str())
     .execute(&mut *tx)
     .await
     .map_err(db_err("write gateway group"))?;
@@ -1396,6 +1542,21 @@ pub struct GwStatus {
     /// Latest results of the gateway's extra probes (tcp/http/dns).
     #[serde(default)]
     pub probes: Vec<ProbeResult>,
+    /// `loss` or `latency` while the gateway is above its warning level but
+    /// still carries traffic.
+    #[serde(default)]
+    pub warning: Option<String>,
+    /// The last time connections of this gateway were deleted (kill states).
+    #[serde(default)]
+    pub killed: Option<KillInfo>,
+}
+
+/// One kill-states action: when, how many tracked connections went, why.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KillInfo {
+    pub at: i64,
+    pub count: u32,
+    pub why: String,
 }
 
 /// Whether a member in `state` carries traffic for a group with `trigger`.
@@ -1817,6 +1978,8 @@ pub struct Desired {
     pub warnings: Vec<String>,
     /// Per family: what the default route is via (for status / UI).
     pub default_hops: BTreeMap<String, Vec<String>>,
+    /// Sticky load-balancing groups (see [`crate::multiwan`]).
+    pub sticky: Vec<crate::multiwan::StickyGroup>,
 }
 
 fn hop_for(name: &str, res: &Resolved, weight: u32) -> Option<Hop> {
@@ -2054,6 +2217,41 @@ pub fn desired(
                 hops,
             });
         }
+        // sticky connections: a client keeps the member it was given
+        let skip_ifaces: Vec<String> = cfg
+            .gateways
+            .iter()
+            .filter_map(|g| resolved.get(&g.name).filter(|r| r.routable()))
+            .filter_map(|r| r.dev.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        for g in cfg.groups.iter().filter(|g| g.sticky_secs > 0) {
+            let (Some(&mark), Some(fam)) = (cfg.marks.get(&g.name), group_family(cfg, g)) else {
+                continue;
+            };
+            let members: Vec<(u32, u32)> = select_weighted(g, resolved, status, now())
+                .into_iter()
+                .filter(|(m, _)| {
+                    resolved
+                        .get(&m.gateway)
+                        .is_some_and(|r| hop_for(&m.gateway, r, 1).is_some())
+                })
+                .filter_map(|(m, w)| cfg.marks.get(&m.gateway).map(|&gm| (gm, w)))
+                .collect();
+            if members.is_empty() {
+                continue;
+            }
+            d.sticky.push(crate::multiwan::StickyGroup {
+                group: g.name.clone(),
+                mark,
+                is_default: cfg.default_for(fam) == Some(g.name.as_str()),
+                v6: fam.v6(),
+                secs: g.sticky_secs,
+                members,
+                skip_ifaces: skip_ifaces.clone(),
+            });
+        }
     }
     // monitor host routes: probes for a monitor IP leave via that gateway
     for g in &cfg.gateways {
@@ -2121,6 +2319,41 @@ pub fn desired(
                 weight: 1,
             }],
         });
+    }
+    // DNS servers of a gateway leave through that gateway, like a monitor IP
+    for g in &cfg.gateways {
+        let Some(r) = resolved.get(&g.name).filter(|r| r.routable()) else {
+            continue;
+        };
+        for ip in &g.dns_servers {
+            if Some(*ip) == r.address || ip.is_ipv6() != g.family.v6() {
+                continue;
+            }
+            match pinned.get(ip) {
+                Some(other) if other == &g.name => continue,
+                Some(other) => {
+                    d.warnings.push(format!(
+                        "DNS server {ip} of gateway {} is already pinned to {other}: it is only reachable through {other}",
+                        g.name
+                    ));
+                    continue;
+                }
+                None => {}
+            }
+            pinned.insert(*ip, g.name.clone());
+            d.routes.push(KRoute {
+                v6: g.family.v6(),
+                dst: host_net(ip),
+                metric: 0,
+                proto: MONITOR_PROTO.into(),
+                table: MAIN_TABLE,
+                hops: vec![Hop {
+                    via: r.address.map(|a| a.to_string()),
+                    dev: r.dev.clone(),
+                    weight: 1,
+                }],
+            });
+        }
     }
     // static routes
     for r in cfg.routes.iter().filter(|r| r.enabled) {
@@ -2368,6 +2601,8 @@ pub fn rule_ops(want: &[KRule], have: &[KRule]) -> Vec<Vec<String>> {
 /// The routes phase.
 pub struct RoutesApplier {
     cmd: Arc<dyn Cmd>,
+    /// Runs `nft` for the sticky-connection table.
+    nft: Arc<dyn Cmd>,
     proc_sys: PathBuf,
     status_override: Option<BTreeMap<String, GwStatus>>,
     lock: tokio::sync::Mutex<()>,
@@ -2406,6 +2641,7 @@ impl RoutesApplier {
     pub fn new(cmd: Arc<dyn Cmd>, proc_sys: PathBuf) -> Self {
         Self {
             cmd,
+            nft: Arc::new(SystemCmd),
             proc_sys,
             status_override: None,
             lock: tokio::sync::Mutex::new(()),
@@ -2467,6 +2703,12 @@ impl RoutesApplier {
                 }
             }
         }
+    }
+
+    /// Run `nft` through `nft` instead of the system (tests).
+    pub fn with_nft(mut self, nft: Arc<dyn Cmd>) -> Self {
+        self.nft = nft;
+        self
     }
 
     /// Fixed monitor results (tests).
@@ -2702,6 +2944,17 @@ impl Applier for RoutesApplier {
             }
         }
         self.multipath_hashing(&d, &mut rep);
+        if MULTIWAN {
+            match crate::multiwan::apply_sticky(
+                self.nft.as_ref(),
+                &d.sticky,
+                &crate::supervise::NetPaths::default().run_dir,
+            )
+            .await {
+                Ok(v) => v.into_iter().for_each(|l| rep.applied(l)),
+                Err(e) => rep.warn(format!("sticky connections: {e}")),
+            }
+        }
         if rep.applied.is_empty() && failed.is_empty() {
             rep.applied(format!("routes up to date ({} managed)", d.routes.len()));
         }
@@ -2730,6 +2983,13 @@ impl Applier for RoutesApplier {
         }
         for op in rule_ops(&wanted_rules(&d), &[]) {
             out.push_str(&format!("ip {}\n", op.join(" ")));
+        }
+        if !d.sticky.is_empty() {
+            out.push_str(&crate::multiwan::render_nft(
+                &d.sticky,
+                &[],
+                &Default::default(),
+            ));
         }
         for w in &d.warnings {
             out.push_str(&format!("# warning: {w}\n"));
@@ -2769,6 +3029,11 @@ impl Applier for RoutesApplier {
                     "monitor_enabled": g.monitor_enabled,
                     "loss_threshold": g.loss_threshold,
                     "latency_threshold": g.latency_threshold,
+                    "loss_warn": g.loss_warn,
+                    "latency_warn": g.latency_warn,
+                    "dns_servers": g.dns_servers.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+                    "warning": s.and_then(|s| s.warning.clone()),
+                    "killed": s.and_then(|s| s.killed.clone()),
                     "failback_delay": g.failback_delay,
                     "failback_ramp": g.failback_ramp,
                     "ramp_pct": ramp_pct(s, now()),
@@ -2798,6 +3063,8 @@ impl Applier for RoutesApplier {
                 json!({
                     "name": g.name,
                     "trigger": g.trigger.as_str(),
+                    "sticky_secs": g.sticky_secs,
+                    "kill_states": g.kill_states.as_str(),
                     "description": g.description,
                     "members": g.members.iter().map(|m| {
                         let state = resolved.get(&m.gateway).map(|r| effective(&m.gateway, r, &st));
@@ -2854,6 +3121,8 @@ impl Applier for RoutesApplier {
         let g = GroupInput {
             name: config.metadata.name.clone(),
             trigger: None,
+            sticky_secs: None,
+            kill_states: None,
             members: MembersInput::List(
                 spec.members
                     .iter()
@@ -3011,6 +3280,25 @@ pub struct Monitor {
     renewer: Arc<dyn DhcpRenewer>,
     /// Per device: when its DHCP client was last asked for a renew.
     renewed: BTreeMap<String, i64>,
+    /// Deletes tracked connections (kill states): off unless
+    /// [`Monitor::with_killer`].
+    killer: Arc<dyn crate::multiwan::Killer>,
+    /// Per gateway: its interface's addresses when it last had any (the
+    /// connections to delete are found by them, also after the link dropped).
+    gw_addrs: BTreeMap<String, Vec<IpAddr>>,
+    /// Re-applied when the gateways whose DNS servers count change.
+    dns_hook: Option<Arc<dyn Applier>>,
+    last_dns: Option<Vec<IpAddr>>,
+}
+
+/// Kill states off (the default of [`Monitor::new`]; tests).
+pub struct NoKiller;
+
+#[async_trait]
+impl crate::multiwan::Killer for NoKiller {
+    async fn kill_reply_dst(&self, _addr: IpAddr) -> u32 {
+        0
+    }
 }
 
 impl Monitor {
@@ -3030,12 +3318,31 @@ impl Monitor {
             ticks: 0,
             renewer: Arc::new(NoRenewer),
             renewed: BTreeMap::new(),
+            killer: Arc::new(NoKiller),
+            gw_addrs: BTreeMap::new(),
+            dns_hook: None,
+            last_dns: None,
         }
+    }
+
+    /// Delete tracked connections through `k` when a group's kill-states
+    /// setting asks for it.
+    pub fn with_killer(mut self, k: Arc<dyn crate::multiwan::Killer>) -> Self {
+        self.killer = k;
+        self
+    }
+
+    /// Re-apply `a` (the DNS applier) when the set of usable gateway DNS
+    /// servers changes.
+    pub fn with_dns_hook(mut self, a: Arc<dyn Applier>) -> Self {
+        self.dns_hook = Some(a);
+        self
     }
 
     /// The real monitor (ping + ip + the extra probes + DHCP renew requests).
     pub fn system(applier: Arc<dyn Applier>) -> Self {
         Self::new(applier, Arc::new(SystemCmd), Arc::new(PingProber))
+            .with_killer(Arc::new(crate::multiwan::SystemKiller))
             .with_extra(Arc::new(SysExtraProber))
             .with_renewer(Arc::new(SystemRenewer))
     }
@@ -3362,12 +3669,29 @@ impl Monitor {
                     recovered_at,
                     ramp_secs: g.failback_ramp,
                     probes: gw_extra,
+                    warning: crate::multiwan::warning_of(g, state, loss, rtt),
+                    killed: self.states.get(&g.name).and_then(|p| p.killed.clone()),
                 },
             );
         }
         self.windows.retain(|n, _| next.contains_key(n));
         self.last_round.retain(|n, _| next.contains_key(n));
         self.failback.retain(|n, _| next.contains_key(n));
+        // addresses to find a gateway's connections by (kept while it is down)
+        for g in &cfg.gateways {
+            if let Some(dev) = resolved.get(&g.name).and_then(|r| r.dev.as_deref()) {
+                let a = crate::multiwan::dev_addrs(&k, dev, g.family);
+                if !a.is_empty() {
+                    self.gw_addrs.insert(g.name.clone(), a);
+                }
+            }
+        }
+        self.gw_addrs.retain(|n, _| next.contains_key(n));
+        let kills = if MULTIWAN {
+            crate::multiwan::plan_kills(&cfg, &self.states, &next)
+        } else {
+            Vec::new()
+        };
         self.states = next;
         publish(&self.states);
         let t_sig = now();
@@ -3387,6 +3711,7 @@ impl Monitor {
                 .collect::<Vec<_>>()
         );
         // re-apply on any change, and every 30 ticks to heal drift
+        let mut applied = false;
         if self.last_sig.as_deref() != Some(&sig) || self.ticks.is_multiple_of(30) {
             self.last_sig = Some(sig);
             match self.applier.apply(store).await {
@@ -3397,9 +3722,39 @@ impl Monitor {
                 }
                 Err(e) => tracing::warn!("gateway monitor: applying routes: {e}"),
             }
-            return Ok(true);
+            applied = true;
         }
-        Ok(false)
+        // kill states: after the routes moved, so the next packet of a
+        // deleted connection is routed (and masqueraded) by the new path
+        for o in kills {
+            let mut n = 0;
+            for a in self.gw_addrs.get(&o.gateway).cloned().unwrap_or_default() {
+                n += self.killer.kill_reply_dst(a).await;
+            }
+            tracing::info!("gateway monitor: {} ({n} connections deleted)", o.why);
+            if let Some(s) = self.states.get_mut(&o.gateway) {
+                s.killed = Some(KillInfo {
+                    at: now(),
+                    count: n,
+                    why: o.why,
+                });
+            }
+            publish(&self.states);
+        }
+        // DNS servers of gateways that carry traffic are resolver upstreams
+        if let Some(hook) = self.dns_hook.clone() {
+            let dns = crate::multiwan::usable_dns_servers(&cfg, &self.states);
+            let all = crate::multiwan::usable_dns_servers(&cfg, &BTreeMap::new());
+            let before = self.last_dns.clone().unwrap_or(all);
+            if dns != before {
+                match hook.apply(store).await {
+                    Ok(_) => tracing::info!("gateway monitor: resolver upstreams now {dns:?}"),
+                    Err(e) => tracing::warn!("gateway monitor: applying DNS: {e}"),
+                }
+            }
+            self.last_dns = Some(dns);
+        }
+        Ok(applied)
     }
 
     /// Run forever, one tick a second.

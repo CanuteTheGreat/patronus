@@ -29,6 +29,29 @@ pub struct DashboardTemplate {
     pub iface_rows: Vec<DashIface>,
     /// Live throughput per non-loopback interface (rate over a short sample window).
     pub traffic: Vec<DashTraffic>,
+    /// Gateways with their state (multi-WAN tile); empty = none configured (tile hidden).
+    pub uplinks: Vec<DashUplink>,
+    /// The latest gateway events, newest first.
+    pub uplink_events: Vec<DashUplinkEvent>,
+}
+
+/// One row of the dashboard's Uplinks tile.
+#[derive(Debug, Clone)]
+pub struct DashUplink {
+    pub name: String,
+    pub state: String,
+    /// `ok`, `warn` or `bad`.
+    pub class: &'static str,
+    pub warning: String,
+    pub detail: String,
+}
+
+/// One gateway event on the dashboard (time as `HH:MM`, UTC).
+#[derive(Debug, Clone)]
+pub struct DashUplinkEvent {
+    pub when: String,
+    pub severity: String,
+    pub text: String,
 }
 
 /// One row of the dashboard's Traffic tile.
