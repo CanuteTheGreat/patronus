@@ -39,24 +39,26 @@ ISP_V6_NET, PD_POOL, PD_POOL_LEN, PD_LEN = "2001:db8:ffff::", "2001:db8:1000::",
 PD_POOL_PREFIX = "2001:db8:10"        # every delegated /56 starts with it, and so does the LAN's /64 out of it
 PPP_USER, PPP_SECRET = "wizard-user", "wizard-s3cret"
 ALPINE_REPO = "https://dl-cdn.alpinelinux.org/alpine/v3.24/main"
-ISP_SETUP = (f"udhcpc -i eth0 -q -n -t 10 >/dev/null 2>&1; echo {ALPINE_REPO} > /etc/apk/repositories && apk update -q && "
-             "apk add -q radvd kea-dhcp6 rp-pppoe ppp-daemon ppp-pppoe >/dev/null && modprobe pppoe; modprobe ppp_generic; "
-             f"ip link set eth1 up && ip addr add {ISP_V4}/24 dev eth1 && ip -6 addr add {ISP_V6_NET}1/64 dev eth1 nodad && "
+# the live Alpine image starts with every NIC down and no pppoe kernel module (modloop of linux-virt): bring eth0 up for DHCP, and run the
+# access concentrator in user mode (no -k); the firewall's side is the real kernel PPPoE client
+ISP_SETUP = (f"ip link set eth0 up && timeout 60 udhcpc -i eth0 -q -n -t 10 >/dev/null 2>&1 && echo {ALPINE_REPO} > /etc/apk/repositories && "
+             "timeout 180 apk update -q && timeout 300 apk add -q radvd kea-dhcp6 rp-pppoe ppp-daemon ppp-pppoe >/dev/null && modprobe ppp_generic; "
+             f"sysctl -qw net.ipv6.conf.eth1.accept_dad=0 && ip link set eth1 up && ip addr add {ISP_V4}/24 dev eth1 && ip -6 addr add {ISP_V6_NET}1/64 dev eth1 && "
              "sysctl -qw net.ipv6.conf.all.forwarding=1 net.ipv4.ip_forward=1")
 _RADVD = ("interface eth1 { AdvSendAdvert on; AdvManagedFlag on; AdvOtherConfigFlag on; MinRtrAdvInterval 3; MaxRtrAdvInterval 6; "
           f"prefix {ISP_V6_NET}/64 {{ AdvOnLink on; AdvAutonomous off; }}; }};")
 _KEA = ('{"Dhcp6": {"interfaces-config": {"interfaces": ["eth1"]}, "lease-database": {"type": "memfile", "persist": false}, '
         '"valid-lifetime": 1200, "preferred-lifetime": 600, "loggers": [{"name": "kea-dhcp6", "severity": "INFO", '
-        '"output_options": [{"output": "/tmp/kea6.log"}]}], "subnet6": [{"id": 1, "subnet": "%s/64", "interface": "eth1", '
+        '"output_options": [{"output": "/var/log/kea/kea6.log"}]}], "subnet6": [{"id": 1, "subnet": "%s/64", "interface": "eth1", '
         '"pools": [{"pool": "%s100-%s200"}], "pd-pools": [{"prefix": "%s", "prefix-len": %d, "delegated-len": %d}]}]}}'
         % (ISP_V6_NET, ISP_V6_NET, ISP_V6_NET, PD_POOL, PD_POOL_LEN, PD_LEN))
 ISP_V6_START = (f"printf '%s\\n' '{_RADVD}' > /tmp/radvd.conf && printf '%s\\n' '{_KEA}' > /tmp/kea6.json && "
-                "mkdir -p /run/kea /var/lib/kea && radvd -C /tmp/radvd.conf -p /tmp/radvd.pid && "
+                "mkdir -p /run/kea /var/lib/kea /var/log/kea && radvd -C /tmp/radvd.conf -p /tmp/radvd.pid && "
                 "(kea-dhcp6 -c /tmp/kea6.json > /tmp/kea6.out 2>&1 &) && sleep 2 && pgrep kea-dhcp6 >/dev/null")
 ISP_V6_STOP = "kill $(cat /tmp/radvd.pid) 2>/dev/null; pkill kea-dhcp6; ip -6 route flush proto static 2>/dev/null; true"
 ISP_PPPOE_START = (f"printf 'require-pap\\nlcp-echo-interval 10\\nlcp-echo-failure 3\\nms-dns {ISP_V4}\\n' > /etc/ppp/pppoe-server-options && "
                    f"printf '\"{PPP_USER}\" * \"{PPP_SECRET}\" *\\n' > /etc/ppp/pap-secrets && chmod 600 /etc/ppp/pap-secrets && "
-                   "pppoe-server -k -I eth1 -L 100.64.0.1 -R 100.64.0.10 -N 4 && sleep 1 && pgrep pppoe-server >/dev/null")
+                   "pppoe-server -I eth1 -L 100.64.0.1 -R 100.64.0.10 -N 4 && sleep 1 && pgrep pppoe-server >/dev/null")
 ISP_PPPOE_STOP = "pkill pppoe-server; pkill pppd; true"
 
 # runs inside the guest: log in once (cookie jar), then METHOD PATH [JSON] -> "HTTP <code>\n<body>"
@@ -259,9 +261,9 @@ def define(args):
             m.check("lan-tracks-the-delegated-prefix", True, got[:200])
         except Exception:
             print("### fw: " + fw.execute(f"ip -6 addr; ip -6 route; ls /var/lib/patronus/net/dhcp/ 2>&1; cat /var/lib/patronus/net/dhcp/dhcpcd-{isp_if}.conf 2>&1", 60)[1][-2500:], flush=True)
-            print("### isp: " + isp.execute("cat /tmp/kea6.log | tail -30; ip -6 route", 60)[1][-2000:], flush=True)
+            print("### isp: " + isp.execute("cat /var/log/kea/kea6.log | tail -30; ip -6 route", 60)[1][-2000:], flush=True)
             m.check("lan-tracks-the-delegated-prefix", False, "no delegated prefix address on the LAN port after 180 s")
-        leases = isp.execute("cat /tmp/kea6.log | grep -ci 'IA_PD\\|prefix' ")[1].strip()
+        leases = isp.execute("cat /var/log/kea/kea6.log | grep -ci 'IA_PD\\|prefix' ")[1].strip()
         m.check("isp-delegated-a-prefix", leases not in ("", "0"), f"kea log lines about PD: {leases}")
         isp.succeed(ISP_V6_STOP, timeout=60)
 
