@@ -32,6 +32,7 @@
 		<flag name="uci-import">patronus import-uci: one-step migration from an OpenWrt router configuration (sysupgrade backup or the running router over ssh)</flag>
 		<flag name="wifi-client">Wi-Fi client (station) uplink: use a wireless network as WAN or backup WAN through wpa_supplicant</flag>
 		<flag name="mdns">mDNS repeater: Bonjour/AirPlay/printer discovery across LAN segments (avahi-daemon reflector)</flag>
+		<flag name="tailscale">Tailscale / Headscale mesh VPN client (net-vpn/tailscale): join a tailnet, advertise routes or an exit node, firewalled interface</flag>
 		<flag name="nat64">NAT64 / DNS64 for IPv6-only clients (tayga + Unbound)</flag>
 		<flag name="l2tp">L2TP server with PPP users (xl2tpd)</flag>
 		<flag name="sdwan">SD-WAN edge agent: join a Patronus SD-WAN overlay (WireGuard mesh, endpoint failover, path reporting)</flag>
