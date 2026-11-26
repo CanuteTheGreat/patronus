@@ -8,6 +8,8 @@ use std::path::PathBuf;
 #[cfg(feature = "captive-portal")]
 use sqlx::Row;
 
+// Without the feature `run` only bails, so the fields are never read there.
+#[cfg_attr(not(feature = "captive-portal"), allow(dead_code))]
 pub enum Action {
     Sessions { all: bool },
     Disconnect { id: i64 },
