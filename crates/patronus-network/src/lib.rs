@@ -111,10 +111,10 @@ pub mod netflow;
 pub mod igmp;
 #[cfg(feature = "mdns")]
 pub mod mdns;
-#[cfg(feature = "udp-relay")]
-pub mod udprelay;
 #[cfg(feature = "tailscale")]
 pub mod tailscale;
+#[cfg(feature = "udp-relay")]
+pub mod udprelay;
 
 #[cfg(feature = "nat64")]
 pub mod nat64;
