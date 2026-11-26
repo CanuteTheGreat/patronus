@@ -571,14 +571,24 @@ mod tests {
         s.set_interface_role("eth0", Some("wan")).await.unwrap();
         s.set_interface_role("eth1", Some("lan")).await.unwrap();
         put(&s, "ups.enabled", "1").await;
-        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default(), "standalone");
+        assert_eq!(
+            svc_rules(&s).await.unwrap(),
+            VpnRules::default(),
+            "standalone"
+        );
         put(&s, "ups.mode", "netserver").await;
         let f = svc_rules(&s).await.unwrap().filter.join("\n");
-        assert!(f.contains("input iifname \"eth1\" tcp dport 3493 accept"), "{f}");
+        assert!(
+            f.contains("input iifname \"eth1\" tcp dport 3493 accept"),
+            "{f}"
+        );
         assert!(!f.contains("eth0"), "{f}");
         put(&s, "ups.listen_port", "3500").await;
         let f = svc_rules(&s).await.unwrap().filter.join("\n");
-        assert!(f.contains("tcp dport 3500 accept") && !f.contains("3493"), "{f}");
+        assert!(
+            f.contains("tcp dport 3500 accept") && !f.contains("3493"),
+            "{f}"
+        );
         put(&s, "ups.enabled", "0").await;
         assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default(), "off");
     }

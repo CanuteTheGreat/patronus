@@ -30,7 +30,7 @@ pub mod status;
 pub mod svc;
 pub mod system;
 pub mod telemetry;
+pub mod ups;
 pub mod vpn;
 pub mod wifi;
-pub mod ups;
 pub mod wifi_uplink;

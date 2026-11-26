@@ -347,7 +347,10 @@ pub fn poweroff_request() -> Result<Vec<String>> {
     if st.success() {
         Ok(argv)
     } else {
-        Err(Error::Service(format!("{} exited with {st}", argv.join(" "))))
+        Err(Error::Service(format!(
+            "{} exited with {st}",
+            argv.join(" ")
+        )))
     }
 }
 

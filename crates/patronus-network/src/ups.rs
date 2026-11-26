@@ -116,7 +116,8 @@ pub const DEFAULT_SHUTDOWN: &str = "/usr/bin/patronus poweroff-request";
 static SPEC: Spec = Spec {
     slug: "ups",
     title: "UPS (NUT)",
-    blurb: "Watch an uninterruptible power supply with NUT: charge, runtime and load, events when the \
+    blurb:
+        "Watch an uninterruptible power supply with NUT: charge, runtime and load, events when the \
             power fails and returns, and a clean shutdown before the battery runs out. The UPS can \
             be shared with other hosts on the LAN.",
     applier: "ups",
@@ -232,17 +233,9 @@ impl Cfg {
     /// remote server in netclient mode.
     pub fn target(&self) -> (String, u16, String) {
         if self.mode == "netclient" {
-            (
-                self.server.clone(),
-                self.server_port,
-                self.ups_name.clone(),
-            )
+            (self.server.clone(), self.server_port, self.ups_name.clone())
         } else {
-            (
-                "127.0.0.1".into(),
-                self.listen_port,
-                self.ups_name.clone(),
-            )
+            ("127.0.0.1".into(), self.listen_port, self.ups_name.clone())
         }
     }
 
@@ -337,7 +330,10 @@ pub fn ups_conf(c: &Cfg) -> String {
     s.push_str("\tdesc = \"Patronus UPS\"\n");
     if c.policy == "charge_below" && c.driver == "usbhid-ups" {
         s.push_str("\tignorelb\n");
-        s.push_str(&format!("\toverride.battery.charge.low = {}\n", c.charge_pct));
+        s.push_str(&format!(
+            "\toverride.battery.charge.low = {}\n",
+            c.charge_pct
+        ));
         s.push_str("\toverride.battery.runtime.low = 0\n");
     }
     s
@@ -414,7 +410,10 @@ pub fn upsmon_conf(c: &Cfg, dirs: &Dirs, upssched: Option<&Path>, mask: bool) ->
     ));
     s.push_str("MINSUPPLIES 1\n");
     s.push_str(&format!("SHUTDOWNCMD {}\n", quote(&c.shutdown_command)));
-    s.push_str(&format!("POLLFREQ {}\nPOLLFREQALERT {}\n", c.poll_secs, c.poll_secs));
+    s.push_str(&format!(
+        "POLLFREQ {}\nPOLLFREQALERT {}\n",
+        c.poll_secs, c.poll_secs
+    ));
     s.push_str("HOSTSYNC 15\nDEADTIME 15\nFINALDELAY 5\n");
     s.push_str(&format!(
         "POWERDOWNFLAG {}\n",
@@ -861,7 +860,11 @@ impl Applier for UpsApplier {
         rep.applied(format!(
             "UPS monitoring ({} mode, {}): {}{}",
             c.mode,
-            if c.local_ups() { &c.driver } else { "remote UPS" },
+            if c.local_ups() {
+                &c.driver
+            } else {
+                "remote UPS"
+            },
             if started.is_empty() {
                 "running, unchanged".to_string()
             } else {

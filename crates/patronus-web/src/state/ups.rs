@@ -88,7 +88,10 @@ pub fn events_for(prev: &mut Look, name: &str, outcome: &Outcome, now: i64) -> V
                         "ups_low_battery",
                         "critical",
                         name,
-                        format!("on battery and the battery is low ({}); shutdown follows", describe(s)),
+                        format!(
+                            "on battery and the battery is low ({}); shutdown follows",
+                            describe(s)
+                        ),
                         now,
                     )),
                     PowerState::OnBattery => out.push(event(
@@ -144,10 +147,12 @@ pub async fn record_sample(
     now: i64,
 ) -> anyhow::Result<bool> {
     let p = pool(store)?;
-    if let Some(r) = sqlx::query("SELECT ts, state, charge_pct FROM ups_samples WHERE ups = ? ORDER BY ts DESC LIMIT 1")
-        .bind(name)
-        .fetch_optional(p)
-        .await?
+    if let Some(r) = sqlx::query(
+        "SELECT ts, state, charge_pct FROM ups_samples WHERE ups = ? ORDER BY ts DESC LIMIT 1",
+    )
+    .bind(name)
+    .fetch_optional(p)
+    .await?
     {
         let (ts, state, charge): (i64, String, Option<f64>) = (r.get(0), r.get(1), r.get(2));
         let same = state == s.state.as_str() && charge == s.charge_pct;
@@ -234,7 +239,9 @@ pub async fn history(
 
 /// The document of `GET /api/ups`: the live status plus the recent events.
 pub async fn document(store: &ConfigStore) -> anyhow::Result<Value> {
-    let mut d = ups::status_document(store).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut d = ups::status_document(store)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     let rows = sqlx::query(
         "SELECT id, ts, kind, subject, severity, detail FROM system_events
          WHERE substr(kind, 1, 4) = 'ups_' ORDER BY id DESC LIMIT 20",
@@ -310,8 +317,10 @@ mod tests {
     const ONLINE: &str = include_str!("../../../patronus-network/tests/fixtures/ups/online.txt");
     const BATT: &str = include_str!("../../../patronus-network/tests/fixtures/ups/on_battery.txt");
     const LOW: &str = include_str!("../../../patronus-network/tests/fixtures/ups/low_battery.txt");
-    const REPL: &str = include_str!("../../../patronus-network/tests/fixtures/ups/replace_battery.txt");
-    const REFUSED: &str = include_str!("../../../patronus-network/tests/fixtures/ups/no_ups_refused.txt");
+    const REPL: &str =
+        include_str!("../../../patronus-network/tests/fixtures/ups/replace_battery.txt");
+    const REFUSED: &str =
+        include_str!("../../../patronus-network/tests/fixtures/ups/no_ups_refused.txt");
 
     fn kinds(v: &[Event]) -> Vec<&str> {
         v.iter().map(|e| e.kind.as_str()).collect()
@@ -320,7 +329,10 @@ mod tests {
     #[test]
     fn outage_sequence_raises_each_event_once() {
         let mut l = Look::default();
-        assert!(events_for(&mut l, "ups", &interpret(ONLINE), 1).is_empty(), "boot while online is not news");
+        assert!(
+            events_for(&mut l, "ups", &interpret(ONLINE), 1).is_empty(),
+            "boot while online is not news"
+        );
         assert!(events_for(&mut l, "ups", &interpret(ONLINE), 2).is_empty());
         let e = events_for(&mut l, "ups", &interpret(BATT), 3);
         assert_eq!(kinds(&e), ["ups_on_battery"]);
@@ -339,25 +351,52 @@ mod tests {
     #[test]
     fn booting_on_battery_alerts_and_unreachable_is_reported_once() {
         let mut l = Look::default();
-        assert_eq!(kinds(&events_for(&mut l, "ups", &interpret(BATT), 1)), ["ups_on_battery"]);
+        assert_eq!(
+            kinds(&events_for(&mut l, "ups", &interpret(BATT), 1)),
+            ["ups_on_battery"]
+        );
         let mut l = Look::default();
         let down = interpret(REFUSED);
-        assert_eq!(kinds(&events_for(&mut l, "ups", &down, 1)), ["ups_unreachable"]);
+        assert_eq!(
+            kinds(&events_for(&mut l, "ups", &down, 1)),
+            ["ups_unreachable"]
+        );
         assert!(events_for(&mut l, "ups", &down, 2).is_empty());
-        assert_eq!(kinds(&events_for(&mut l, "ups", &interpret(ONLINE), 3)), ["ups_reachable"]);
+        assert_eq!(
+            kinds(&events_for(&mut l, "ups", &interpret(ONLINE), 3)),
+            ["ups_reachable"]
+        );
     }
 
     #[tokio::test]
     async fn samples_are_thinned_pruned_and_read_back() {
         let store = ConfigStore::open_in_memory().await.unwrap();
-        let on = match interpret(ONLINE) { Outcome::Reading(s) => s, o => panic!("{o:?}") };
-        let batt = match interpret(BATT) { Outcome::Reading(s) => s, o => panic!("{o:?}") };
+        let on = match interpret(ONLINE) {
+            Outcome::Reading(s) => s,
+            o => panic!("{o:?}"),
+        };
+        let batt = match interpret(BATT) {
+            Outcome::Reading(s) => s,
+            o => panic!("{o:?}"),
+        };
         assert!(record_sample(&store, "ups", &on, 1000).await.unwrap());
-        assert!(!record_sample(&store, "ups", &on, 1005).await.unwrap(), "unchanged within a minute");
-        assert!(record_sample(&store, "ups", &batt, 1010).await.unwrap(), "state change is stored at once");
-        assert!(record_sample(&store, "ups", &batt, 1100).await.unwrap(), "a minute later");
+        assert!(
+            !record_sample(&store, "ups", &on, 1005).await.unwrap(),
+            "unchanged within a minute"
+        );
+        assert!(
+            record_sample(&store, "ups", &batt, 1010).await.unwrap(),
+            "state change is stored at once"
+        );
+        assert!(
+            record_sample(&store, "ups", &batt, 1100).await.unwrap(),
+            "a minute later"
+        );
         let h = history(&store, 1100, 3600, 100).await.unwrap();
-        assert_eq!(h.iter().map(|s| s.ts).collect::<Vec<_>>(), [1000, 1010, 1100]);
+        assert_eq!(
+            h.iter().map(|s| s.ts).collect::<Vec<_>>(),
+            [1000, 1010, 1100]
+        );
         assert_eq!(h[1].state, "on_battery");
         assert_eq!(h[1].charge_pct, Some(71.0));
         assert_eq!(h[0].runtime_s, Some(2610));

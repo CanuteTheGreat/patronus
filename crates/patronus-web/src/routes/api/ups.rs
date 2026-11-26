@@ -26,7 +26,11 @@ pub struct HistoryQuery {
 async fn status(State(state): State<AppState>) -> Response {
     match crate::state::ups::document(&state.config_store).await {
         Ok(v) => Json(v).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -42,7 +46,11 @@ async fn history(State(state): State<AppState>, Query(q): Query<HistoryQuery>) -
     .await
     {
         Ok(v) => Json(json!({"hours": hours, "samples": v})).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
