@@ -17,7 +17,7 @@ nl_write_installer_toml
 nl_kill_daemons upsmon upsd dummy-ups
 
 command -v upsd >/dev/null && command -v upsmon >/dev/null || nl_fail "NUT is not installed in the netlab image"
-DRV=$(ls /lib/nut/dummy-ups /usr/lib/nut/dummy-ups /usr/libexec/nut/dummy-ups 2>/dev/null | head -1)
+DRV=$(find /lib/nut /usr/lib/nut /usr/libexec/nut -name dummy-ups 2>/dev/null || true); DRV=$(printf "%s\n" "$DRV" | sed -n 1p)
 [ -n "$DRV" ] || nl_fail "dummy-ups driver not found"
 
 cat > "$DEV" <<'DEVEOF'
