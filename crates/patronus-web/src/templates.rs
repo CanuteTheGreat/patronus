@@ -436,6 +436,9 @@ pub struct IpsecTunnel {
     pub local_subnet: String,
     pub remote_subnet: String,
     pub remote_gateway: String,
+    /// Aggregate CHILD SA counters; None means swanctl did not report one.
+    pub bytes_in: Option<u64>,
+    pub bytes_out: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
