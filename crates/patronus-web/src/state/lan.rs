@@ -590,6 +590,109 @@ mod dns_impl {
             Ok(id)
         }
 
+        // ---- DNS filtering (docs/DNS-FILTERING.md) ----
+
+        pub async fn dns_filter_overview(&self) -> anyhow::Result<Value> {
+            let env = patronus_network::lan::LanEnv::system();
+            let set = dns::settings(&self.store).await.map_err(e)?;
+            let mode = set.effective_mode(&env).to_string();
+            patronus_network::dnsfilter::overview(&self.store, &env, &mode)
+                .await
+                .map_err(e)
+        }
+
+        pub async fn dns_filter_add_list(
+            &self,
+            i: patronus_network::dnsfilter::ListInput,
+        ) -> anyhow::Result<i64> {
+            let _g = self.edit.lock().await;
+            let what = format!(
+                "DNS filter list {}",
+                i.catalog.clone().or(i.name.clone()).unwrap_or_default()
+            );
+            let snap = self.begin(&what).await?;
+            let id = patronus_network::dnsfilter::add_list(&self.store, &i)
+                .await
+                .map_err(e)?;
+            // the first download happens in this apply
+            patronus_network::dnsfilter::request_refresh(&self.store, Some(id))
+                .await
+                .map_err(e)?;
+            self.commit(&what, snap, &["dns"]).await?;
+            Ok(id)
+        }
+
+        pub async fn dns_filter_update_list(
+            &self,
+            id: i64,
+            i: patronus_network::dnsfilter::ListInput,
+        ) -> anyhow::Result<()> {
+            let _g = self.edit.lock().await;
+            let what = format!("DNS filter list {id}");
+            let snap = self.begin(&what).await?;
+            patronus_network::dnsfilter::update_list(&self.store, id, &i)
+                .await
+                .map_err(e)?;
+            if i.enabled == Some(true) || i.url.is_some() || i.auth_key.is_some() {
+                let _ = patronus_network::dnsfilter::request_refresh(&self.store, Some(id)).await;
+            }
+            self.commit(&what, snap, &["dns"]).await
+        }
+
+        pub async fn dns_filter_delete_list(&self, id: i64) -> anyhow::Result<()> {
+            let _g = self.edit.lock().await;
+            let what = format!("delete DNS filter list {id}");
+            let snap = self.begin(&what).await?;
+            patronus_network::dnsfilter::delete_list(&self.store, id)
+                .await
+                .map_err(e)?;
+            self.commit(&what, snap, &["dns"]).await
+        }
+
+        /// Download now (one list or all), then re-apply.
+        pub async fn dns_filter_refresh(&self, id: Option<i64>) -> anyhow::Result<Vec<String>> {
+            patronus_network::dnsfilter::request_refresh(&self.store, id)
+                .await
+                .map_err(e)?;
+            self.reapply("dns").await
+        }
+
+        pub async fn dns_filter_save_settings(
+            &self,
+            i: patronus_network::dnsfilter::FilterSettingsInput,
+        ) -> anyhow::Result<()> {
+            let _g = self.edit.lock().await;
+            let snap = self.begin("DNS filter settings").await?;
+            patronus_network::dnsfilter::save_filter_settings(&self.store, &i)
+                .await
+                .map_err(e)?;
+            self.commit("DNS filter settings", snap, &["dns"]).await
+        }
+
+        pub async fn dns_filter_add_allow(
+            &self,
+            i: patronus_network::dnsfilter::AllowInput,
+        ) -> anyhow::Result<i64> {
+            let _g = self.edit.lock().await;
+            let what = format!("DNS allow list entry {}", i.pattern.trim());
+            let snap = self.begin(&what).await?;
+            let id = patronus_network::dnsfilter::add_allow(&self.store, &i)
+                .await
+                .map_err(e)?;
+            self.commit(&what, snap, &["dns"]).await?;
+            Ok(id)
+        }
+
+        pub async fn dns_filter_delete_allow(&self, id: i64) -> anyhow::Result<()> {
+            let _g = self.edit.lock().await;
+            let what = format!("delete DNS allow list entry {id}");
+            let snap = self.begin(&what).await?;
+            patronus_network::dnsfilter::delete_allow(&self.store, id)
+                .await
+                .map_err(e)?;
+            self.commit(&what, snap, &["dns"]).await
+        }
+
         pub async fn delete_dns(&self, table: &str, id: i64) -> anyhow::Result<()> {
             let _g = self.edit.lock().await;
             let what = format!("delete DNS {table} entry {id}");
