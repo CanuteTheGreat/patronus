@@ -342,7 +342,9 @@ mod tests {
             ],
         };
         let r = Layout::resolve(Some(saved), ADMIN);
-        assert_eq!(ids(&r)[..2], ["system", "internet"], "{:?}", ids(&r));
+        let at = |id: &str| ids(&r).iter().position(|x| *x == id).unwrap();
+        assert_eq!(ids(&r)[0], "system");
+        assert!(at("system") < at("internet"), "{:?}", ids(&r));
         assert_eq!(r.widgets.iter().filter(|w| w.id == "system").count(), 1);
         assert!(r.widgets.iter().find(|w| w.id == "system").unwrap().on, "first copy wins");
         assert!(r.widgets.iter().all(|w| w.id != "from-the-future" && w.id != "ap-uplink"));

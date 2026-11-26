@@ -669,6 +669,13 @@ pub fn tcp_test(params: &Value) -> Result<Value> {
     use socket2::{Domain, Protocol, SockAddr, Socket, Type};
     use std::net::ToSocketAddrs;
     let host = valid_target(str_param(params, "host"))?;
+    match params.get("port") {
+        None | Some(Value::Null) => return Err(invalid("port is required (1 to 65535)")),
+        Some(Value::String(s)) if s.trim().is_empty() => {
+            return Err(invalid("port is required (1 to 65535)"))
+        }
+        _ => {}
+    }
     let port = num(params, "port", 0, 1, 65535)? as u16;
     let timeout = num(params, "timeout", DEFAULT_TCP_TIMEOUT_SECS, 1, 30)?;
     let limit = num(

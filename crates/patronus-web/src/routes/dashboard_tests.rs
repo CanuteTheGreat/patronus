@@ -149,6 +149,19 @@ fn on(v: &Value, id: &str) -> bool {
 
 const LAYOUT: &str = "/api/v1/dashboard/layout";
 
+/// A complete layout body: `first` (id, on) in this order, then every other widget of the
+/// default layout in its default place and state (a client always sends the full list).
+async fn full(a: &App, cookie: &str, first: &[(&str, bool)]) -> Value {
+    let (_, d) = a.get(cookie, "/api/v1/dashboard/layout").await;
+    let mut out: Vec<Value> = first.iter().map(|(id, on)| json!({"id": id, "on": on})).collect();
+    for w in d["default"]["widgets"].as_array().unwrap() {
+        if !first.iter().any(|(id, _)| w["id"] == *id) {
+            out.push(w.clone());
+        }
+    }
+    json!({"widgets": out})
+}
+
 #[tokio::test]
 async fn a_user_who_never_customized_gets_the_default_layout() {
     let a = app().await;
@@ -166,9 +179,7 @@ async fn a_user_who_never_customized_gets_the_default_layout() {
 #[tokio::test]
 async fn save_reorder_hide_and_reset_roundtrip() {
     let a = app().await;
-    let put = json!({"widgets": [
-        {"id": "system", "on": true}, {"id": "services", "on": true},
-        {"id": "internet", "on": false}, {"id": "activity", "on": true}]});
+    let put = full(&a, &a.admin, &[("system", true), ("services", true), ("internet", false), ("activity", true)]).await;
     let (s, v) = a.call(&a.admin, Method::PUT, LAYOUT, Some(put)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["customized"], true);
@@ -191,7 +202,7 @@ async fn save_reorder_hide_and_reset_roundtrip() {
 #[tokio::test]
 async fn unknown_repeated_and_malformed_layouts_are_refused_and_change_nothing() {
     let a = app().await;
-    let good = json!({"widgets": [{"id": "system", "on": true}]});
+    let good = full(&a, &a.admin, &[("system", true)]).await;
     assert_eq!(a.call(&a.admin, Method::PUT, LAYOUT, Some(good)).await.0, StatusCode::OK);
     for bad in [
         json!({"widgets": [{"id": "nope", "on": true}]}),
@@ -222,7 +233,7 @@ async fn layouts_are_private_to_each_user_and_read_only_users_keep_their_own() {
     let a = app().await;
     let viewer = a.user("viewer", "readonly").await;
     let op = a.user("operator1", "operator").await;
-    let mine = json!({"widgets": [{"id": "services", "on": true}, {"id": "system", "on": false}]});
+    let mine = full(&a, &a.admin, &[("services", true), ("system", false)]).await;
     assert_eq!(a.call(&a.admin, Method::PUT, LAYOUT, Some(mine)).await.0, StatusCode::OK);
     // the others still have the default
     for who in [&viewer, &op] {
@@ -232,7 +243,7 @@ async fn layouts_are_private_to_each_user_and_read_only_users_keep_their_own() {
         assert!(on(&v, "system"));
     }
     // the read-only role may save ITS OWN layout (a display preference) ...
-    let theirs = json!({"widgets": [{"id": "traffic", "on": true}, {"id": "internet", "on": false}]});
+    let theirs = full(&a, &viewer, &[("traffic", true), ("internet", false)]).await;
     let (s, v) = a.call(&viewer, Method::PUT, LAYOUT, Some(theirs)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["user"], "viewer");
@@ -304,7 +315,7 @@ async fn the_page_is_drawn_from_the_users_layout_on_the_server() {
     assert!(!html.contains("Loading"), "no placeholders: the layout is rendered, not fetched");
     assert!(html.contains("id=\"dash-customize\"") && html.contains("id=\"dash-reset\""));
     // a saved layout changes the markup of the next page load
-    let put = json!({"widgets": [{"id": "services", "on": true}, {"id": "system", "on": true}, {"id": "internet", "on": false}, {"id": "activity", "on": true}]});
+    let put = full(&a, &a.admin, &[("services", true), ("system", true), ("internet", false), ("activity", true)]).await;
     assert_eq!(a.call(&a.admin, Method::PUT, LAYOUT, Some(put)).await.0, StatusCode::OK);
     let (_, html) = a.raw(Some(&a.admin), Method::GET, "/", None).await;
     let (sv, sy, ac) = (position(&html, "services").unwrap(), position(&html, "system").unwrap(), position(&html, "activity").unwrap());

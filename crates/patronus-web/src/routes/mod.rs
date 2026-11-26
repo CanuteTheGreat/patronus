@@ -289,9 +289,12 @@ async fn require_session(
             let mutating = !matches!(parts.method, Method::GET | Method::HEAD | Method::OPTIONS);
             // a read-only account may still log out, change its own
             // password and manage its own second factor
+            // ... and arrange its own dashboard (a display preference, never router configuration;
+            // the handler scopes it to the signed-in user)
             let own_account = path == "/api/auth/logout"
                 || path == "/api/auth/password"
-                || path.starts_with("/api/auth/2fa/");
+                || path.starts_with("/api/auth/2fa/")
+                || path == "/api/v1/dashboard/layout";
             // Group membership replaces the coarse role: an account in a
             // group gets exactly the group's per-area privileges.
             if !session.role.is_admin() && !own_account {
