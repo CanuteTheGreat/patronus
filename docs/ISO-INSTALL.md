@@ -235,7 +235,9 @@ ssh_password_auth = false                 # default false: key-only root SSH
 
 [disk]
 # filesystem = "zfs"                      # omit it: the installer picks ZFS (>= 8 GB RAM, ZFS module available) or XFS; "ext4" is a manual choice only
-# zfs_raid = "mirror"                     # with filesystem = "zfs" and two disks: disks = ["/dev/sda", "/dev/sdb"]
+# zfs_raid = "mirror"                     # with filesystem = "zfs": single | mirror (2+ disks) | stripe (2+, no redundancy)
+#                                         #   | raidz1 (3+) | raidz2 (4+); list the disks: disks = ["/dev/sda", "/dev/sdb", ...]
+# zfs_pool = "rpool"                      # root pool name (default rpool); the guided installer has both under Advanced
 # encryption = "none"                     # default "auto": encrypted only with a working TPM 2.0 (never a passphrase), see below
 disks = ["first"]                         # or ["/dev/nvme0n1"]; "first" = first internal non-USB disk >= 8 GB
 
@@ -246,6 +248,12 @@ mode = "dhcp"                             # or static: address / gateway / dns
 [network.lan]
 iface = "auto"                            # auto = the next wired NIC
 address = "192.168.1.1/24"
+
+# [network]
+# opt = ["eth2", "eth3"]                  # OPT1, OPT2 ... (role only; set their addresses later in the web UI or console 2)
+
+# [update]
+# channel = "stable"                      # stable (default) | testing | development: where updates come from (System > Updates)
 ```
 
 The installed system has no built-in web `admin`: sign in to the web UI with the system user the installer created (group `patronus-admin`, PAM; see `docs/WEB-LOGIN.md`). Change its password with `passwd`.
@@ -463,8 +471,8 @@ turns the menu off.
 
 | Option | What it does |
 |---|---|
-| 1 Assign interfaces | Pick WAN and LAN (written to `/etc/patronus/patronus.toml`, firewall re-applied). Link state is shown per NIC; `d` = identify a port by unplug/replug. |
-| 2 Set interface IP address | DHCP or static (address/prefix, gateway, DNS) for one NIC; Wi-Fi NICs can (re)connect through iwd. Written to `/etc/dhcpcd.conf` (managed block) and applied at once. |
+| 1 Assign interfaces | Pick WAN, LAN and any number of OPT interfaces (OPT1, OPT2 ...; `n` when done), like pfSense's console assignment. Written to `/etc/patronus/patronus.toml` (`wan_interface`, `lan_interface`, `opt_interfaces`) and handed to the config store at once with `patronus interfaces assign --from-bootstrap` (a revision is kept first: System > Configuration history), then the firewall is re-applied. Link state is shown per NIC; `d` = identify a port by unplug/replug. |
+| 2 Set interface IP address | DHCP or static (address/prefix, gateway, DNS) for one NIC, plus IPv6: auto (router advertisements / DHCPv6), static (address/prefix) or none; Wi-Fi NICs can (re)connect through iwd. Written to `/etc/dhcpcd.conf` (managed block) and applied at once. |
 | 3 Reset the admin password | Sets a new web `admin` password directly in the product's database (argon2id), drops web sessions, optionally also sets the root console password. |
 | 4 Reset to factory defaults | Type `RESET` to confirm; first writes a backup, then deletes the configuration database, re-applies the product's boot units and starts it with a new password. Interface roles and addresses are kept. |
 | 5 / 6 | Power off / restart the machine (asks first). |
@@ -473,6 +481,18 @@ turns the menu off.
 | 9 Web UI URL and status | URL, uptime, service states, root fs, effective SSH settings, latest backups. |
 | 10 Restore a configuration backup | Lists `/var/backups/patronus/*.tar.gz` and `*.tar.gz` on any attached USB stick. Refuses archives of another product, with paths outside the product's config paths, or with links; takes a `pre-restore` backup first. |
 | 11 Create a configuration backup | `/var/backups/patronus/patronus-config-manual-<time>.tar.gz` (consistent SQLite copy while the service runs), optionally copied to a USB stick. |
+| 12 Restart the web UI | Restarts `patronus-web` (OpenRC or systemd) and waits until it listens again. |
+| 13 Turn SSH on or off | Stops + disables or enables + starts sshd (now and at boot); warns first when you are connected over SSH. |
+| 14 Live system view | `top` (q returns). |
+| 15 Firewall log | `patronus firewall log -n 40 --follow`: the lines of rules with Log on and threat-feed drops (the web UI's log viewer collects them); Ctrl+C returns. |
+| 16 Update channel | Shows `patronus update channel`, sets stable / testing / development (`--set`). |
+| 17 Check for updates | `patronus update check` (background job: sync + list of pending packages). |
+| 18 Update Patronus | Shows the last check (`patronus update status`), then after a yes runs `patronus update apply` in the background. |
+| 19 Restore a configuration revision | Lists `patronus config revisions` (newest first); the id you type is restored and applied (`patronus config rollback ID`), Enter cancels. |
+| 20 Import a pfSense / OPNsense config.xml | Asks for the file path (mount the USB stick from 8 Shell first), prints the plan (`patronus import pfsense FILE --plan`: what maps, what does not, in plain words), and only after a yes writes it and applies (`--yes`, then `patronus apply`). The web UI has the same import under System > Import. |
+
+Items 15-20 come from the installer profile (`console_items` in `/etc/live-installer/profile.toml`); each runs one
+argv, never a shell, and a typed answer is passed as ONE argument.
 
 Screens (real QEMU captures from the CI run, UEFI, VGA console): the login on a protected console, then the menu.
 
