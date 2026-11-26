@@ -123,6 +123,40 @@ impl SystemManager {
         Ok(out)
     }
 
+    /// Write an imported configuration (`write` puts the importer's plan into the store) and apply it to the whole
+    /// system. Like a restore: the previous configuration is kept as a revision, and when the importer or any
+    /// applier fails it is put back and re-applied, and the error says which part refused it. Returns the store
+    /// lines of the importer and the applied lines.
+    pub async fn import_and_apply<F>(
+        &self,
+        store: &ConfigStore,
+        user: &str,
+        what: &str,
+        write: F,
+    ) -> anyhow::Result<(Vec<String>, Vec<String>)>
+    where
+        F: std::future::Future<Output = anyhow::Result<Vec<String>>>,
+    {
+        let rev = store
+            .snapshot(user, &format!("before import of {what}"))
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let why = match write.await {
+            Ok(written) => match self.apply_all(store).await {
+                Ok(applied) => return Ok((written, applied)),
+                Err(failed) => format!("it could not be applied ({failed})"),
+            },
+            Err(e) => format!("writing it failed ({e:#})"),
+        };
+        if let Err(e) = store.restore_revision(rev, user).await {
+            tracing::error!("could not put the configuration back after a failed import: {e}");
+        }
+        if let Err(e) = self.apply_all(store).await {
+            tracing::warn!("re-applying the previous configuration: {e}");
+        }
+        Err(anyhow::anyhow!("the import of {what} was undone: {why}"))
+    }
+
     /// Replace the configuration with an export document and apply it to
     /// the whole system. The previous configuration is kept as a revision;
     /// if any subsystem refuses the restored configuration it is put back

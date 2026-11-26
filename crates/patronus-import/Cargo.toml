@@ -1,0 +1,37 @@
+[package]
+name = "patronus-import"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+description = "Config importers (pfSense/OPNsense config.xml, OpenWrt UCI) shared by the patronus CLI and the web UI"
+
+[features]
+# Same names as patronus-cli's features: an importer section is compiled only when the
+# product carries the matching applier. The default is everything (what the standard tier
+# ships); patronus-cli and patronus-web depend on it with default-features = false and pass
+# their own feature set down.
+default = ["dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "wifi-ap", "wifi-client"]
+dhcp-server = ["patronus-network/dhcp"]
+dns-server = ["patronus-network/dns"]
+ntp-server = ["patronus-network/ntp"]
+multiwan = ["patronus-network/multiwan"]
+vpn-wireguard = ["patronus-network/wireguard"]
+vpn-ipsec = ["patronus-network/ipsec"]
+wifi-ap = ["patronus-network/wifi-ap"]
+wifi-client = ["patronus-network/wifi-client"]
+
+[dependencies]
+patronus-core = { path = "../patronus-core" }
+patronus-firewall = { path = "../patronus-firewall" }
+patronus-network = { path = "../patronus-network" }
+patronus-config = { path = "../patronus-config" }
+anyhow.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+roxmltree = "0.20"
+# OpenWrt's odhcp6c derives its DHCPv6 IAID from md5(device name): import-uci recomputes it
+md-5 = "0.10"
+
+[dev-dependencies]
+tokio.workspace = true
+tempfile = "3.10"

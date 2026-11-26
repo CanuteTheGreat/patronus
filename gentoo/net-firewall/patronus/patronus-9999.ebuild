@@ -394,6 +394,8 @@ src_install() {
 		use wifi-ap && webfeatures+=( wifi-ap )
 		use guest && webfeatures+=( guest )
 		use wifi-client && webfeatures+=( wifi-client )
+		# System > Import page (pfSense/OPNsense config.xml, OpenWrt UCI)
+		use uci-import && webfeatures+=( import )
 		use syslog && webfeatures+=( syslog )
 		use netflow && webfeatures+=( netflow )
 		use igmp && webfeatures+=( igmp )

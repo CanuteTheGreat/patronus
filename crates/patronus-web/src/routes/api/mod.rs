@@ -10,6 +10,7 @@ pub mod device;
 pub mod firewall;
 pub mod groups;
 pub mod ha;
+pub mod import;
 pub mod insight_history;
 pub mod insights;
 pub mod interfaces;

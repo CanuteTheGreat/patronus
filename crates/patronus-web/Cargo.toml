@@ -17,18 +17,18 @@ path = "src/lib.rs"
 # builds patronus-web with --no-default-features and the USE-selected list):
 # lane C interfaces (vlan, pppoe, dhcpcd) and the lane D LAN-service pages
 # (dhcp, dns, ntp).
-default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "udp-relay", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "reverse-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "threat-feeds", "journal", "tls-rustls"]
+default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "udp-relay", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "reverse-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "threat-feeds", "journal", "tls-rustls", "import"]
 vlan = ["patronus-network/vlan"]
 pppoe = ["patronus-network/pppoe"]
 dhcpcd = ["patronus-network/dhcpcd"]
-dhcp = ["patronus-network/dhcp"]
-dns = ["patronus-network/dns"]
-ntp = ["patronus-network/ntp"]
+dhcp = ["patronus-network/dhcp", "patronus-import?/dhcp-server"]
+dns = ["patronus-network/dns", "patronus-import?/dns-server"]
+ntp = ["patronus-network/ntp", "patronus-import?/ntp-server"]
 # lane E: gateway groups (multi-WAN failover / load balancing)
-multiwan = ["patronus-network/multiwan"]
+multiwan = ["patronus-network/multiwan", "patronus-import?/multiwan"]
 # lane F: WireGuard tunnels/peers and IPsec tunnels managed from the VPN page
-wireguard = ["patronus-network/wireguard"]
-ipsec = ["patronus-network/ipsec"]
+wireguard = ["patronus-network/wireguard", "patronus-import?/vpn-wireguard"]
+ipsec = ["patronus-network/ipsec", "patronus-import?/vpn-ipsec"]
 # lane G: high availability (keepalived VRRP virtual IPs + conntrackd state sync)
 ha = ["patronus-network/ha"]
 # lane C: traffic shaping (tc: CAKE / fq_codel / rate limit)
@@ -58,8 +58,10 @@ ldap = ["dep:ldap3"]
 plugins = ["patronus-network/plugins"]
 # device groups, per-device isolation and Wi-Fi credentials (page + API)
 segmentation = ["patronus-network/segmentation", "dep:patronus-captiveportal"]
-wifi-ap = ["patronus-network/wifi-ap", "segmentation"]
-wifi-client = ["patronus-network/wifi-client"]
+wifi-ap = ["patronus-network/wifi-ap", "segmentation", "patronus-import?/wifi-ap"]
+# System > Import: pfSense/OPNsense config.xml and OpenWrt UCI importers (USE=uci-import)
+import = ["dep:patronus-import", "dep:tempfile"]
+wifi-client = ["patronus-network/wifi-client", "patronus-import?/wifi-client"]
 # Live threat-intel feeds (patronus-ai, reqwest/OpenSSL) and journald log reading
 # (patronus-monitoring, prometheus). Both are off in the embedded router build.
 threat-feeds = ["dep:patronus-ai"]
@@ -76,6 +78,8 @@ patronus-firewall = { path = "../patronus-firewall" }
 patronus-captiveportal = { path = "../patronus-captiveportal", optional = true }
 patronus-network = { path = "../patronus-network" }
 patronus-config = { path = "../patronus-config" }
+patronus-import = { path = "../patronus-import", optional = true, default-features = false }
+tempfile = { version = "3.10", optional = true }
 patronus-secrets = { path = "../patronus-secrets" }
 patronus-ai = { path = "../patronus-ai", optional = true }
 patronus-monitoring = { path = "../patronus-monitoring", optional = true }
