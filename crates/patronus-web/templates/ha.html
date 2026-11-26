@@ -19,8 +19,8 @@
     <p id="ha-state" class="text-sm">Loading...</p>
     {% if can_modify %}
     <p>
-        <button class="btn btn-sm btn-secondary" id="ha-maint-on" onclick="maint(true)">Enter maintenance mode</button>
-        <button class="btn btn-sm btn-secondary" id="ha-maint-off" onclick="maint(false)">Leave maintenance mode</button>
+        <button class="ui-btn sm" id="ha-maint-on" onclick="maint(true)">Enter maintenance mode</button>
+        <button class="ui-btn sm" id="ha-maint-off" onclick="maint(false)">Leave maintenance mode</button>
     </p>
     <p class="text-sm text-muted">Maintenance mode advertises the lowest priority, so the other node takes over all
         virtual IPs; leave it to hand them back (this node preempts again).</p>
@@ -38,7 +38,7 @@
         <label>Sync connection states <input type="checkbox" name="sync"></label>
         <label>Sync interface (device or @opt1) <input name="sync_interface" data-keep-empty="1"></label>
         <label>Peer address on the sync interface <input name="sync_peer" data-keep-empty="1"></label>
-        {% if can_modify %}<button class="btn btn-primary btn-sm" type="submit">Save and apply</button>{% endif %}
+        {% if can_modify %}<button class="ui-btn primary sm" type="submit">Save and apply</button>{% endif %}
     </form>
 </div>
 
@@ -46,7 +46,7 @@
     <div class="card-header"><h2 class="card-title">Virtual IPs</h2></div>
     <p class="text-sm text-muted"><b>carp</b>: the address fails over between the HA nodes (VRRP); clients use it as
         their gateway. <b>alias</b>: just an extra address on this node's interface (no failover).</p>
-    <table class="lan" id="ha-vips">
+    <table class="lan ui-grid" id="ha-vips">
         <thead><tr><th>Name</th><th>Interface</th><th>Address</th><th>VRID</th><th>Mode</th><th>On this node</th><th></th></tr></thead>
         <tbody></tbody>
     </table>
@@ -58,7 +58,7 @@
         <label>Address/prefix <input name="address" placeholder="192.168.50.254/24" required></label>
         <label>VRID <input name="vrid" type="number" min="1" max="255" value="51"></label>
         <label>Mode <select name="mode"><option value="carp">carp (failover)</option><option value="alias">alias</option></select></label>
-        <button class="btn btn-primary btn-sm" type="submit">Add virtual IP</button>
+        <button class="ui-btn primary sm" type="submit">Add virtual IP</button>
     </form>
     {% endif %}
 </div>
@@ -102,7 +102,7 @@
                 const td = document.createElement('td'); td.textContent = x; tr.appendChild(td);
             }
             const td = document.createElement('td');
-            const b = document.createElement('button'); b.className = 'btn btn-sm btn-danger'; b.textContent = 'Delete';
+            const b = document.createElement('button'); b.className = 'ui-btn danger sm'; b.textContent = 'Delete';
             b.onclick = async () => { if (confirm('Delete virtual IP ' + v.name + '?') && await api('DELETE', '/api/ha/vips/' + v.id)) loadHa(); };
             td.appendChild(b); tr.appendChild(td); tb.appendChild(tr);
         }

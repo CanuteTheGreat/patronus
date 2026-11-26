@@ -72,7 +72,7 @@
         f.appendChild(field('Channel (auto or a number)', inp('channel', 'auto', String(n.channel))));
         for (const [k, label, type] of CHAN_FIELDS) { const i = inp(k, '', n[k === 'recheck_time' ? 'recheck_time' : k]); if (type === 'number') i.type = 'number'; f.appendChild(field(label, i)); }
         const rc = document.createElement('input'); rc.type = 'checkbox'; rc.name = 'recheck'; rc.checked = !!n.recheck; f.appendChild(field('Re-check every night', rc));
-        f.appendChild(mk('button', {class: 'btn btn-primary', type: 'submit', text: 'Save channel settings'}));
+        f.appendChild(mk('button', {class: 'ui-btn primary', type: 'submit', text: 'Save channel settings'}));
         f.onsubmit = async (ev) => {
             ev.preventDefault();
             const b = {name: n.name, ifname: n.ifname, ssid: n.ssid, band: n.band, country: n.country, security: n.security, segment: n.segment, unknown_policy: n.unknown_policy, enabled: n.enabled};
@@ -144,7 +144,7 @@
             const segSel = document.createElement('select'); segSel.name = 'segment'; for (const s of (SEG ? SEG.segments : [])) { const o = document.createElement('option'); o.value = s.segment; o.textContent = s.segment; segSel.appendChild(o); }
             f.appendChild(field('Joins segment (bridge)', segSel));
             f.appendChild(field('Unknown devices', sel('unknown_policy', ['reject', 'enrol'], 'reject')));
-            f.appendChild(mk('button', {class: 'btn btn-primary', type: 'submit', text: 'Add network'}));
+            f.appendChild(mk('button', {class: 'ui-btn primary', type: 'submit', text: 'Add network'}));
             f.onsubmit = async (ev) => { ev.preventDefault(); const b = formBody(f); if (b.channel && b.channel !== 'auto') b.channel = Number(b.channel); const r = await segCall('POST', '/api/segmentation/wifi/networks', b); if (r) wifiLoad(); return false; };
             root.appendChild(f);
         }
@@ -179,7 +179,7 @@
             const gs = document.createElement('select'); gs.name = 'group'; for (const g of (SEG ? SEG.groups : []).filter(g => !g.quarantine)) { const o = document.createElement('option'); o.value = g.name; o.textContent = g.name; gs.appendChild(o); }
             f.appendChild(field('Group', gs));
             f.appendChild(field('MAC (optional: learned at the first join)', inp('mac', 'aa:bb:cc:dd:ee:ff')));
-            f.appendChild(mk('button', {class: 'btn btn-primary', type: 'submit', text: 'Create device and passphrase'}));
+            f.appendChild(mk('button', {class: 'ui-btn primary', type: 'submit', text: 'Create device and passphrase'}));
             f.onsubmit = async (ev) => { ev.preventDefault(); await wifiAct('POST', '/api/segmentation/wifi/devices', formBody(f), 'New device'); f.reset(); return false; };
             root.appendChild(f);
         }

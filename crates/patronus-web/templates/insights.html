@@ -5,9 +5,7 @@
 {% block content %}
 {% include "lan_head.html" %}
 <style>
-    .ins-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border, var(--line)); margin: 12px 0 16px; }
-    .ins-tab-btn { padding: 8px 14px; border: none; background: none; cursor: pointer; color: var(--text-muted, var(--muted)); border-bottom: 2px solid transparent; font: inherit; }
-    .ins-tab-btn.active { color: var(--text, #111827); border-bottom-color: var(--primary, var(--accent)); font-weight: 600; }
+    .ins-tabs { flex-wrap: wrap; margin: 12px 0 16px; }
     .ins-tab { display: none; }
     .ins-tab.active { display: block; }
     .ins-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
@@ -25,7 +23,7 @@
     .ins-probe.warn { background: var(--warn-bg); color: var(--warn-fg); }
     .ins-note { font-size: 0.85em; color: var(--muted); }
     .ins-foot { margin: 24px 0 8px; font-size: 0.8em; color: var(--muted); }
-    @media (max-width: 600px) { .ins-grid { grid-template-columns: 1fr; } .ins-tab-btn { padding: 8px 10px; } }
+    @media (max-width: 600px) { .ins-grid { grid-template-columns: 1fr; } }
 </style>
 
 <div class="page-header">
@@ -35,21 +33,21 @@
         where the traffic went (DB-IP databases). <b>Uplinks</b> is the health history of each internet connection.</p>
 </div>
 
-<div class="ins-tabs" id="ins-tabs">
-    <button class="ins-tab-btn active" data-tab="live">Live</button>
-    <button class="ins-tab-btn" data-tab="countries">Countries</button>
-    <button class="ins-tab-btn" data-tab="asns">ASNs</button>
-    <button class="ins-tab-btn" data-tab="devices">Devices</button>
-    <button class="ins-tab-btn" data-tab="uplinks">Uplinks</button>
-    <button class="ins-tab-btn" data-tab="settings">Settings</button>
+<div class="ui-tabs ins-tabs" id="ins-tabs" role="tablist" aria-label="Insight views">
+    <button class="ins-tab-btn" type="button" role="tab" aria-selected="true" aria-controls="tab-live" data-tab="live">Live</button>
+    <button class="ins-tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-countries" data-tab="countries">Countries</button>
+    <button class="ins-tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-asns" data-tab="asns">ASNs</button>
+    <button class="ins-tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-devices" data-tab="devices">Devices</button>
+    <button class="ins-tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-uplinks" data-tab="uplinks">Uplinks</button>
+    <button class="ins-tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-settings" data-tab="settings">Settings</button>
 </div>
 
-<div id="tab-live" class="ins-tab active">
+<div id="tab-live" class="ins-tab active" role="tabpanel">
     <div class="card" id="ins-status"><p class="text-sm" id="ins-summary">Loading...</p></div>
 
     <div class="card">
         <div class="card-header"><h2 class="card-title">Interfaces</h2></div>
-        <div class="ins-scroll"><table class="lan" id="ins-ifaces">
+        <div class="ins-scroll ui-grid-wrap"><table class="lan ui-grid" id="ins-ifaces">
             <thead><tr><th>Interface</th><th>State</th><th>Receive</th><th>Transmit</th><th>Received total</th><th>Sent total</th></tr></thead>
             <tbody></tbody>
         </table></div>
@@ -57,7 +55,7 @@
 
     <div class="card">
         <div class="card-header"><h2 class="card-title">Top hosts</h2></div>
-        <div class="ins-scroll"><table class="lan" id="ins-hosts">
+        <div class="ins-scroll ui-grid-wrap"><table class="lan ui-grid" id="ins-hosts">
             <thead><tr><th>Host (source)</th><th>Traffic</th><th>Packets</th><th>Flows</th></tr></thead>
             <tbody></tbody>
         </table></div>
@@ -66,7 +64,7 @@
 
     <div class="card">
         <div class="card-header"><h2 class="card-title">Top services</h2></div>
-        <div class="ins-scroll"><table class="lan" id="ins-services">
+        <div class="ins-scroll ui-grid-wrap"><table class="lan ui-grid" id="ins-services">
             <thead><tr><th>Protocol</th><th>Port</th><th>Service</th><th>Traffic</th><th>Flows</th></tr></thead>
             <tbody></tbody>
         </table></div>
@@ -74,21 +72,21 @@
 
     <div class="card">
         <div class="card-header"><h2 class="card-title">Protocols</h2></div>
-        <div class="ins-scroll"><table class="lan" id="ins-protocols">
+        <div class="ins-scroll ui-grid-wrap"><table class="lan ui-grid" id="ins-protocols">
             <thead><tr><th>Protocol</th><th>Traffic</th><th>Flows</th></tr></thead>
             <tbody></tbody>
         </table></div>
     </div>
 </div>
 
-<div id="tab-countries" class="ins-tab">
+<div id="tab-countries" class="ins-tab" role="tabpanel">
     <div class="ins-controls">
         <label>Period <select class="ins-window"><option value="1h">1 hour</option><option value="6h">6 hours</option><option value="24h" selected>24 hours</option><option value="7d">7 days</option><option value="30d">30 days</option></select></label>
         <label>Device <input class="ins-device" list="ins-device-list" placeholder="all (IP, name or id)"></label>
     </div>
     <div class="card"><div class="card-header"><h2 class="card-title">Where the traffic goes: countries</h2></div>
         <p class="ins-note" id="countries-note"></p>
-        <div class="ins-scroll"><table class="lan" id="tbl-countries">
+        <div class="ins-scroll ui-grid-wrap"><table class="lan ui-grid" id="tbl-countries">
             <thead><tr><th>Country</th><th>Download</th><th>Upload</th><th>Total</th><th>Flows</th><th>Share</th></tr></thead>
             <tbody></tbody>
         </table></div>
@@ -96,14 +94,14 @@
     </div>
 </div>
 
-<div id="tab-asns" class="ins-tab">
+<div id="tab-asns" class="ins-tab" role="tabpanel">
     <div class="ins-controls">
         <label>Period <select class="ins-window"><option value="1h">1 hour</option><option value="6h">6 hours</option><option value="24h" selected>24 hours</option><option value="7d">7 days</option><option value="30d">30 days</option></select></label>
         <label>Device <input class="ins-device" list="ins-device-list" placeholder="all (IP, name or id)"></label>
     </div>
     <div class="card"><div class="card-header"><h2 class="card-title">Who runs the other end: networks (ASNs)</h2></div>
         <p class="ins-note" id="asns-note"></p>
-        <div class="ins-scroll"><table class="lan" id="tbl-asns">
+        <div class="ins-scroll ui-grid-wrap"><table class="lan ui-grid" id="tbl-asns">
             <thead><tr><th>ASN</th><th>Organisation</th><th>Country</th><th>Download</th><th>Upload</th><th>Total</th><th>Flows</th></tr></thead>
             <tbody></tbody>
         </table></div>
@@ -111,13 +109,13 @@
     </div>
 </div>
 
-<div id="tab-devices" class="ins-tab">
+<div id="tab-devices" class="ins-tab" role="tabpanel">
     <div class="ins-controls">
         <label>Period <select class="ins-window"><option value="1h">1 hour</option><option value="6h">6 hours</option><option value="24h" selected>24 hours</option><option value="7d">7 days</option><option value="30d">30 days</option></select></label>
     </div>
     <div class="card"><div class="card-header"><h2 class="card-title">Devices</h2></div>
         <p class="ins-note" id="devices-note"></p>
-        <div class="ins-scroll"><table class="lan" id="tbl-devices">
+        <div class="ins-scroll ui-grid-wrap"><table class="lan ui-grid" id="tbl-devices">
             <thead><tr><th>Device</th><th>Address</th><th>Group</th><th>Download</th><th>Upload</th><th>Flows</th><th>Top country</th></tr></thead>
             <tbody></tbody>
         </table></div>
@@ -127,14 +125,14 @@
         <div class="card-header"><h2 class="card-title" id="device-detail-title">Device</h2></div>
         <div id="device-chart"></div>
         <div class="ins-grid">
-            <div><h3>Top countries</h3><div class="ins-scroll"><table class="lan" id="tbl-dev-countries"><thead><tr><th>Country</th><th>Download</th><th>Upload</th></tr></thead><tbody></tbody></table></div></div>
-            <div><h3>Top networks</h3><div class="ins-scroll"><table class="lan" id="tbl-dev-asns"><thead><tr><th>ASN</th><th>Organisation</th><th>Total</th></tr></thead><tbody></tbody></table></div></div>
+            <div><h3>Top countries</h3><div class="ins-scroll ui-grid-wrap"><table class="lan ui-grid" id="tbl-dev-countries"><thead><tr><th>Country</th><th>Download</th><th>Upload</th></tr></thead><tbody></tbody></table></div></div>
+            <div><h3>Top networks</h3><div class="ins-scroll ui-grid-wrap"><table class="lan ui-grid" id="tbl-dev-asns"><thead><tr><th>ASN</th><th>Organisation</th><th>Total</th></tr></thead><tbody></tbody></table></div></div>
         </div>
     </div>
     <datalist id="ins-device-list"></datalist>
 </div>
 
-<div id="tab-uplinks" class="ins-tab">
+<div id="tab-uplinks" class="ins-tab" role="tabpanel">
     <div class="ins-controls">
         <label>Period <select id="up-window"><option value="1h">1 hour</option><option value="6h">6 hours</option><option value="24h" selected>24 hours</option><option value="7d">7 days</option><option value="30d">30 days</option><option value="90d">90 days</option></select></label>
         <span class="ins-note" id="up-note"></span>
@@ -146,19 +144,19 @@
         <div class="card-header"><h2 class="card-title">Extra probes</h2></div>
         <p class="ins-note">The gateway monitor pings every gateway. A TCP, HTTP or DNS probe is sent through the gateway's own interface as well, so an
             ISP that answers ping but has dead DNS shows up as degraded. A <b>critical</b> probe also counts as packet loss for the gateway group's failover.</p>
-        <div class="ins-scroll"><table class="lan" id="tbl-probes">
+        <div class="ins-scroll ui-grid-wrap"><table class="lan ui-grid" id="tbl-probes">
             <thead><tr><th>Gateway</th><th>Kind</th><th>Target</th><th>Port</th><th>Name</th><th>Critical</th><th>Enabled</th><th></th></tr></thead>
             <tbody></tbody>
         </table></div>
         <p class="empty" id="probes-empty" style="display:none">No extra probes: gateways are checked with ping only.</p>
-        <form class="lan-form" id="probe-form">
+        <form class="lan-form" id="probe-form" data-dialog="Add probe">
             <label>Gateway <select name="gateway" id="probe-gw"></select></label>
             <label>Kind <select name="kind" id="probe-kind"><option value="dns">DNS lookup</option><option value="tcp">TCP connect</option><option value="http">HTTP request</option></select></label>
             <label>Target <input name="target" id="probe-target" placeholder="1.1.1.1" required></label>
             <label>Port <input name="port" type="number" min="1" max="65535" placeholder="53 / 443"></label>
             <label>Name to resolve <input name="name" placeholder="example.com"></label>
             <label>Critical <input type="checkbox" name="critical"></label>
-            <button class="btn btn-primary btn-sm" type="submit">Add probe</button>
+            <button class="ui-btn primary sm" type="submit">Add probe</button>
         </form>
         <p class="ins-note" id="probe-help">DNS: the resolver's IP and the name to look up. TCP: an IP and a port. HTTP: a full URL (any answer below 500 counts).</p>
     </div>
@@ -170,12 +168,12 @@
             <label>SLA target % (0 = off) <input name="sla_target" type="number" step="0.01" min="0" max="100"></label>
             <label>Keep minute samples (days) <input name="sample_retention_days" type="number" min="1" max="3650"></label>
             <label>Keep hourly SLA data (days) <input name="sla_retention_days" type="number" min="1" max="3650"></label>
-            <button class="btn btn-primary btn-sm" type="submit">Save</button>
+            <button class="ui-btn primary sm" type="submit">Save</button>
         </form>
     </div>
 </div>
 
-<div id="tab-settings" class="ins-tab">
+<div id="tab-settings" class="ins-tab" role="tabpanel">
     <div class="card">
         <div class="card-header"><h2 class="card-title">History collection</h2></div>
         <p class="ins-note" id="set-note"></p>
@@ -183,29 +181,29 @@
             <label>Record history <input type="checkbox" name="enabled"></label>
             <label>Keep (days) <input name="retention_days" type="number" min="1" max="3650"></label>
             <label>Rows per hour (top N) <input name="top_n" type="number" min="10" max="100000"></label>
-            <button class="btn btn-primary btn-sm" type="submit">Save</button>
-            <button class="btn btn-danger btn-sm" type="button" id="clear-history">Delete all recorded history</button>
+            <button class="ui-btn primary sm" type="submit">Save</button>
+            <button class="ui-btn danger sm" type="button" id="clear-history">Delete all recorded history</button>
         </form>
     </div>
     <div class="card">
         <div class="card-header"><h2 class="card-title">Not recorded (privacy)</h2></div>
         <p class="ins-note">Traffic of these addresses, devices or groups is never recorded, and what was recorded for them is deleted.</p>
-        <div class="ins-scroll"><table class="lan" id="tbl-excl"><thead><tr><th>Kind</th><th>Who</th><th></th></tr></thead><tbody></tbody></table></div>
+        <div class="ins-scroll ui-grid-wrap"><table class="lan ui-grid" id="tbl-excl"><thead><tr><th>Kind</th><th>Who</th><th></th></tr></thead><tbody></tbody></table></div>
         <p class="empty" id="excl-empty" style="display:none">Everything is recorded.</p>
         <form class="lan-form" id="excl-form">
             <label>Kind <select name="kind"><option value="ip">IP address or CIDR</option><option value="device">Device name</option><option value="group">Group name</option></select></label>
             <label>Who <input name="ref" placeholder="192.168.50.10 or 192.168.60.0/24" required></label>
-            <button class="btn btn-primary btn-sm" type="submit">Do not record</button>
+            <button class="ui-btn primary sm" type="submit">Do not record</button>
         </form>
     </div>
     <div class="card">
         <div class="card-header"><h2 class="card-title">Country and ASN databases</h2></div>
-        <div class="ins-scroll"><table class="lan" id="tbl-db"><thead><tr><th>Database</th><th>Present</th><th>Updated</th><th>Size</th><th>Status</th></tr></thead><tbody></tbody></table></div>
+        <div class="ins-scroll ui-grid-wrap"><table class="lan ui-grid" id="tbl-db"><thead><tr><th>Database</th><th>Present</th><th>Updated</th><th>Size</th><th>Status</th></tr></thead><tbody></tbody></table></div>
         <form class="lan-form" id="db-form">
             <label>ASN database URL (empty = DB-IP monthly file) <input name="asn_url" style="min-width:280px" placeholder="https://download.db-ip.com/free/dbip-asn-lite-YYYY-MM.csv.gz"></label>
             <label>Refresh every (days) <input name="refresh_days" type="number" min="1" max="365"></label>
-            <button class="btn btn-primary btn-sm" type="submit">Save</button>
-            <button class="btn btn-secondary btn-sm" type="button" id="db-refresh">Download now</button>
+            <button class="ui-btn primary sm" type="submit">Save</button>
+            <button class="ui-btn sm" type="button" id="db-refresh">Download now</button>
         </form>
         <p class="ins-note">The databases are refreshed monthly by <code>patronus ipdb update</code> (systemd timer or cron.monthly) and by the web service when they are older than the refresh interval.</p>
     </div>
@@ -215,6 +213,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{% include "form_dialogs.html" %}
 <script>
     const $ = (id) => document.getElementById(id);
     function human(n) {
@@ -250,7 +249,7 @@
         if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
         return j;
     }
-    function fail(e) { patNotice('Not applied: ' + e.message, 'crit'); }
+    function fail(e) { patNotice('Not applied: ' + e.message, 'crit'); }  // inside an open form dialog when one is open
     let regionNames = null;
     try { regionNames = new Intl.DisplayNames(['en'], {type: 'region'}); } catch (_) {}
     function country(cc) {
@@ -470,7 +469,7 @@
         }
         const rows = (await api('/uplinks/probes')).rows;
         fill('tbl-probes', rows.map(p => [p.gateway, p.kind, p.target, p.port === null ? '-' : p.port, p.name || '-', p.critical ? 'yes' : 'no', p.enabled ? 'yes' : 'no',
-            el('button', {class: 'btn btn-danger btn-sm', text: 'Delete', 'data-id': p.id})]));
+            el('button', {class: 'ui-btn danger sm', text: 'Delete', 'data-id': p.id})]));
         document.querySelectorAll('#tbl-probes button').forEach(b => b.addEventListener('click', async () => {
             if (!confirm('Delete this probe?')) return;
             try { await api('/uplinks/probes/' + b.dataset.id, 'DELETE'); loadUplinks(); } catch (e) { fail(e); }
@@ -490,7 +489,7 @@
         const f = $('insight-settings-form');
         f.elements['enabled'].checked = s.enabled; f.elements['retention_days'].value = s.retention_days; f.elements['top_n'].value = s.top_n;
         $('set-note').textContent = 'Hourly totals per device, direction, country and ASN, kept for ' + s.retention_days + ' days (at most ' + s.top_n + ' rows per hour; the smallest are folded into "Unknown").';
-        fill('tbl-excl', ex.rows.map(r => [r.kind, r.ref, el('button', {class: 'btn btn-secondary btn-sm', text: 'Record again', 'data-k': r.kind, 'data-r': r.ref})]));
+        fill('tbl-excl', ex.rows.map(r => [r.kind, r.ref, el('button', {class: 'ui-btn sm', text: 'Record again', 'data-k': r.kind, 'data-r': r.ref})]));
         document.querySelectorAll('#tbl-excl button').forEach(b => b.addEventListener('click', async () => {
             try { await api('/insights/exclusions?kind=' + encodeURIComponent(b.dataset.k) + '&ref=' + encodeURIComponent(b.dataset.r), 'DELETE'); loadSettings(); } catch (e) { fail(e); }
         }));
@@ -524,12 +523,21 @@
 
     const loaders = {countries: loadCountries, asns: loadAsns, devices: loadDevices, uplinks: loadUplinks, settings: loadSettings};
     function openTab(name) {
-        document.querySelectorAll('.ins-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+        document.querySelectorAll('.ins-tab-btn').forEach(b => { const on = b.dataset.tab === name; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; });
         document.querySelectorAll('.ins-tab').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
         if (loaders[name]) loaders[name]();
         history.replaceState(null, '', '#' + name);
     }
     document.querySelectorAll('.ins-tab-btn').forEach(b => b.addEventListener('click', () => openTab(b.dataset.tab)));
+    // arrow keys move between the tabs (WAI-ARIA tabs pattern)
+    $('ins-tabs').addEventListener('keydown', e => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+        const tabs = [...document.querySelectorAll('.ins-tab-btn')], i = tabs.indexOf(document.activeElement);
+        if (i < 0) return;
+        e.preventDefault();
+        const n = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+        tabs[n].focus(); openTab(tabs[n].dataset.tab);
+    });
     document.querySelectorAll('#tab-countries .ins-window, #tab-countries .ins-device').forEach(e => e.addEventListener('change', loadCountries));
     document.querySelectorAll('#tab-asns .ins-window, #tab-asns .ins-device').forEach(e => e.addEventListener('change', loadAsns));
     document.querySelector('#tab-devices .ins-window').addEventListener('change', loadDevices);

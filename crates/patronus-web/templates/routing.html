@@ -13,8 +13,8 @@
         static routes. Saved to the configuration store, applied to the kernel at once and again at every boot.</p>
 </div>
 
-{% if !error.is_empty() %}<div class="alert-error">{{ error }}</div>{% endif %}
-{% for w in warnings %}<div class="alert-error" id="routing-warning">{{ w }}</div>{% endfor %}
+{% if !error.is_empty() %}<div class="ui-banner crit" role="alert">{{ error }}</div>{% endif %}
+{% for w in warnings %}<div class="ui-banner crit" role="alert" id="routing-warning">{{ w }}</div>{% endfor %}
 
 <div class="card">
     <div class="card-header"><h2 class="card-title">Gateways</h2></div>
@@ -23,7 +23,7 @@
         currently has. The monitor pings each gateway (or its monitor IP) once a second.
         {% if !monitor_running %}<b>Gateway monitor: not running yet</b> (it runs in <code>patronus applyd</code>).{% endif %}</p>
     {% if gateways.is_empty() %}<p class="empty">No gateways configured.</p>{% else %}
-    <table class="lan" id="gateways">
+    <table class="lan ui-grid" id="gateways">
         <thead><tr><th>Name</th><th>Interface</th><th>Address</th><th>Monitor</th><th>Status</th><th>Loss</th><th>RTT</th><th>Description</th><th></th></tr></thead>
         <tbody>
         {% for g in gateways %}
@@ -35,11 +35,11 @@
             <td class="gw-state"><span class="{{ g.state_class }}">{{ g.state }}</span>{% if !g.problem.is_empty() %}<br><span class="text-sm text-muted">{{ g.problem }}</span>{% endif %}</td>
             <td>{{ g.loss }}</td><td>{{ g.rtt }}</td>
             <td>{{ g.description }}</td>
-            <td><button class="btn btn-secondary btn-sm" onclick="editGateway(this)"
+            <td><button class="ui-btn sm" onclick="editGateway(this)"
                     data-name="{{ g.name }}" data-interface="{{ g.interface }}" data-family="{{ g.family }}"
                     data-address="{{ g.address }}" data-monitor="{{ g.monitor_ip }}" data-monitor-ips="{{ g.monitor_ips }}" data-reliability="{{ g.monitor_reliability }}" data-interval="{{ g.monitor_interval }}" data-down="{{ g.monitor_down }}" data-up="{{ g.monitor_up }}" data-monitor-enabled="{{ g.monitor_enabled }}"
                     data-loss="{{ g.loss_threshold }}" data-latency="{{ g.latency_threshold }}" data-failback="{{ g.failback_delay }}" data-ramp="{{ g.failback_ramp }}" data-description="{{ g.description }}">Edit</button>
-                <button class="btn btn-danger btn-sm" onclick="del('/api/routing/gateways/{{ g.name }}', 'Delete gateway {{ g.name }}?')">Delete</button></td>
+                <button class="ui-btn danger sm" onclick="del('/api/routing/gateways/{{ g.name }}', 'Delete gateway {{ g.name }}?')">Delete</button></td>
         </tr>
         {% endfor %}
         </tbody>
@@ -62,7 +62,7 @@
         <label>Failback delay s (0 = at once) <input type="number" name="failback_delay" value="0" min="0" max="3600"></label>
         <label>Failback ramp s (0 = at once) <input type="number" name="failback_ramp" value="0" min="0" max="3600"></label>
         <label>Description <input name="description"></label>
-        <button class="btn btn-primary btn-sm" type="submit" id="gateway-submit">Add gateway</button>
+        <button class="ui-btn primary sm" type="submit" id="gateway-submit">Add gateway</button>
     </form>
 </div>
 
@@ -75,7 +75,7 @@
         traffic; several usable members in that tier share it by weight; when the whole tier fails the next tier takes over.
         The trigger decides what makes a member unusable.</p>
     {% if groups.is_empty() %}<p class="empty">No gateway groups.</p>{% else %}
-    <table class="lan" id="gateway-groups">
+    <table class="lan ui-grid" id="gateway-groups">
         <thead><tr><th>Name</th><th>Trigger</th><th>Members (tier / weight / state)</th><th>Description</th><th></th></tr></thead>
         <tbody>
         {% for g in groups %}
@@ -84,9 +84,9 @@
             <td>{{ g.trigger }}</td>
             <td>{% for m in g.members %}<div class="mono">{{ m.gateway }} &middot; tier {{ m.tier }} &middot; weight {{ m.weight }} &middot; {{ m.state }}{% if m.active %} <span class="ok">active</span>{% endif %}</div>{% endfor %}</td>
             <td>{{ g.description }}</td>
-            <td><button class="btn btn-secondary btn-sm" onclick="editGroup(this)" data-name="{{ g.name }}" data-trigger="{{ g.trigger }}"
+            <td><button class="ui-btn sm" onclick="editGroup(this)" data-name="{{ g.name }}" data-trigger="{{ g.trigger }}"
                     data-members="{{ g.members_spec }}" data-description="{{ g.description }}">Edit</button>
-                <button class="btn btn-danger btn-sm" onclick="del('/api/routing/groups/{{ g.name }}', 'Delete group {{ g.name }}?')">Delete</button></td>
+                <button class="ui-btn danger sm" onclick="del('/api/routing/groups/{{ g.name }}', 'Delete group {{ g.name }}?')">Delete</button></td>
         </tr>
         {% endfor %}
         </tbody>
@@ -103,7 +103,7 @@
                 <option value="loss_latency">Packet loss or high latency</option>
             </select></label>
         <label>Description <input name="description"></label>
-        <button class="btn btn-primary btn-sm" type="submit" id="group-submit">Add group</button>
+        <button class="ui-btn primary sm" type="submit" id="group-submit">Add group</button>
     </form>
     {% endif %}
 </div>
@@ -123,8 +123,8 @@
                 <option value="">Automatic</option>
                 {% for c in choices6 %}<option value="{{ c }}" {% if c.as_str() == default6.as_str() %}selected{% endif %}>{{ c }}</option>{% endfor %}
             </select></label>
-        <button class="btn btn-primary btn-sm" type="submit">Save</button>
-        <button class="btn btn-secondary btn-sm" type="button" onclick="call('POST', '/api/routing/apply')">Re-apply</button>
+        <button class="ui-btn primary sm" type="submit">Save</button>
+        <button class="ui-btn sm" type="button" onclick="call('POST', '/api/routing/apply')">Re-apply</button>
     </form>
     <p class="text-sm" id="default-via">Now routing IPv4 via: <b>{% if default_via4.is_empty() %}automatic{% else %}{{ default_via4 }}{% endif %}</b>
         &middot; IPv6 via: <b>{% if default_via6.is_empty() %}automatic{% else %}{{ default_via6 }}{% endif %}</b></p>
@@ -133,17 +133,17 @@
 <div class="card">
     <div class="card-header"><h2 class="card-title">Static routes</h2></div>
     {% if routes.is_empty() %}<p class="empty">No static routes.</p>{% else %}
-    <table class="lan" id="static-routes">
+    <table class="lan ui-grid" id="static-routes">
         <thead><tr><th>Destination</th><th>Gateway</th><th>Interface</th><th>Metric</th><th>Enabled</th><th>Description</th><th></th></tr></thead>
         <tbody>
         {% for r in routes %}
         <tr>
             <td class="mono">{{ r.destination }}</td><td class="mono">{{ r.gateway }}</td><td>{{ r.interface }}</td>
             <td>{{ r.metric }}</td><td>{% if r.enabled %}yes{% else %}no{% endif %}</td><td>{{ r.description }}</td>
-            <td><button class="btn btn-secondary btn-sm" onclick="editRoute(this)" data-id="{{ r.id }}" data-destination="{{ r.destination }}"
+            <td><button class="ui-btn sm" onclick="editRoute(this)" data-id="{{ r.id }}" data-destination="{{ r.destination }}"
                     data-gateway="{{ r.gateway }}" data-interface="{{ r.interface }}" data-metric="{{ r.metric }}"
                     data-enabled="{{ r.enabled }}" data-description="{{ r.description }}">Edit</button>
-                <button class="btn btn-danger btn-sm" onclick="del('/api/routing/routes/{{ r.id }}', 'Delete the route to {{ r.destination }}?')">Delete</button></td>
+                <button class="ui-btn danger sm" onclick="del('/api/routing/routes/{{ r.id }}', 'Delete the route to {{ r.destination }}?')">Delete</button></td>
         </tr>
         {% endfor %}
         </tbody>
@@ -156,7 +156,7 @@
         <label>Metric <input type="number" name="metric" min="0"></label>
         <label>Enabled <input type="checkbox" name="enabled" checked></label>
         <label>Description <input name="description"></label>
-        <button class="btn btn-primary btn-sm" type="submit" id="route-submit">Add route</button>
+        <button class="ui-btn primary sm" type="submit" id="route-submit">Add route</button>
     </form>
 </div>
 
@@ -166,7 +166,7 @@
         protocol 251 (static), 252 (monitor) and 253 (default gateway).</p>
     {% if !kernel_error.is_empty() %}<p class="bad">Routing table unavailable: {{ kernel_error }}</p>
     {% else if kernel_routes.is_empty() %}<p class="empty">The routing table is empty.</p>{% else %}
-    <table class="lan" id="kernel-routes">
+    <table class="lan ui-grid" id="kernel-routes">
         <thead><tr><th>Destination</th><th>Gateway</th><th>Interface</th><th>Metric</th><th>Origin</th></tr></thead>
         <tbody>
         {% for r in kernel_routes %}
