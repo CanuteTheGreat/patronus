@@ -95,6 +95,9 @@ pub fn build_router(
             "/brand/full.webp",
             get(|| brand_asset(BRAND_FULL, "image/webp")),
         )
+        // The shared ui-kit (vendored, pinned in ui-kit/ui-kit.pin) and the Patronus theme layer,
+        // compiled in like the brand assets; every page links them from theme_head.html.
+        .route("/ui-kit/:file", get(ui_kit_asset))
         // Prometheus/OpenMetrics text for collectors (session or API key)
         .route("/metrics", get(api::telemetry::metrics))
         // API routes (JSON)
@@ -179,6 +182,41 @@ async fn brand_asset(
     )
 }
 
+const UI_KIT: &[(&str, &str, &str)] = &[
+    ("tokens.css", "text/css; charset=utf-8", include_str!("../../ui-kit/tokens.css")),
+    ("components.css", "text/css; charset=utf-8", include_str!("../../ui-kit/components.css")),
+    ("patronus.css", "text/css; charset=utf-8", include_str!("../../theme/patronus.css")),
+    ("ui.js", "text/javascript; charset=utf-8", include_str!("../../ui-kit/ui.js")),
+];
+
+/// One ui-kit asset. Browsers revalidate (`no-cache`) with the build's ETag, so a firmware or package
+/// update never leaves an old stylesheet in a cache while a 304 keeps repeat page loads cheap.
+async fn ui_kit_asset(
+    axum::extract::Path(file): axum::extract::Path<String>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    use axum::http::{header, StatusCode};
+    use axum::response::IntoResponse;
+    let Some((_, ctype, body)) = UI_KIT.iter().find(|(n, _, _)| *n == file) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let etag = format!("\"{}-{:x}\"", env!("CARGO_PKG_VERSION"), fnv1a(body.as_bytes()));
+    let cache = [(header::CACHE_CONTROL, "no-cache".to_string()), (header::ETAG, etag.clone())];
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|t| t.trim() == etag))
+    {
+        return (StatusCode::NOT_MODIFIED, cache).into_response();
+    }
+    (cache, [(header::CONTENT_TYPE, *ctype)], *body).into_response()
+}
+
+fn fnv1a(b: &[u8]) -> u64 {
+    b.iter()
+        .fold(0xcbf2_9ce4_8422_2325, |h, &x| (h ^ x as u64).wrapping_mul(0x100_0000_01b3))
+}
+
 /// Paths reachable without a session.
 fn is_public(method: &axum::http::Method, path: &str) -> bool {
     use axum::http::Method;
@@ -189,6 +227,7 @@ fn is_public(method: &axum::http::Method, path: &str) -> bool {
         || path == "/favicon-32.png"
         || path == "/apple-touch-icon.png"
         || path.starts_with("/brand/")
+        || path.starts_with("/ui-kit/")
         || path.starts_with("/static/")
         || (method == Method::POST && path == "/api/auth/login")
 }

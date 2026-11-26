@@ -35,6 +35,7 @@ pub fn area_for_path(path: &str) -> Option<&'static str> {
     // The license information is for every signed-in account (GPL notices must stay reachable), not a
     // privilege of any group.
     if path.starts_with("/static/")
+        || path.starts_with("/ui-kit/")
         || path.starts_with("/api/auth/")
         || path == "/login"
         || path == "/licenses"
