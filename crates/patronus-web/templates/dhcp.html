@@ -260,7 +260,7 @@
     }
     function makeStatic(btn) {
         const f = document.querySelector('form[id^="static-form-"]');
-        if (!f) { alert('Add a DHCP pool first.'); return; }
+        if (!f) { patNotice('Add a DHCP pool first.', 'crit'); return; }
         f.elements['mac'].value = btn.dataset.mac;
         f.elements['hostname'].value = btn.dataset.host;
         f.elements['ip'].focus();

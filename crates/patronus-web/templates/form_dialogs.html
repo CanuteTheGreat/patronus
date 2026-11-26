@@ -1,0 +1,99 @@
+{# Form dialogs (ui-kit): a <form class="lan-form" data-dialog="Add X"> becomes a modal dialog opened by an "Add X"
+   toolbar button above its list. Include it AFTER the forms. Used by lan_js.html and by pages with their own API code. #}
+<script>
+    // A refused change is shown next to what was typed: in the open dialog (role=alert), else in a banner at the
+    // top of the page; nothing typed is lost (the page reloads only after a change was applied).
+    function lanError(text) {
+        const d = document.querySelector('dialog.lan-dialog[open]');
+        let m = d && d.querySelector('.lan-dialog-msg');
+        if (!m) {
+            m = document.getElementById('lan-msg');
+            if (!m) {
+                m = document.createElement('div'); m.id = 'lan-msg'; m.className = 'ui-banner crit'; m.setAttribute('role', 'alert');
+                const c = document.querySelector('.content .page-header') || document.querySelector('.content');
+                if (c) c.after ? c.after(m) : c.appendChild(m);
+            }
+        }
+        m.textContent = text; m.hidden = false;
+        if (!d && m.scrollIntoView) m.scrollIntoView({block: 'nearest'});
+    }
+    // Add/edit forms open in dialogs (ui-kit): a form with data-dialog="Add X" is moved into a <dialog> and an
+    // "Add X" button takes its place in a toolbar; pages that fill a form for an edit call lanShowForm(form, title).
+    // Without JavaScript the form simply stays where it is.
+    let lanOpener = null;
+    function lanShowForm(form, title) {
+        const d = form.closest('dialog.lan-dialog');
+        if (!d) { form.scrollIntoView({block: 'center'}); return; }
+        d.querySelector('header').textContent = title || form.dataset.dialog;
+        const m = d.querySelector('.lan-dialog-msg'); m.textContent = ''; m.hidden = true;
+        if (!d.open) { lanOpener = document.activeElement; d.showModal(); }
+        const first = [...form.elements].find(e => e.type !== 'hidden' && !e.readOnly && !e.disabled && e.offsetParent !== null && e.tagName !== 'BUTTON');
+        if (first) first.focus();
+    }
+    (function () {
+        document.querySelectorAll('form.lan-form[data-dialog]').forEach((form, n) => {
+            const title = form.dataset.dialog;
+            // the list this form adds to: data-for, else the last table before it in the same card
+            const card = form.closest('.card');
+            const table = form.dataset.for ? document.getElementById(form.dataset.for)
+                : card ? [...card.querySelectorAll('table')].filter(t => t.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).pop() : null;
+            const dlg = document.createElement('dialog');
+            dlg.className = 'ui-dialog lan-dialog';
+            const id = (form.id || ('lan-form-' + n)) + '-dlg';
+            dlg.id = id; dlg.setAttribute('aria-labelledby', id + '-t');
+            const tb = document.createElement('div'); tb.className = 'ui-toolbar lan-toolbar';
+            const add = document.createElement('button'); add.type = 'button'; add.className = 'ui-btn primary sm'; add.textContent = title;
+            add.dataset.open = form.id || id;
+            const wrap = document.createElement('div'); wrap.appendChild(add); tb.appendChild(wrap);
+            form.before(tb);
+            dlg.innerHTML = '<header id="' + id + '-t"></header>';
+            form.before(dlg);
+            const body = document.createElement('div'); body.className = 'ui-dialog-body';
+            while (form.firstChild) body.appendChild(form.firstChild);
+            const msg = document.createElement('div'); msg.className = 'ui-banner crit lan-dialog-msg'; msg.setAttribute('role', 'alert'); msg.hidden = true;
+            body.appendChild(msg);
+            const foot = document.createElement('footer');
+            const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'ui-btn'; cancel.textContent = 'Cancel';
+            cancel.onclick = () => dlg.close();
+            foot.appendChild(cancel);
+            body.querySelectorAll('button[type=submit], input[type=submit]').forEach(b => { b.classList.remove('btn', 'btn-primary', 'btn-secondary', 'btn-sm'); b.classList.add('ui-btn', 'primary'); foot.appendChild(b); });
+            // the form's own "cancel edit" buttons are the dialog's Cancel now; page actions (Re-apply, ...) go to the toolbar
+            body.querySelectorAll('button[type=button]').forEach(b => {
+                if (/^\s*cancel/i.test(b.textContent) || /-cancel$/.test(b.id)) { b.dataset.dialogHidden = ''; return; }
+                b.classList.remove('btn', 'btn-primary', 'btn-secondary'); b.classList.add('ui-btn', 'sm'); wrap.appendChild(b);
+            });
+            form.appendChild(body); form.appendChild(foot);
+            dlg.appendChild(form);
+            // an edit changes labels and locks fields: Add puts the form back the way the page rendered it
+            const initial = [...form.elements].map(e => [e, e.readOnly, e.disabled]);
+            const labels = [...form.querySelectorAll('button')].map(b => [b, b.textContent, b.hidden]);
+            add.onclick = () => {
+                form.reset();
+                form.querySelectorAll('input[type=hidden]').forEach(i => { if (!i.dataset.keep) i.value = ''; });
+                initial.forEach(([e, ro, dis]) => { e.readOnly = ro; e.disabled = dis; });
+                labels.forEach(([b, t, h]) => { b.textContent = t; b.hidden = h; });
+                lanShowForm(form, title);
+            };
+            dlg.addEventListener('close', () => { if (lanOpener && lanOpener.focus) lanOpener.focus(); lanOpener = null; });
+            // pages that do not reload after a save reset the form once it was applied: that closes the dialog
+            form.addEventListener('reset', () => { if (dlg.open) dlg.close(); });
+            // the toolbar goes right above that list, or under the card's title when the list is still empty
+            const head = card && card.querySelector(':scope > .card-header');
+            if (table) (table.closest('.ui-grid-wrap, .table-container') || table).before(tb);
+            else if (head) head.after(tb);
+        });
+    })();
+</script>
+<style>
+    .lan-dialog { width: min(720px, calc(100vw - 24px)); }
+    .lan-dialog .ui-dialog-body { max-height: calc(100vh - 180px); overflow: auto; }
+    .lan-dialog form.lan-form { display: block; margin: 0; padding: 0; border: 0; background: none; }
+    .lan-dialog .ui-dialog-body label { display: flex; flex-direction: column; gap: 2px; margin-bottom: var(--s-2); font-size: var(--fs-sm); }
+    .lan-dialog .ui-dialog-body label:has(> input[type=checkbox]) { flex-direction: row; align-items: center; gap: 6px; }
+    .lan-dialog .ui-dialog-body input:not([type=checkbox]), .lan-dialog .ui-dialog-body select, .lan-dialog .ui-dialog-body textarea { width: 100%; }
+    .lan-toolbar { margin: var(--s-2) 0; }
+    #lan-msg { margin: var(--s-2) 0 var(--s-3); }
+    .lan-dialog-msg[hidden], #lan-msg[hidden], .lan-dialog [data-dialog-hidden] { display: none !important; }
+    .lan-dialog form.lan-form input[type=checkbox] { min-width: 0; width: auto; }
+    .lan-toolbar > div { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+</style>

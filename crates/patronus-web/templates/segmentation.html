@@ -5,32 +5,21 @@
 {% block extra_head %}
 {% include "lan_head.html" %}
 <style>
-    .seg-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 0 0 14px; border-bottom: 1px solid var(--line); }
-    .seg-tab { padding: 8px 14px; cursor: pointer; border: 0; background: none; font-size: 0.95em; color: var(--muted); border-bottom: 2px solid transparent; }
-    .seg-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .seg-tabs { flex-wrap: wrap; margin: 0 0 14px; }
     .seg-panel { display: none; }
     .seg-panel.active { display: block; }
     .seg-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    .seg-note { background: var(--note-bg); border: 1px solid var(--note-bd); color: var(--note-fg); padding: 10px 12px; border-radius: 6px; margin: 8px 0 14px; font-size: 0.88em; line-height: 1.45; }
-    .seg-note.warn { background: var(--wnote-bg); border-color: var(--wnote-bd); color: var(--wnote-fg); }
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.78em; font-weight: 600; background: var(--line); color: var(--ink-2); }
-    .badge.on { background: var(--ok-bg); color: var(--ok-fg); }
-    .badge.off { background: var(--surface-2); color: var(--muted); }
-    .badge.pending { background: var(--warn-bg); color: var(--warn-fg); }
-    .badge.revoked { background: var(--bad-bg); color: var(--bad-fg); }
-    .badge.quar { background: var(--quar-bg); color: var(--quar-fg); }
+    .seg-note { margin: 8px 0 14px; line-height: 1.45; }
+    .seg-note:empty { display: none; }
     .seg-seg { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--surface-2); }
     .seg-seg .name { font-weight: 600; min-width: 90px; }
     .seg-seg .meta { color: var(--muted); font-size: 0.85em; flex: 1 1 200px; }
-    button.small { padding: 3px 9px; font-size: 0.82em; border: 1px solid var(--line-strong); background: var(--card-bg); border-radius: 4px; cursor: pointer; }
-    button.small.danger { color: var(--bad-fg); border-color: var(--bad-bg); }
-    button.small.primary { color: #fff; background: var(--b-blue); border-color: var(--accent); }
+    td > .ui-btn + .ui-btn, td > select + .ui-btn { margin-left: 4px; }
     pre.seg-pre { background: var(--surface-2); padding: 8px 10px; border-radius: 6px; max-height: 320px; overflow: auto; font-size: 0.78em; white-space: pre; }
     @media (max-width: 640px) {
         form.lan-form { flex-direction: column; align-items: stretch; }
         form.lan-form input, form.lan-form select { min-width: 0; width: 100%; box-sizing: border-box; }
         table.lan th, table.lan td { padding: 6px 5px; font-size: 0.82em; }
-        .seg-tab { padding: 8px 10px; }
         /* devices: keep name, MAC, address, group, state and the buttons; drop kind and last seen */
         #seg-devices-table th:nth-child(5), #seg-devices-table td:nth-child(5),
         #seg-devices-table th:nth-child(7), #seg-devices-table td:nth-child(7) { display: none; }
@@ -55,112 +44,113 @@
     <p class="page-subtitle">Groups of devices, default-deny isolation between them, one-way service rules. Opt-in per interface.</p>
 </div>
 
-<div id="seg-error" class="alert-error" style="display:none"></div>
-<div id="seg-warn" class="seg-note warn" style="display:none"></div>
+<div id="seg-error" class="ui-banner crit" role="alert" style="display:none"></div>
+<div id="seg-warn" class="ui-banner warn seg-note" style="display:none"></div>
 
 <div class="card">
     <div class="card-header"><h2 class="card-title">Isolation</h2></div>
-    <div class="seg-note" id="seg-optin"></div>
+    <div class="ui-banner info seg-note" id="seg-optin"></div>
     <div id="seg-segments"><p class="empty">Loading...</p></div>
-    <div class="seg-note warn" id="seg-wired"></div>
+    <div class="ui-banner warn seg-note" id="seg-wired"></div>
 </div>
 
-<div class="seg-tabs" role="tablist">
-    <button class="seg-tab active" data-tab="devices" onclick="segTab('devices')">Devices</button>
-    <button class="seg-tab" data-tab="discovered" onclick="segTab('discovered')">Discovered</button>
-    <button class="seg-tab" data-tab="groups" onclick="segTab('groups')">Groups &amp; policy</button>
-    {% if wifi %}<button class="seg-tab" data-tab="wifi" onclick="segTab('wifi')">Wi-Fi</button>{% endif %}
-    <button class="seg-tab" data-tab="status" onclick="segTab('status')">Status</button>
-    <a class="seg-tab" style="text-decoration:none" href="/segmentation/time">Time limits</a>
-    <a class="seg-tab" style="text-decoration:none" href="/segmentation/dns">DNS policy &amp; logs</a>
+<div class="ui-tabs seg-tabs" role="tablist" aria-label="Segmentation sections">
+    <button class="seg-tab" role="tab" aria-selected="true" aria-controls="tab-devices" data-tab="devices" onclick="segTab('devices')">Devices</button>
+    <button class="seg-tab" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-discovered" data-tab="discovered" onclick="segTab('discovered')">Discovered</button>
+    <button class="seg-tab" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-groups" data-tab="groups" onclick="segTab('groups')">Groups &amp; policy</button>
+    {% if wifi %}<button class="seg-tab" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-wifi" data-tab="wifi" onclick="segTab('wifi')">Wi-Fi</button>{% endif %}
+    <button class="seg-tab" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-status" data-tab="status" onclick="segTab('status')">Status</button>
+    <a class="seg-tab" href="/segmentation/time">Time limits</a>
+    <a class="seg-tab" href="/segmentation/dns">DNS policy &amp; logs</a>
 </div>
 
-<div class="seg-panel active card" id="tab-devices">
-    <div class="seg-wrap"><table class="lan" id="seg-devices-table"><thead><tr>
+<div class="seg-panel active card" id="tab-devices" role="tabpanel">
+    <div class="seg-wrap ui-grid-wrap"><table class="lan ui-grid" id="seg-devices-table"><thead><tr>
         <th>Name</th><th>MAC</th><th>IPv4</th><th>Group</th><th>Kind</th><th>State</th><th>Last seen</th><th></th>
     </tr></thead><tbody></tbody></table></div>
     <p class="empty" id="seg-devices-empty" style="display:none">No devices yet. Switch isolation on above to adopt what is on the network, or add one below.</p>
     {% if can_modify %}
-    <h3>Add a device</h3>
-    <form class="lan-form" onsubmit="return segAddDevice(event)">
+    <form class="lan-form" id="seg-device-form" data-dialog="Add a device" onsubmit="return segAddDevice(event)">
         <label>Name<input name="name" required pattern="[a-z0-9_\-]{1,32}" placeholder="living-room-tv"></label>
         <label>MAC<input name="mac" placeholder="aa:bb:cc:dd:ee:ff"></label>
         <label>Group<select name="group" class="seg-group-select"></select></label>
         <label>Segment<select name="segment" class="seg-segment-select"></select></label>
         <label>Kind<select name="kind"><option>wired</option><option>wifi</option></select></label>
         <label>IPv4 (blank = allocate)<input name="ip4" placeholder="auto"></label>
-        <button class="btn btn-primary" type="submit">Add</button>
+        <button class="ui-btn primary" type="submit">Add</button>
     </form>
     {% endif %}
 </div>
 
-<div class="seg-panel card" id="tab-discovered">
+<div class="seg-panel card" id="tab-discovered" role="tabpanel">
     <p>Hosts seen in the DHCP leases and the neighbour table that are not enrolled. While isolation is on they can reach DHCP, DNS and ping on the router, and nothing else.</p>
-    <div class="seg-wrap"><table class="lan" id="seg-disc-table"><thead><tr>
+    <div class="seg-wrap ui-grid-wrap"><table class="lan ui-grid" id="seg-disc-table"><thead><tr>
         <th>MAC</th><th>IPv4</th><th>Hostname</th><th>Segment</th><th></th>
     </tr></thead><tbody></tbody></table></div>
     <p class="empty" id="seg-disc-empty" style="display:none">Nothing unknown on the network.</p>
 </div>
 
-<div class="seg-panel card" id="tab-groups">
+<div class="seg-panel card" id="tab-groups" role="tabpanel">
     <h3>Groups</h3>
-    <div class="seg-wrap"><table class="lan" id="seg-groups-table"><thead><tr>
+    <div class="seg-wrap ui-grid-wrap"><table class="lan ui-grid" id="seg-groups-table"><thead><tr>
         <th>Name</th><th>Members</th><th>Talk to each other</th><th>Internet</th><th>Kind</th><th></th>
     </tr></thead><tbody></tbody></table></div>
     {% if can_modify %}
-    <form class="lan-form" onsubmit="return segAddGroup(event)">
+    <form class="lan-form" id="seg-group-form" data-dialog="Add group" onsubmit="return segAddGroup(event)">
         <label>Name<input name="name" required pattern="[a-z0-9_\-]{1,32}" placeholder="iot"></label>
         <label>Members talk to each other<select name="intra"><option value="true">yes</option><option value="false">no</option></select></label>
         <label>Internet<select name="internet"><option>allow</option><option>deny</option></select></label>
-        <button class="btn btn-primary" type="submit">Add group</button>
+        <button class="ui-btn primary" type="submit">Add group</button>
     </form>
     {% endif %}
-    <h3>Links <span class="badge off">both directions</span></h3>
-    <p class="seg-note">A link lets two groups open new connections to each other, in both directions.</p>
-    <div class="seg-wrap"><table class="lan" id="seg-links-table"><thead><tr><th>Group</th><th>Group</th><th></th></tr></thead><tbody></tbody></table></div>
+    <h3>Links <span class="ui-badge">both directions</span></h3>
+    <p class="ui-banner info seg-note">A link lets two groups open new connections to each other, in both directions.</p>
+    <div class="seg-wrap ui-grid-wrap"><table class="lan ui-grid" id="seg-links-table"><thead><tr><th>Group</th><th>Group</th><th></th></tr></thead><tbody></tbody></table></div>
     {% if can_modify %}
-    <form class="lan-form" onsubmit="return segAddLink(event)">
+    <form class="lan-form" id="seg-link-form" data-dialog="Link two groups" onsubmit="return segAddLink(event)">
         <label>Group<select name="a" class="seg-group-select"></select></label>
         <label>Group<select name="b" class="seg-group-select"></select></label>
-        <button class="btn btn-primary" type="submit">Link</button>
+        <button class="ui-btn primary" type="submit">Link</button>
     </form>
     {% endif %}
     <h3>One-way service rules</h3>
-    <p class="seg-note">The source may open new connections to the destination on these ports. Replies are allowed, the reverse direction stays denied.</p>
-    <div class="seg-wrap"><table class="lan" id="seg-services-table"><thead><tr><th>Name</th><th>From</th><th>To</th><th>Protocol</th><th>Ports</th><th></th></tr></thead><tbody></tbody></table></div>
+    <p class="ui-banner info seg-note">The source may open new connections to the destination on these ports. Replies are allowed, the reverse direction stays denied.</p>
+    <div class="seg-wrap ui-grid-wrap"><table class="lan ui-grid" id="seg-services-table"><thead><tr><th>Name</th><th>From</th><th>To</th><th>Protocol</th><th>Ports</th><th></th></tr></thead><tbody></tbody></table></div>
     {% if can_modify %}
-    <form class="lan-form" onsubmit="return segAddService(event)">
+    <form class="lan-form" id="seg-service-form" data-dialog="Add service rule" onsubmit="return segAddService(event)">
         <label>Name<input name="name" required pattern="[a-z0-9_\-]{1,32}" placeholder="laptop-printer"></label>
         <label>From<select name="src" class="seg-endpoint-select"></select></label>
         <label>To<select name="dst" class="seg-endpoint-select"></select></label>
         <label>Protocol<select name="proto"><option>tcp</option><option>udp</option></select></label>
         <label>Ports<input name="ports" required placeholder="631,9100"></label>
-        <button class="btn btn-primary" type="submit">Add rule</button>
+        <button class="ui-btn primary" type="submit">Add rule</button>
     </form>
     {% endif %}
 </div>
 
 {% if wifi %}
-<div class="seg-panel card" id="tab-wifi">
+<div class="seg-panel card" id="tab-wifi" role="tabpanel">
     <div id="seg-wifi"><p class="empty">Loading...</p></div>
 </div>
 {% endif %}
 
-<div class="seg-panel card" id="tab-status">
+<div class="seg-panel card" id="tab-status" role="tabpanel">
     <h3>Layer 2</h3>
     <pre class="seg-pre" id="seg-l2">...</pre>
-    <h3>Rendered nftables table <button class="small" onclick="segPreview()">Refresh</button></h3>
+    <h3>Rendered nftables table <button class="ui-btn sm" type="button" onclick="segPreview()">Refresh</button></h3>
     <pre class="seg-pre" id="seg-nft">Press Refresh.</pre>
 </div>
 {% endblock %}
 
 {% block extra_scripts %}
+{% include "form_dialogs.html" %}
 <script>
     const CAN_MODIFY = {% if can_modify %}true{% else %}false{% endif %};
     const HAS_WIFI = {% if wifi %}true{% else %}false{% endif %};
     let SEG = null;
 
     function showError(msg) {
+        if (msg && typeof lanError === 'function' && document.querySelector('dialog.lan-dialog[open]')) { lanError(msg); return; }
         const el = document.getElementById('seg-error');
         el.textContent = msg; el.style.display = msg ? '' : 'none';
         if (msg) window.scrollTo({top: 0, behavior: 'smooth'});
@@ -175,16 +165,31 @@
         return j;
     }
     function segTab(name) {
-        for (const t of document.querySelectorAll('.seg-tab')) t.classList.toggle('active', t.dataset.tab === name);
+        for (const t of document.querySelectorAll('.seg-tab[role=tab]')) { const on = t.dataset.tab === name; t.setAttribute('aria-selected', String(on)); t.tabIndex = on ? 0 : -1; }
         for (const p of document.querySelectorAll('.seg-panel')) p.classList.toggle('active', p.id === 'tab-' + name);
         if (name === 'discovered') segLoadDiscovered();
         if (name === 'status') segPreview();
         if (name === 'wifi' && typeof wifiLoad === 'function') wifiLoad();
         history.replaceState(null, '', '#' + name);
     }
+    document.querySelector('.seg-tabs').addEventListener('keydown', e => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+        const tabs = [...document.querySelectorAll('.seg-tab[role=tab]')], i = tabs.indexOf(document.activeElement);
+        if (i < 0) return;
+        e.preventDefault();
+        const n = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+        tabs[n].focus(); segTab(tabs[n].dataset.tab);
+    });
     function td(text, cls) { const c = document.createElement('td'); if (cls) c.className = cls; c.textContent = text === null || text === undefined ? '' : text; return c; }
-    function btn(label, cls, fn) { const b = document.createElement('button'); b.className = 'small ' + (cls || ''); b.textContent = label; b.onclick = fn; return b; }
-    function badge(text, cls) { const s = document.createElement('span'); s.className = 'badge ' + (cls || ''); s.textContent = text; return s; }
+    function btn(label, cls, fn) { const b = document.createElement('button'); b.type = 'button'; b.className = 'ui-btn sm ' + (cls || ''); b.textContent = label; b.onclick = fn; return b; }
+    // kit badge; the tone follows the state word (on = ok, pending/quarantine = warn, revoked = crit, off = neutral)
+    const BADGE_TONE = {on: 'ok', off: '', pending: 'warn', quar: 'warn', revoked: 'crit', disabled: '', expired: 'crit'};
+    function badge(text, cls) {
+        const tone = BADGE_TONE[cls || ''] !== undefined ? BADGE_TONE[cls || ''] : '';
+        const s = document.createElement('span'); s.className = 'ui-badge ' + tone + ' seg-badge-' + (cls || 'none');
+        if (tone) { const d = document.createElement('span'); d.className = 'ui-dot ' + tone; s.appendChild(d); }
+        s.appendChild(document.createTextNode(text)); return s;
+    }
     function ago(ts) {
         if (!ts) return '';
         const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
@@ -322,7 +327,7 @@
         ev.preventDefault(); const b = formBody(ev.target); b.intra = b.intra === 'true';
         const r = await segCall('POST', '/api/segmentation/groups', b); if (r) ev.target.reset(); return false;
     }
-    async function segAddLink(ev) { ev.preventDefault(); await segCall('POST', '/api/segmentation/links', formBody(ev.target)); return false; }
+    async function segAddLink(ev) { ev.preventDefault(); const r = await segCall('POST', '/api/segmentation/links', formBody(ev.target)); if (r) ev.target.reset(); return false; }
     async function segAddService(ev) { ev.preventDefault(); const r = await segCall('POST', '/api/segmentation/services', formBody(ev.target)); if (r) ev.target.reset(); return false; }
     async function segLoadDiscovered() {
         const d = await api('GET', '/api/segmentation/discovered'); if (!d) return;
