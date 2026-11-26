@@ -1893,6 +1893,7 @@ mod tests {
         fw.save_limiter(lim("cap", 4000)).await.unwrap();
         let mut with_lim = sample_rule("any");
         with_lim.name = Some("wl".into());
+        with_lim.chain = Some("forward".into());
         with_lim.limiter = Some("cap".into());
         with_lim.max_src_rate = Some(30);
         with_lim.max_src_rate_secs = Some(10);
