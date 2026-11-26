@@ -40,6 +40,14 @@ listen_addr = "0.0.0.0"
 # tls_cert = "/etc/patronus/tls/cert.pem"   # both empty = generated self-signed
 # tls_key = "/etc/patronus/tls/key.pem"
 
+[update]
+# Where updates come from (standard tier, Portage). Each key is optional; the
+# System page's Updates card (config store) overrides this file.
+# channel = "stable"            # stable (tagged releases) | testing (+ release candidates) | development (main, live ebuild)
+# overlay_uri = "https://github.com/CanuteTheGreat/patronus-overlay.git"   # git (https/ssh/git/file) or rsync:// mirror
+# binhost_uri = ""              # binary package host for Patronus packages; empty = build from source
+# repo_location = "/var/db/repos/patronus"
+
 [dns]
 # Enable DNS forwarder
 enabled = false
