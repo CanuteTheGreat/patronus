@@ -145,6 +145,7 @@ Letters: **S**poofing, **T**ampering, **R**epudiation, **I**nformation disclosur
 | T39 | D | A firewall that waits for a disk passphrase at boot | The installer encrypts only when an unattended unlock works on that box (TPM2-sealed key or a proven remote unlock); otherwise it installs unencrypted and says so. | `gentoo/live-iso/common/zfs-enc-test.py` |
 | T40 | E | Default credentials on a fresh install | None exist: the live installer creates the first administrator, and a router without one serves only the first-run claim (T17). | `ci/netlab/journey-first-boot.sh` |
 | T41 | I | Physical access (console, disk) | Out of scope beyond the above: console login needs a system account; disk encryption is the owner's choice (T39). | **UNTESTED** |
+| T61 | D | The one-click hardening baseline locks the admin out or changes more than was shown | Admin-only; computed on the server and shown as a dry run; refused (409) when the plan changed since the dry run; applied as one configuration revision that is restored automatically when an apply fails; never disables a rule or turns on a source guard that may carry the admin's own WAN session; keeps SSH passwords while no key or user CA is installed; Undo restores the revision (docs/SECURITY-OVERVIEW.md). | `ci/netlab/lane-b-security.sh`, `crates/patronus-web/src/security/tests.rs` |
 
 ## Review findings (code review done while writing this document)
 
