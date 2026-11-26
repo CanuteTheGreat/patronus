@@ -26,7 +26,6 @@ pub mod policy;
 pub mod site;
 pub mod status;
 pub mod tunnel;
-#[cfg(feature = "udp-relay")]
 pub mod udprelay;
 pub mod users;
 pub mod validate;
