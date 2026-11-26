@@ -1437,12 +1437,12 @@ mod tests {
         bad(&|c| c.vlans[0].vlan_id = 4095, "VLAN id");
         // the delegated-prefix size hint: 48..=64, only with DHCPv6 prefix delegation
         bad(
-            &|c| c.iface_mut("eth3").dhcp6_pd_len = Some(56),
+            &|c| c.iface_mut("eth0").dhcp6_pd_len = Some(56),
             "delegated prefix size needs",
         );
         bad(
             &|c| {
-                let i = c.iface_mut("eth3");
+                let i = c.iface_mut("eth0");
                 i.ipv6_mode = V6Mode::Dhcp6;
                 i.pd_downstream = vec!["bond0".into()];
                 i.dhcp6_pd_len = Some(40);
