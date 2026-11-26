@@ -89,6 +89,39 @@ pub fn diff(prev: &BTreeMap<String, String>, cur: &BTreeMap<String, String>) -> 
                     ),
                 ));
             }
+            // above the warning level (loss / latency) but still carrying traffic
+            "gwwarn" => {
+                let was = old.map(String::as_str).unwrap_or("");
+                if !new.is_empty() {
+                    out.push(ev(
+                        "gateway_warning",
+                        name,
+                        "warning",
+                        format!("gateway {name}: {new} above its warning level"),
+                    ));
+                } else if !was.is_empty() {
+                    out.push(ev(
+                        "gateway_warning_cleared",
+                        name,
+                        "info",
+                        format!("gateway {name}: back below its warning level ({was})"),
+                    ));
+                }
+            }
+            // kill states: "<at>|<count>|<why>"; a record seen for the first
+            // time (the watcher just started) is history, not news
+            "gwkill" => {
+                if old.is_some() && !new.is_empty() {
+                    let mut p = new.splitn(3, '|');
+                    let (_, n, why) = (p.next(), p.next().unwrap_or("0"), p.next().unwrap_or(""));
+                    out.push(ev(
+                        "gateway_states_killed",
+                        name,
+                        "info",
+                        format!("gateway {name}: {n} connection(s) deleted ({why})"),
+                    ));
+                }
+            }
             "group" => {
                 if let Some(old) = old {
                     out.push(ev(
@@ -279,6 +312,9 @@ pub const EVENT_KINDS: &[&str] = &[
     "gateway_down",
     "gateway_up",
     "gateway_degraded",
+    "gateway_warning",
+    "gateway_warning_cleared",
+    "gateway_states_killed",
     "uplink_probe_failed",
     "uplink_probe_recovered",
     "uplink_sla_breach",
@@ -969,6 +1005,7 @@ pub async fn summary(state: &AppState) -> Value {
                 "address": g["resolved_address"], "state": g["state"],
                 "rtt_ms": g["rtt_ms"], "loss_pct": g["loss_pct"], "since": g["since"],
                 "link_up": g["link_up"],
+                "warning": g["warning"], "killed": g["killed"],
             })
         })
         .collect();
@@ -1279,6 +1316,20 @@ pub fn state_vector(s: &Value) -> BTreeMap<String, String> {
     for g in s["gateways"].as_array().into_iter().flatten() {
         if let (Some(n), Some(st)) = (g["name"].as_str(), g["state"].as_str()) {
             m.insert(format!("gateway:{n}"), st.to_string());
+            m.insert(
+                format!("gwwarn:{n}"),
+                g["warning"].as_str().unwrap_or("").to_string(),
+            );
+            m.insert(
+                format!("gwkill:{n}"),
+                match (g["killed"]["at"].as_i64(), g["killed"]["count"].as_u64()) {
+                    (Some(at), Some(c)) => format!(
+                        "{at}|{c}|{}",
+                        g["killed"]["why"].as_str().unwrap_or("").replace('|', "/")
+                    ),
+                    _ => String::new(),
+                },
+            );
         }
     }
     for g in s["gateway_groups"].as_array().into_iter().flatten() {
@@ -1443,6 +1494,38 @@ mod tests {
         let c = m(&[("gateway:WAN", "online"), ("gateway:OPT", "online")]);
         let e = diff(&b, &c);
         assert_eq!(kinds(&e).iter().filter(|k| k.0 == "gateway_up").count(), 2);
+    }
+
+    #[test]
+    fn warning_levels_and_kill_states_become_events() {
+        let a = m(&[("gwwarn:WAN", ""), ("gwkill:WAN", "")]);
+        // above the warning level: one warning event; staying there is quiet
+        let b = m(&[("gwwarn:WAN", "latency"), ("gwkill:WAN", "")]);
+        let e = diff(&a, &b);
+        assert_eq!(kinds(&e), vec![("gateway_warning", "WAN")]);
+        assert_eq!(e[0].severity, "warning");
+        assert!(diff(&b, &b).is_empty());
+        // changing from one reason to the other is news again, clearing too
+        let c = m(&[("gwwarn:WAN", "loss"), ("gwkill:WAN", "")]);
+        assert_eq!(kinds(&diff(&b, &c)), vec![("gateway_warning", "WAN")]);
+        let e = diff(&c, &a);
+        assert_eq!(kinds(&e), vec![("gateway_warning_cleared", "WAN")]);
+        assert!(e[0].detail.contains("loss"));
+        // connections deleted: reported with count and reason
+        let k = m(&[("gwwarn:WAN", ""), ("gwkill:WAN", "1700000000|7|WAN left group LB")]);
+        let e = diff(&a, &k);
+        assert_eq!(kinds(&e), vec![("gateway_states_killed", "WAN")]);
+        assert!(e[0].detail.contains("7 connection(s)") && e[0].detail.contains("left group LB"));
+        // a record already there when the watcher started is history
+        assert!(diff(&BTreeMap::new(), &k).is_empty());
+        // the state vector carries both
+        let v = state_vector(&serde_json::json!({"gateways": [{"name": "WAN", "state": "online",
+            "warning": "loss", "killed": {"at": 5, "count": 2, "why": "a|b"}}]}));
+        assert_eq!(v["gwwarn:WAN"], "loss");
+        assert_eq!(v["gwkill:WAN"], "5|2|a/b");
+        for k in ["gateway_warning", "gateway_warning_cleared", "gateway_states_killed"] {
+            assert!(EVENT_KINDS.contains(&k));
+        }
     }
 
     #[test]

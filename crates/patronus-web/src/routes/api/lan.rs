@@ -578,6 +578,9 @@ mod dns_routes {
         pub rebind_protection: bool,
         pub rebind_exceptions: String,
         pub upstream_tls: bool,
+        pub gateway_servers: bool,
+        /// DNS servers of the gateways that carry traffic now, comma separated
+        pub gateway_upstreams: String,
         pub upstream_tls_name: String,
         pub local_domain: String,
         pub cache_size: u32,
@@ -623,6 +626,13 @@ mod dns_routes {
             rebind_protection: set.rebind_protection,
             rebind_exceptions: set.rebind_exceptions.join(", "),
             upstream_tls: set.upstream_tls,
+            gateway_servers: set.gateway_servers,
+            gateway_upstreams: set
+                .gateway_upstreams
+                .iter()
+                .map(|a| a.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
             upstream_tls_name: set.upstream_tls_name.clone(),
             local_domain: set.local_domain.clone(),
             cache_size: set.cache_size,

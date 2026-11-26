@@ -23,6 +23,17 @@
 #    hashing on, connections from one client spread over both uplinks
 #  - policy routing: a firewall rule with a gateway sends one service out
 #    WAN2 while everything else uses the default gateway; survives reboot
+#  - multi-WAN polish (docs/MULTIWAN.md), tc netem on WAN1's upstream:
+#    * a warning level below the down threshold: warning shown + event + dashboard tile, the
+#      gateway keeps carrying traffic; trigger choice: a 'loss' group ignores high latency, a
+#      'latency' group fails over and back; a gateway's DNS server is pinned to it and listed as
+#      a resolver upstream while the gateway carries traffic
+#    * sticky connections: one client keeps one uplink for all its flows, clients get their own
+#      map entries, a lost uplink drops the assignments, a returning one does not rebalance,
+#      the timeout expires idle clients, switching it off removes the nft table
+#    * kill states: after a failover the stale NAT entry keeps a UDP/TCP flow on WAN1's address
+#      (none), with kill states (down) the flow moves to WAN2 within seconds, with down_recovery
+#      it moves back when WAN1 returns; the action is in the status, the page and an event
 #  - static routes via an IP and via a gateway name reach the kernel (proto
 #    251); bad input and deleting a gateway in use are refused (400)
 #  - reboot (fresh namespaces + `patronus apply`) rebuilds all of it; a
@@ -38,6 +49,8 @@ export NO_COLOR=1 CLICOLOR=0 PATRONUS_INIT=direct PATRONUS_NET_DIR=$T/net PATRON
 export PATRONUS_APPLYD_SOCKET=$T/applyd.sock PATRONUS_GATEWAY_STATUS=$T/gateway-status.json
 ISP2() { ip netns exec nl-isp2 "$@"; }
 APPLYD_PID=
+SRV_PID=
+SND_PID=
 
 dump() {
   echo "--- debug: rtr routes"; R ip -4 route 2>/dev/null || true; R ip -4 route show proto 253 2>/dev/null || true
@@ -73,7 +86,7 @@ applyd_stop() {
   APPLYD_PID=
   rm -f "$PATRONUS_APPLYD_SOCKET"
 }
-cleanup() { nl_web_stop; applyd_stop; nl_down; ip netns del nl-isp2 2>/dev/null || true; }
+cleanup() { kill $SND_PID $SRV_PID 2>/dev/null; nl_web_stop; applyd_stop; nl_down; ip netns del nl-isp2 2>/dev/null || true; }
 trap cleanup EXIT
 
 must() { # CODE METHOD PATH [JSON]
@@ -208,6 +221,217 @@ nl_ok "policy routing: :8080 leaves via WAN2 (sees 100.64.0.2) while :80 stays o
 must 400 POST /firewall/rules '{"name":"pbr-bad","chain":"forward","action":"accept","interface":"@lan","protocol":"tcp","destination":"198.51.100.10","port":"8081","description":"x","enabled":true,"gateway":"NOSUCH"}'
 must 400 POST /firewall/rules '{"name":"pbr-drop","chain":"forward","action":"drop","interface":"@lan","protocol":"tcp","destination":"198.51.100.10","port":"8082","description":"x","enabled":true,"gateway":"WAN2"}'
 nl_ok "a policy rule naming no gateway, or a drop rule with a gateway, is refused (400)"
+
+# --- 4c. thresholds, warning level, trigger choice (netem on WAN1's upstream) ---
+# Gateway WAN1 gets a warning level (40 ms) below its down threshold (100 ms), a DNS server of its own,
+# and the group FAILOVER a trigger. tc netem on the ISP side delays the replies the monitor sees.
+gwf() { # GATEWAY PYTHON-EXPR over g (the gateway's object in GET /routing)
+  nl_api GET /routing >/dev/null
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); g=[x for x in d["gateways"] if x["name"]==sys.argv[2]][0]; print(eval(sys.argv[3]))' "$NL_OUT" "$1" "$2"
+}
+gw_is() { [ "$(gwf "$1" 'g["state"]')" = "$2" ]; }
+gw_warning_is() { [ "$(gwf "$1" 'g["warning"] or ""')" = "$2" ]; }
+event_count() { nl_api GET "/events?kind=$1" >/dev/null; python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$NL_OUT"; }
+wait_event() { # KIND [MORE-THAN]
+  local n=${2:-0}
+  for _ in $(seq 1 60); do [ "$(event_count "$1")" -gt "$n" ] && return 0; sleep 1; done
+  fail "no $1 event: $(cat "$NL_OUT")"
+}
+set_group() { # JSON of the FAILOVER group
+  must 200 PUT /routing/groups/FAILOVER "$1"
+}
+GRP_FAILOVER='"name":"FAILOVER","members":"WAN1:1, WAN2:2"'
+
+must 200 PUT /routing/gateways/WAN1 '{"name":"WAN1","interface":"@wan","latency_threshold":100,"latency_warn":40,"loss_threshold":30,"loss_warn":10,"dns_servers":"198.51.100.53"}'
+must 400 PUT /routing/gateways/WAN1 '{"name":"WAN1","interface":"@wan","latency_threshold":100,"latency_warn":100}'
+must 400 PUT /routing/gateways/WAN1 '{"name":"WAN1","interface":"@wan","dns_servers":"2001:db8::53"}'
+nl_ok "gateway settings: warning level below the down threshold, DNS server of the right family only"
+wait_for "WAN1 online" 20 gw_is WAN1 online
+R ip -4 route show proto 252 | grep '198.51.100.53 via 203.0.113.1 dev rtr-wan' >/dev/null \
+  || fail "DNS server of WAN1 is not pinned to it: $(R ip -4 route show proto 252)"
+nl_ok "DNS server 198.51.100.53 of WAN1 is pinned to WAN1 with a host route (proto 252)"
+nl_web GET /dns
+grep -q 'id="gateway-upstreams"' "$NL_OUT" && grep -q 'now: 198.51.100.53' "$NL_OUT" \
+  || fail "DNS page does not list the active gateway's DNS server ($NL_CODE)"
+nl_ok "DNS page: the DNS server of the active gateway WAN1 is a resolver upstream"
+
+# the warning level shows and is notified, the gateway keeps carrying the traffic
+W0=$(event_count gateway_warning)
+ISP tc qdisc add dev up0 root netem delay 60ms
+wait_for "WAN1 warning: latency" 40 gw_warning_is WAN1 latency
+[ "$(gw_state WAN1)" = online ] || fail "a warning is not a failure: WAN1 is $(gw_state WAN1)"
+via_is 'via 203.0.113.1 dev rtr-wan' || fail "a warning must not move the default route: $(default_via)"
+[ "$(who)" = "$NL_RTR_WAN" ] || fail "WAN1 still carries the LAN while it only warns"
+wait_event gateway_warning "$W0"
+nl_web GET /
+grep -q 'data-uplink="WAN1"' "$NL_OUT" && grep -q 'warning: latency' "$NL_OUT" \
+  || fail "dashboard Uplinks tile does not show the WAN1 warning ($NL_CODE)"
+nl_ok "60 ms (warn 40, down 100): WAN1 warns, stays online and carries traffic; gateway_warning event; dashboard tile shows it"
+
+# trigger choice: a group that only reacts to packet loss ignores high latency ...
+set_group "{$GRP_FAILOVER,\"trigger\":\"loss\"}"
+ISP tc qdisc change dev up0 root netem delay 160ms
+wait_for "WAN1 state latency" 40 gw_is WAN1 latency
+sleep 3
+via_is 'via 203.0.113.1 dev rtr-wan' || fail "trigger loss must keep WAN1 while only the latency is high: $(default_via)"
+nl_ok "group trigger 'loss': WAN1 at 160 ms (down 100) stays in service"
+# ... the latency trigger leaves it
+D0=$(event_count gateway_degraded)
+set_group "{$GRP_FAILOVER,\"trigger\":\"latency\"}"
+t0=$(date +%s)
+wait_for "default route to move to WAN2 on latency" 20 via_is 'via 100.64.0.1 dev rtr-wan2'
+nl_ok "group trigger 'latency': default route moved to WAN2 after $(( $(date +%s) - t0 )) s"
+[ "$(who)" = 100.64.0.2 ] || fail "latency failover: the LAN should leave via WAN2"
+wait_event gateway_degraded "$D0"
+ISP tc qdisc del dev up0 root
+wait_for "WAN1 online again" 40 gw_is WAN1 online
+wait_for "default back on WAN1" 20 via_is 'via 203.0.113.1 dev rtr-wan'
+[ "$(who)" = "$NL_RTR_WAN" ] || fail "latency gone: the LAN should be back on WAN1"
+nl_ok "latency gone: group fails back, LAN traffic on WAN1 again"
+set_group "{$GRP_FAILOVER,\"trigger\":\"down\"}"
+
+# --- 4d. sticky connections in a load-balancing group ---------------------------
+CDEV=lan0
+for h in 11 12 13; do C ip addr add 192.168.50.$h/24 dev $CDEV; done
+who_from() { C curl -s --max-time 4 --interface "$1" "http://$NL_WWW/" | awk '{print $3}'; }
+LB="\"name\":\"FAILOVER\",\"members\":\"WAN1:1:1, WAN2:1:1\",\"trigger\":\"down\",\"kill_states\":\"none\""
+set_group "{$LB,\"sticky_secs\":300}"
+T4=$(R nft list table inet patronus_wan 2>&1) || fail "no sticky table: $T4"
+grep -q 'update @st' <<<"$T4" && grep -q 'numgen random mod 2' <<<"$T4" || fail "sticky rules: $T4"
+nl_ok "sticky group: nft table patronus_wan has the per-client map and the weighted pick"
+seen=$(for _ in $(seq 1 40); do who; done | sort | uniq -c)
+echo "$seen"
+[ "$(wc -l <<<"$seen")" = 1 ] || fail "sticky: one client must keep one uplink for all its flows: $seen"
+nl_ok "sticky: 40 connections from one client all used one uplink"
+for a in 192.168.50.11 192.168.50.12 192.168.50.13; do
+  s=$(for _ in $(seq 1 15); do who_from $a; done | sort | uniq -c)
+  [ "$(wc -l <<<"$s")" = 1 ] || fail "sticky: client $a was split over uplinks: $s"
+done
+MAPS=$(R nft list table inet patronus_wan)
+for a in 192.168.50.10 192.168.50.11 192.168.50.12 192.168.50.13; do
+  grep -q "$a" <<<"$MAPS" || fail "client $a has no sticky assignment: $MAPS"
+done
+grep -qE 'expires [0-9]+m' <<<"$MAPS" || fail "sticky entries carry a timeout: $MAPS"
+nl_ok "sticky: four clients each keep their own uplink; the assignments sit in the map with a timeout"
+
+# an uplink that goes away drops its clients' assignments; the client moves, and stays when it returns
+W1=$(who)
+if [ "$W1" = "$NL_RTR_WAN" ]; then BAD=ISP; BADWAN=WAN1; BADADDR=203.0.113.1/24; OTHER=100.64.0.2
+else BAD=ISP2; BADWAN=WAN2; BADADDR=100.64.0.1/24; OTHER=$NL_RTR_WAN; fi
+echo "client is on $W1; taking $BADWAN away"
+$BAD ip addr flush dev up0
+wait_for "$BADWAN down" 30 gw_is $BADWAN down
+client_on() { [ "$(who)" = "$1" ]; }
+wait_for "the client to move to the other uplink" 20 client_on "$OTHER"
+nl_ok "sticky: $BADWAN lost -> its clients are assigned again, the client now leaves via $OTHER"
+$BAD ip addr add $BADADDR dev up0
+wait_for "$BADWAN online again" 30 gw_is $BADWAN online
+sleep 2
+seen=$(for _ in $(seq 1 25); do who; done | sort | uniq -c)
+[ "$(wc -l <<<"$seen")" = 1 ] && grep -q "$OTHER" <<<"$seen" || fail "sticky: the client must stay on $OTHER after $BADWAN returns: $seen"
+nl_ok "sticky: $BADWAN is back, the client stays on $OTHER (affinity beats rebalancing)"
+# the timeout: an idle client's assignment disappears
+set_group "{$LB,\"sticky_secs\":0}"     # a new timeout applies to a fresh table: old entries keep theirs
+set_group "{$LB,\"sticky_secs\":3}"
+who >/dev/null; sleep 6
+MAPS=$(R nft list table inet patronus_wan)
+if grep -q '192.168.50.10' <<<"$MAPS"; then fail "sticky: the idle client's assignment should have expired: $MAPS"; fi
+nl_ok "sticky: an idle client's assignment expires after the timeout (3 s)"
+must 400 PUT /routing/groups/FAILOVER "{$LB,\"sticky_secs\":99999999}"
+must 400 PUT /routing/groups/FAILOVER "{$LB,\"kill_states\":\"always\"}"
+set_group "{$LB,\"sticky_secs\":0}"
+if R nft list table inet patronus_wan >/dev/null 2>&1; then fail "sticky off: the table should be gone"; fi
+nl_ok "sticky off: the nft table is removed; bad timeout / kill-states values are refused (400)"
+for h in 11 12 13; do C ip addr del 192.168.50.$h/24 dev $CDEV; done
+set_group "{$GRP_FAILOVER,\"trigger\":\"down\",\"kill_states\":\"none\"}"
+wait_for "default on WAN1" 20 via_is 'via 203.0.113.1 dev rtr-wan'
+
+# --- 4e. kill states: an existing flow moves within seconds ----------------------
+# A UDP flow (one socket, one conntrack entry) and a TCP connection from the LAN client to the internet
+# host. The server logs the source address it sees. Without kill states the stale NAT entry keeps the flow
+# on WAN1's address after the route moved; with them the entry is deleted and the next packet is
+# masqueraded on the new uplink.
+cat >"$T/srv.py" <<'PYEOF'
+import socket, sys, threading, time
+log = open(sys.argv[1], 'a', buffering=1)
+u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.bind(('0.0.0.0', 9999))
+t = socket.socket(); t.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); t.bind(('0.0.0.0', 9998)); t.listen(8)
+def tcp():
+    while True:
+        c, a = t.accept()
+        log.write('%f tcp %s\n' % (time.time(), a[0]))
+        threading.Thread(target=lambda c=c: [c.recv(100) for _ in iter(int, 1)], daemon=True).start()
+threading.Thread(target=tcp, daemon=True).start()
+while True:
+    _, a = u.recvfrom(100)
+    log.write('%f udp %s\n' % (time.time(), a[0]))
+PYEOF
+cat >"$T/snd.py" <<'PYEOF'
+import socket, sys, time
+u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.bind(('0.0.0.0', 40000))
+t = socket.create_connection((sys.argv[1], 9998))
+while True:
+    u.sendto(b'x', (sys.argv[1], 9999))
+    try: t.send(b'y')
+    except OSError: pass
+    time.sleep(0.2)
+PYEOF
+SRV_LOG=$T/srv.log; : >"$SRV_LOG"
+INET python3 -u "$T/srv.py" "$SRV_LOG" & SRV_PID=$!
+sleep 1
+C python3 -u "$T/snd.py" "$NL_WWW" & SND_PID=$!
+seen_udp() { awk -v s="$1" -v t="$2" '$2=="udp" && $3==s && $1>t {n++} END {exit !n}' "$SRV_LOG"; }
+wait_for "the UDP flow to reach the server via WAN1" 15 seen_udp "$NL_RTR_WAN" 0
+ct_wan1() { R conntrack -L -p tcp 2>/dev/null | grep -E "dport=9998 .*src=$NL_WWW dst=$NL_RTR_WAN " >/dev/null; }
+wait_for "the TCP connection tracked on WAN1's address" 10 ct_wan1
+
+kill_cycle() { # MODE: failover then recovery; sets MOVE_SECS
+  local mode=$1
+  set_group "{$GRP_FAILOVER,\"trigger\":\"down\",\"kill_states\":\"$mode\"}"
+  wait_for "default on WAN1" 20 via_is 'via 203.0.113.1 dev rtr-wan'
+  ISP ip addr flush dev up0
+  wait_for "default route on WAN2" 30 via_is 'via 100.64.0.1 dev rtr-wan2'
+  MOVED=$(date +%s.%N)
+}
+# negative control: kill states off -> the stale NAT entry keeps the flow on WAN1's address
+kill_cycle none
+sleep 10
+if seen_udp 100.64.0.2 "$MOVED"; then fail "kill_states none: the UDP flow moved by itself (no kill expected)"; fi
+ct_wan1 || fail "kill_states none: the TCP entry should still be tracked on WAN1's address"
+nl_ok "kill_states none: 10 s after the failover the flow still carries WAN1's NAT address (stale state kept)"
+ISP ip addr add 203.0.113.1/24 dev up0
+wait_for "default back on WAN1" 30 via_is 'via 203.0.113.1 dev rtr-wan'
+K0=$(event_count gateway_states_killed)
+# kill states on down: the flow moves
+kill_cycle down
+wait_for "the UDP flow to reach the server via WAN2" 12 seen_udp 100.64.0.2 "$MOVED"
+nl_ok "kill_states down: the existing UDP flow left via WAN2 $(awk -v m="$MOVED" -v n="$(date +%s.%N)" 'BEGIN{printf "%.0f", n-m}') s after the route moved"
+no_ct_wan1() { ! ct_wan1; }
+wait_for "the TCP entry on WAN1's address to be deleted" 10 no_ct_wan1
+nl_ok "kill_states down: the TCP connection's tracked state on WAN1's address is gone"
+wait_event gateway_states_killed "$K0"
+nl_api GET /routing >/dev/null
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); g=[x for x in d["gateways"] if x["name"]=="WAN1"][0]; assert g["killed"] and g["killed"]["count"]>=1, g' "$NL_OUT" \
+  || fail "WAN1 status has no kill record: $(cat "$NL_OUT")"
+nl_web GET /routing
+grep -q 'connection(s) deleted' "$NL_OUT" || fail "Routing page does not show the kill-states action"
+nl_ok "kill-states action is in the gateway status, the Routing page and a gateway_states_killed event"
+# recovery: with 'down' the flow stays; with 'down_recovery' it moves back
+ISP ip addr add 203.0.113.1/24 dev up0
+wait_for "default back on WAN1" 30 via_is 'via 203.0.113.1 dev rtr-wan'
+set_group "{$GRP_FAILOVER,\"trigger\":\"down\",\"kill_states\":\"down_recovery\"}"
+ISP ip addr flush dev up0
+wait_for "default route on WAN2" 30 via_is 'via 100.64.0.1 dev rtr-wan2'
+wait_for "UDP flow on WAN2 again" 12 seen_udp 100.64.0.2 "$(date +%s.%N)"
+ISP ip addr add 203.0.113.1/24 dev up0
+BACK=$(date +%s.%N)
+wait_for "default back on WAN1" 30 via_is 'via 203.0.113.1 dev rtr-wan'
+wait_for "the UDP flow to return to WAN1's address" 15 seen_udp "$NL_RTR_WAN" "$BACK"
+nl_ok "kill_states down_recovery: WAN1 is back -> the fallback's flow was deleted and left via WAN1 again"
+kill "$SND_PID" "$SRV_PID" 2>/dev/null || true; wait "$SND_PID" "$SRV_PID" 2>/dev/null || true
+set_group "{$GRP_FAILOVER,\"trigger\":\"down\"}"
+must 200 PUT /routing/gateways/WAN1 '{"name":"WAN1","interface":"@wan"}'
+wait_for "default on WAN1" 20 via_is 'via 203.0.113.1 dev rtr-wan'
 
 # --- 5. static routes -------------------------------------------------------
 C ip addr add 10.77.0.1/32 dev lo
