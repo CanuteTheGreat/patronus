@@ -152,25 +152,86 @@ fn mentions(ty: &Type, ident: &str) -> bool {
 }
 
 /// "GET /api/x -- list the things" -> "List the things": the request line only repeats the
-/// method and path the document already has.
-fn summary_of(first: &str) -> String {
-    let t = first.trim_start_matches('`');
+/// method and path the document already has. None = nothing but the request line.
+fn summary_of(first: &str) -> Option<String> {
+    let t = first.trim();
+    if t.starts_with(['`', '{', '[', '(']) {
+        return None;
+    }
     let starts_with_method = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"]
         .iter()
-        .any(|m| t.starts_with(m) && t[m.len()..].starts_with(|c: char| c == ' ' || c == '|'));
-    if starts_with_method {
-        for sep in [" -- ", " - ", ": ", " — "] {
-            if let Some((_, rest)) = t.split_once(sep) {
-                let r = rest.trim();
-                if r.len() > 3 {
-                    let mut c = r.chars();
-                    let f = c.next().unwrap();
-                    return f.to_uppercase().collect::<String>() + c.as_str();
-                }
+        .any(|m| t.starts_with(m) && t[m.len()..].starts_with([' ', '|']));
+    if !starts_with_method {
+        return Some(first.to_string());
+    }
+    // drop the method(s) and the path
+    let mut rest = t;
+    while let Some(c) = rest.chars().next() {
+        if c == '/' {
+            break;
+        }
+        rest = &rest[c.len_utf8()..];
+    }
+    let rest = rest.split_once(char::is_whitespace).map(|(_, r)| r).unwrap_or("");
+    let mut r = rest.trim_start();
+    loop {
+        if let Some(x) = r.strip_prefix('(') {
+            // "(re-apply the stored configuration)" is a description, "(admin)" a note: keep both words
+            let inner = x.split(')').next().unwrap_or("");
+            if inner.split_whitespace().count() >= 3 {
+                return Some(cap_first(inner));
+            }
+            r = x.split_once(')').map(|(_, y)| y).unwrap_or("").trim_start();
+            continue;
+        }
+        for sep in ["-- ", "- ", "— ", ": "] {
+            if let Some(x) = r.strip_prefix(sep) {
+                r = x.trim_start();
+                break;
             }
         }
+        break;
     }
-    first.to_string()
+    if r.starts_with("->") || r.starts_with('{') || r.starts_with('[') {
+        return None;
+    }
+    let words = r.split_whitespace().filter(|w| w.chars().filter(|c| c.is_alphabetic()).count() >= 3).count();
+    (words >= 3).then(|| cap_first(r))
+}
+
+fn cap_first(r: &str) -> String {
+    let mut c = r.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::new(),
+    }
+}
+
+/// One sentence of at most ~140 characters: the first sentence, else cut at a word with an ellipsis.
+fn shorten(s: &str) -> String {
+    let mut end = s.len();
+    for sep in [". ", "; "] {
+        if let Some(i) = s.find(sep) {
+            end = end.min(i + if sep == ". " { 1 } else { 0 });
+        }
+    }
+    let t = s[..end].trim();
+    if t.chars().count() <= 140 {
+        return t.to_string();
+    }
+    let cut: String = t.chars().take(140).collect();
+    let cut = cut.rsplit_once(' ').map(|(a, _)| a).unwrap_or(&cut);
+    format!("{}…", cut.trim_end_matches([',', ';', ':', '-']))
+}
+
+/// "Put ra (dhcp/ra)": the handler's name and where it is, when its doc comment says nothing usable.
+fn fallback_summary(handler: &str, path: &str) -> String {
+    let tail: Vec<&str> = path
+        .trim_start_matches("/api/")
+        .split('/')
+        .filter(|s| !s.starts_with('{') && !s.is_empty())
+        .collect();
+    format!("{} ({})", humanize(handler), tail.join("/"))
 }
 
 fn humanize(name: &str) -> String {
@@ -238,6 +299,7 @@ pub fn build(scan: &Scan, version: &str) -> Result<Built, String> {
         let doc = fi.map(|f| f.doc.clone()).unwrap_or_default();
         let ctx_file = fi.map(|f| f.file.as_str()).unwrap_or(&s.file);
         let web_ctx = format!("crates/patronus-web/src/{ctx_file}");
+        let doc = if doc.starts_with("This lane's API routes") { String::new() } else { doc };
         let (summary, description) = if doc.is_empty() {
             (
                 humanize(if s.is_closure {
@@ -249,9 +311,13 @@ pub fn build(scan: &Scan, version: &str) -> Result<Built, String> {
             )
         } else {
             let first = doc.split("\n\n").next().unwrap_or("").replace('\n', " ");
-            let first = summary_of(first.trim());
-            let sum: String = first.chars().take(120).collect();
-            (sum, doc.clone())
+            let first = summary_of(first.trim()).unwrap_or_default();
+            let sum = shorten(&first);
+            if sum.is_empty() {
+                (fallback_summary(if s.is_closure { "inline handler" } else { &s.handler }, &s.path), String::new())
+            } else {
+                (sum, doc.clone())
+            }
         };
         let tag_seg = s
             .path

@@ -144,7 +144,7 @@ fn catalogs() -> &'static Vec<Catalog> {
                 .map(|x| if let Seg::Lit(l) = x { l.len() } else { 0 })
                 .sum()
         };
-        patterns.sort_by(|a, b| weight(&b.1).cmp(&weight(&a.1)));
+        patterns.sort_by_key(|p| std::cmp::Reverse(weight(&p.1)));
         v[0].patterns = patterns;
         v[0].exact = exact;
         v
