@@ -17,6 +17,8 @@ pub struct Settings {
     /// Download the crate advisory archive on a schedule (the only network use).
     pub fetch: bool,
     pub osv_url: String,
+    /// Count RustSec notices about unmaintained or unsound crates too (they are not vulnerabilities).
+    pub show_informational: bool,
     pub osv_max_bytes: u64,
     pub osv_refresh_hours: u32,
     /// Advisory data older than this is shown as stale, never as clean.
@@ -28,6 +30,7 @@ pub struct Settings {
     pub binaries: Vec<String>,
     pub manifest_path: String,
     pub scan_interval_secs: u64,
+    /// How often the engine looks for a requested scan or due work (a check is three small queries).
     pub tick_secs: u64,
     pub data_dir: String,
     pub portageq: String,
@@ -49,6 +52,7 @@ impl Default for Settings {
             enabled: true,
             fetch: true,
             osv_url: "https://osv-vulnerabilities.storage.googleapis.com/crates.io/all.zip".into(),
+            show_informational: false,
             osv_max_bytes: 64 << 20,
             osv_refresh_hours: 24,
             osv_stale_days: 7,
@@ -58,7 +62,7 @@ impl Default for Settings {
             binaries: Vec::new(),
             manifest_path: "/usr/share/patronus/package-manifest.json".into(),
             scan_interval_secs: 6 * 3600,
-            tick_secs: 60,
+            tick_secs: 5,
             data_dir: "/var/lib/patronus/cve".into(),
             portageq: "portageq".into(),
             emerge: "emerge".into(),
@@ -79,6 +83,7 @@ pub struct SettingsIn {
     pub enabled: Option<bool>,
     pub fetch: Option<bool>,
     pub osv_url: Option<String>,
+    pub show_informational: Option<bool>,
     pub osv_max_bytes: Option<u64>,
     pub osv_refresh_hours: Option<u32>,
     pub osv_stale_days: Option<u32>,
@@ -175,6 +180,7 @@ impl Settings {
         }
         set!(enabled);
         set!(fetch);
+        set!(show_informational);
         set!(osv_max_bytes);
         set!(osv_refresh_hours);
         set!(osv_stale_days);
@@ -269,6 +275,7 @@ impl Settings {
         vec![
             ("cve.enabled", b(self.enabled)),
             ("cve.fetch", b(self.fetch)),
+            ("cve.show_informational", b(self.show_informational)),
             ("cve.osv_url", self.osv_url.clone()),
             ("cve.osv_max_bytes", self.osv_max_bytes.to_string()),
             ("cve.osv_refresh_hours", self.osv_refresh_hours.to_string()),
@@ -326,6 +333,7 @@ pub async fn load(store: &ConfigStore) -> Result<Settings> {
     }
     i.enabled = g("cve.enabled").map(|v| flag(&v));
     i.fetch = g("cve.fetch").map(|v| flag(&v));
+    i.show_informational = g("cve.show_informational").map(|v| flag(&v));
     i.binaries = g("cve.binaries").map(|v| list(&v));
     i.osv_url = g("cve.osv_url");
     i.glsa_dir = g("cve.glsa_dir");
