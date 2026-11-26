@@ -25,6 +25,12 @@ pub struct Advisory {
     pub events: Vec<Event>,
     /// explicitly listed affected versions
     pub versions: Vec<String>,
+    /// RustSec notices that are not vulnerabilities: `unmaintained`, `unsound`, `notice`
+    #[serde(default)]
+    pub informational: Option<String>,
+    /// `high`, `medium`, `low` when the database rates it (GitHub advisories do)
+    #[serde(default)]
+    pub severity: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -90,6 +96,19 @@ pub fn parse_record(json: &str) -> Option<(Vec<(String, Advisory)>, bool)> {
             format!("https://osv.dev/vulnerability/{id}")
         };
     }
+    let severity = match v
+        .get("database_specific")
+        .and_then(|d| d.get("severity"))
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_ascii_uppercase())
+        .as_deref()
+    {
+        Some("CRITICAL") | Some("HIGH") => "high",
+        Some("MODERATE") | Some("MEDIUM") => "medium",
+        Some("LOW") => "low",
+        _ => "",
+    }
+    .to_string();
     let mut out = Vec::new();
     for a in v.get("affected")?.as_array()? {
         let p = a.get("package")?;
@@ -132,6 +151,12 @@ pub fn parse_record(json: &str) -> Option<(Vec<(String, Advisory)>, bool)> {
                 url: url.clone(),
                 events,
                 versions: strs(a.get("versions")),
+                informational: a
+                    .get("database_specific")
+                    .and_then(|d| d.get("informational"))
+                    .and_then(|i| i.as_str())
+                    .map(String::from),
+                severity: severity.clone(),
             },
         ));
     }
@@ -252,6 +277,8 @@ pub struct CrateHit {
     pub summary: String,
     pub url: String,
     pub fixed_in: Vec<String>,
+    pub informational: Option<String>,
+    pub severity: String,
 }
 
 pub fn find_hits(db: &OsvDb, binary: &str, crates: &[(String, String)]) -> Vec<CrateHit> {
@@ -274,6 +301,8 @@ pub fn find_hits(db: &OsvDb, binary: &str, crates: &[(String, String)]) -> Vec<C
                     summary: a.summary.clone(),
                     url: a.url.clone(),
                     fixed_in: a.fixed_above(&v),
+                    informational: a.informational.clone(),
+                    severity: a.severity.clone(),
                 });
             }
         }
@@ -334,10 +363,29 @@ mod tests {
                 },
             ],
             versions: vec!["3.0.0".into()],
+            informational: None,
+            severity: String::new(),
         };
         assert!(a.affects(&sv("1.2.0")));
         assert!(!a.affects(&sv("1.2.1")));
         assert!(a.affects(&sv("3.0.0")));
+    }
+
+    #[test]
+    fn informational_notices_and_ratings_are_kept() {
+        let (rows, _) = parse_record(
+            r#"{"id":"RUSTSEC-2025-0012","summary":"`backoff` is unmaintained.","affected":[{"package":{"name":"backoff","ecosystem":"crates.io"},
+               "ranges":[{"type":"SEMVER","events":[{"introduced":"0.0.0-0"}]}],"database_specific":{"informational":"unmaintained"}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(rows[0].1.informational.as_deref(), Some("unmaintained"));
+        assert!(rows[0].1.affects(&sv("0.4.0")), "no fixed event: every version is covered");
+        assert!(rows[0].1.fixed_above(&sv("0.4.0")).is_empty());
+        let (rows, _) = parse_record(
+            r#"{"id":"GHSA-x","database_specific":{"severity":"MODERATE"},"affected":[{"package":{"name":"a","ecosystem":"crates.io"},"ranges":[]}]}"#,
+        )
+        .unwrap();
+        assert_eq!(rows[0].1.severity, "medium");
     }
 
     #[test]
