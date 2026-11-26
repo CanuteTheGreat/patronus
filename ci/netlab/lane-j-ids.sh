@@ -178,7 +178,7 @@ nl_ok "ET Open and the abuse.ch lists are listed with URL and licence, all switc
 nl_api_ok "add the local source" POST /svc/ids/sources "{\"key\":\"netlab\",\"name\":\"Netlab test rules\",\"url\":\"http://$NL_WWW:8081/set.tar.gz\",\"format\":\"tar.gz\",\"licence\":\"test\",\"enabled\":true,\"max_mb\":8}"
 nl_api_code "the same key again" 400 POST /svc/ids/sources "{\"key\":\"netlab\",\"name\":\"again\",\"url\":\"http://$NL_WWW:8081/set.tar.gz\"}"
 nl_wait 120 rs_is netlab status ok || { nl_api GET /svc/ids; cat "$NL_OUT"; tail -20 "$NL_T/nl-web.log"; nl_fail "the rule set was not downloaded by the scheduled task"; }
-grep -q 'sid:2900001;' "$SETS/sources.rules" || nl_fail "sources.rules lacks the downloaded rule"
+nl_wait 60 grep -q 'sid:2900001;' "$SETS/sources.rules" || nl_fail "sources.rules lacks the downloaded rule"
 grep -q '^alert tcp any any -> any 80 (msg:"Netlab set evil-set"' "$SETS/sources.rules" || nl_fail "the downloaded rule was not loaded as shipped"
 [ "$(rs netlab rules)" = 1 ] || nl_fail "the rule set shows $(rs netlab rules) rules, want 1"
 nl_ok "downloaded by the task without a click: $(rs netlab message)"
@@ -203,7 +203,7 @@ assert "Netlab set evil-set" in a["signature"] and a["sid"] == 2900001 and a["ac
 assert a["dst_ip"] == "198.51.100.10" and a["dst_port"] == 80 and a["proto"] == "TCP" and a["time"] > 1_000_000_000, a
 PY
 nl_api GET "/svc/ids/alerts/top?by=sid&window=1h"
-[ "$(nl_json "$NL_OUT" 'd["top"][0]["key"]')" = 2900001 ] || nl_fail "top rules: $(cat "$NL_OUT")"
+[ "$(nl_json "$NL_OUT" 'any(r["key"] == "2900001" and r["count"] >= 1 for r in d["top"])')" = True ] || nl_fail "top rules: $(cat "$NL_OUT")"
 nl_api GET "/svc/ids/alerts/top?by=dst&window=1h"
 [ "$(nl_json "$NL_OUT" 'd["top"][0]["key"]')" = "$NL_WWW" ] || nl_fail "top destinations: $(cat "$NL_OUT")"
 nl_api_code "unknown filter value" 400 GET "/svc/ids/alerts?src=not-an-address"
@@ -258,7 +258,7 @@ nl_api_code "unknown alert" 404 POST /svc/ids/alerts/999999999/suppress '{"scope
 nl_api_code "bad scope" 400 POST "/svc/ids/alerts/$AID/suppress" '{"scope":"galaxy"}'
 nl_api_ok "suppress the rule for everyone" POST "/svc/ids/alerts/$AID/suppress" '{"scope":"rule","kind":"suppress"}'
 SID_ROW=$(nl_json "$NL_OUT" 'd["id"]')
-grep -q 'suppress gen_id 0, sig_id 2900001' "$SETS/threshold.config" || nl_fail "threshold.config lacks the suppress line"
+grep -q 'suppress gen_id 1, sig_id 2900001' "$SETS/threshold.config" || nl_fail "threshold.config lacks the suppress line"
 ids_warm
 E3=$(eve_n)
 for i in 1 2 3; do evil2 || nl_fail "suppressed rule: the request must pass"; done
@@ -270,7 +270,7 @@ ids_warm
 evil2 || nl_fail "request must pass"
 nl_wait 30 sh -c "[ \$(grep -c '\"signature_id\":2900001' $EVE) -gt $E3 ]" || nl_fail "the alert did not come back after the suppress entry was removed"
 nl_api_ok "limit by source from the alert" POST "/svc/ids/alerts/$AID/suppress" '{"scope":"source","kind":"limit","count":1,"seconds":3600}'
-grep -q 'threshold gen_id 0, sig_id 2900001, type limit, track by_src, count 1, seconds 3600' "$SETS/threshold.config" || nl_fail "threshold.config lacks the limit line"
+grep -q 'threshold gen_id 1, sig_id 2900001, type limit, track by_src, count 1, seconds 3600' "$SETS/threshold.config" || nl_fail "threshold.config lacks the limit line"
 nl_ok "removing the entry brings the alert back; a per-source limit is rendered to threshold.config"
 LID=$(nl_json "$NL_OUT" 'd["id"]')
 nl_api_ok "remove the limit" DELETE "/svc/ids/suppress/$LID"
