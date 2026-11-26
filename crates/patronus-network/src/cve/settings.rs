@@ -119,7 +119,12 @@ fn list(v: &str) -> Vec<String> {
 
 fn abs_path(what: &str, p: &str) -> Result<String> {
     let p = p.trim();
-    if !p.starts_with('/') || p.len() > 255 || p.contains("..") || p.bytes().any(|b| b < 0x21 && b != b' ') || p.contains(',') {
+    if !p.starts_with('/')
+        || p.len() > 255
+        || p.contains("..")
+        || p.bytes().any(|b| b < 0x21 && b != b' ')
+        || p.contains(',')
+    {
         return Err(bad(format!("{what} {p:?}: want an absolute path")));
     }
     Ok(p.to_string())
@@ -183,7 +188,10 @@ impl Settings {
         set!(history_max_rows);
         if let Some(v) = &i.osv_url {
             let u = v.trim();
-            if !(u.starts_with("https://") || u.starts_with("http://")) || u.len() > 500 || u.bytes().any(|b| b <= b' ') {
+            if !(u.starts_with("https://") || u.starts_with("http://"))
+                || u.len() > 500
+                || u.bytes().any(|b| b <= b' ')
+            {
                 return Err(bad(format!("osv_url {u:?}: want an http(s) URL")));
             }
             s.osv_url = u.to_string();
@@ -215,13 +223,18 @@ impl Settings {
         if let Some(v) = &i.security_updates {
             let v = v.trim().to_lowercase();
             if !POLICIES.contains(&v.as_str()) {
-                return Err(bad(format!("security_updates {v:?}: one of {}", POLICIES.join(", "))));
+                return Err(bad(format!(
+                    "security_updates {v:?}: one of {}",
+                    POLICIES.join(", ")
+                )));
             }
             s.security_updates = v;
         }
         if let Some(v) = &i.window {
             if parse_window(v).is_none() {
-                return Err(bad(format!("window {v:?}: want HH:MM-HH:MM with two different times")));
+                return Err(bad(format!(
+                    "window {v:?}: want HH:MM-HH:MM with two different times"
+                )));
             }
             s.window = v.trim().to_string();
         }
@@ -238,7 +251,12 @@ impl Settings {
         range("glsa_stale_days", s.glsa_stale_days as u64, 1, 365)?;
         range("scan_interval_secs", s.scan_interval_secs, 60, 7 * 86400)?;
         range("tick_secs", s.tick_secs, 1, 3600)?;
-        range("apply_min_interval_secs", s.apply_min_interval_secs, 60, 30 * 86400)?;
+        range(
+            "apply_min_interval_secs",
+            s.apply_min_interval_secs,
+            60,
+            30 * 86400,
+        )?;
         range("apply_max_packages", s.apply_max_packages as u64, 1, 500)?;
         range("apply_timeout_secs", s.apply_timeout_secs, 60, 6 * 3600)?;
         range("history_days", s.history_days as u64, 1, 3650)?;
@@ -260,16 +278,28 @@ impl Settings {
             ("cve.pkg_db", self.pkg_db.clone()),
             ("cve.binaries", self.binaries.join(",")),
             ("cve.manifest_path", self.manifest_path.clone()),
-            ("cve.scan_interval_secs", self.scan_interval_secs.to_string()),
+            (
+                "cve.scan_interval_secs",
+                self.scan_interval_secs.to_string(),
+            ),
             ("cve.tick_secs", self.tick_secs.to_string()),
             ("cve.data_dir", self.data_dir.clone()),
             ("cve.portageq", self.portageq.clone()),
             ("cve.emerge", self.emerge.clone()),
             ("cve.security_updates", self.security_updates.clone()),
             ("cve.window", self.window.clone()),
-            ("cve.apply_min_interval_secs", self.apply_min_interval_secs.to_string()),
-            ("cve.apply_max_packages", self.apply_max_packages.to_string()),
-            ("cve.apply_timeout_secs", self.apply_timeout_secs.to_string()),
+            (
+                "cve.apply_min_interval_secs",
+                self.apply_min_interval_secs.to_string(),
+            ),
+            (
+                "cve.apply_max_packages",
+                self.apply_max_packages.to_string(),
+            ),
+            (
+                "cve.apply_timeout_secs",
+                self.apply_timeout_secs.to_string(),
+            ),
             ("cve.history_days", self.history_days.to_string()),
             ("cve.history_max_rows", self.history_max_rows.to_string()),
         ]
@@ -360,11 +390,31 @@ mod tests {
     fn validation() {
         let d = Settings::default();
         let bad = |i: SettingsIn| d.merged(&i).unwrap_err().to_string();
-        assert!(bad(SettingsIn { security_updates: Some("always".into()), ..Default::default() }).contains("Invalid"));
-        assert!(bad(SettingsIn { window: Some("later".into()), ..Default::default() }).contains("Invalid"));
-        assert!(bad(SettingsIn { osv_url: Some("ftp://x".into()), ..Default::default() }).contains("Invalid"));
-        assert!(bad(SettingsIn { glsa_dir: Some("relative/dir".into()), ..Default::default() }).contains("Invalid"));
-        assert!(bad(SettingsIn { scan_interval_secs: Some(5), ..Default::default() }).contains("Invalid"));
+        assert!(bad(SettingsIn {
+            security_updates: Some("always".into()),
+            ..Default::default()
+        })
+        .contains("Invalid"));
+        assert!(bad(SettingsIn {
+            window: Some("later".into()),
+            ..Default::default()
+        })
+        .contains("Invalid"));
+        assert!(bad(SettingsIn {
+            osv_url: Some("ftp://x".into()),
+            ..Default::default()
+        })
+        .contains("Invalid"));
+        assert!(bad(SettingsIn {
+            glsa_dir: Some("relative/dir".into()),
+            ..Default::default()
+        })
+        .contains("Invalid"));
+        assert!(bad(SettingsIn {
+            scan_interval_secs: Some(5),
+            ..Default::default()
+        })
+        .contains("Invalid"));
         let ok = d
             .merged(&SettingsIn {
                 security_updates: Some("APPLY".into()),

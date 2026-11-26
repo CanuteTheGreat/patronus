@@ -139,7 +139,9 @@ pub fn candidate_binaries(configured: &[String], dirs: &[&str]) -> Vec<PathBuf> 
         return out;
     }
     for d in dirs {
-        let Ok(rd) = std::fs::read_dir(d) else { continue };
+        let Ok(rd) = std::fs::read_dir(d) else {
+            continue;
+        };
         for e in rd.flatten() {
             if e.file_name().to_string_lossy().starts_with("patronus") {
                 add(e.path());
@@ -219,7 +221,10 @@ mod tests {
         let i = parse_block(BLOCK, "/usr/bin/x").unwrap();
         assert_eq!(i.binary, "patronus-web");
         assert_eq!(i.crates.len(), 2);
-        assert_eq!(i.crates[0], ("h2".into(), "0.3.20".into(), "registry".into()));
+        assert_eq!(
+            i.crates[0],
+            ("h2".into(), "0.3.20".into(), "registry".into())
+        );
     }
 
     #[test]
@@ -249,7 +254,9 @@ mod tests {
         std::os::unix::fs::symlink(&real, d.path().join("patronus")).unwrap();
         let v = candidate_binaries(&[], &[d.path().to_str().unwrap()]);
         assert!(v.iter().filter(|p| p.ends_with("patronus-cli")).count() == 1);
-        assert!(!v.iter().any(|p| p.ends_with("patronus") && !p.ends_with("patronus-cli")));
+        assert!(!v
+            .iter()
+            .any(|p| p.ends_with("patronus") && !p.ends_with("patronus-cli")));
     }
 
     #[test]
@@ -258,7 +265,11 @@ mod tests {
         let p = d.path().join("m.json");
         std::fs::write(&p, r#"{"schema":1,"image":"ax1800","built":"2026-11-25","version":"0.2","distribution":"alpine","packages":[{"name":"busybox","version":"1.36.1-r5"}]}"#).unwrap();
         assert_eq!(read_manifest(&p).unwrap().packages.len(), 1);
-        std::fs::write(&p, r#"{"schema":2,"image":"","built":"","version":"","distribution":"","packages":[]}"#).unwrap();
+        std::fs::write(
+            &p,
+            r#"{"schema":2,"image":"","built":"","version":"","distribution":"","packages":[]}"#,
+        )
+        .unwrap();
         assert!(read_manifest(&p).is_none());
     }
 }

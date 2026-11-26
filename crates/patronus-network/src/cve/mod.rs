@@ -67,7 +67,10 @@ pub struct Finding {
 
 impl Finding {
     pub fn key(&self) -> String {
-        format!("{}|{}|{}|{}", self.source, self.subject, self.binary, self.advisory)
+        format!(
+            "{}|{}|{}|{}",
+            self.source, self.subject, self.binary, self.advisory
+        )
     }
 }
 
@@ -175,7 +178,9 @@ pub async fn fetch_osv(s: &Settings, now: i64) -> Result<osv::OsvDb> {
     let _ = std::fs::remove_file(&tmp);
     let bytes = bytes?;
     if bytes.len() as u64 > s.osv_max_bytes {
-        return Err(Error::Config("download is larger than cve.osv_max_bytes".into()));
+        return Err(Error::Config(
+            "download is larger than cve.osv_max_bytes".into(),
+        ));
     }
     let url = s.osv_url.clone();
     let db = tokio::task::spawn_blocking(move || osv::build_from_zip(&bytes, &url, now))
@@ -184,7 +189,9 @@ pub async fn fetch_osv(s: &Settings, now: i64) -> Result<osv::OsvDb> {
         .map_err(Error::Config)?;
     let json = serde_json::to_vec(&db).map_err(|e| Error::Config(format!("encode: {e}")))?;
     if json.len() as u64 > s.osv_max_bytes.saturating_mul(2) {
-        return Err(Error::Config("reduced advisory data exceeds the size cap".into()));
+        return Err(Error::Config(
+            "reduced advisory data exceeds the size cap".into(),
+        ));
     }
     let dst = osv_cache_path(s);
     let part = dst.with_extension("json.part");
@@ -202,7 +209,10 @@ async fn best_visible(s: &Settings, atom: &str) -> Option<String> {
     let fut = tokio::process::Command::new(&s.portageq)
         .args(["best_visible", "/", atom])
         .output();
-    let out = tokio::time::timeout(Duration::from_secs(30), fut).await.ok()?.ok()?;
+    let out = tokio::time::timeout(Duration::from_secs(30), fut)
+        .await
+        .ok()?
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -284,17 +294,16 @@ pub async fn scan(s: &Settings, now: i64) -> Report {
                 };
                 let (update, update_version) = match best_visible(s, &atom).await {
                     Some(best) => {
-                        let still = pkg
-                            .zip(version::GentooVersion::parse(&best))
-                            .map(|(p, v)| {
-                                p.vulnerable
-                                    .iter()
-                                    .any(|x| version::gentoo_range_matches(&x.op, &x.version, &v))
-                                    && !p.unaffected.iter().any(|x| {
+                        let still =
+                            pkg.zip(version::GentooVersion::parse(&best))
+                                .map(|(p, v)| {
+                                    p.vulnerable.iter().any(|x| {
+                                        version::gentoo_range_matches(&x.op, &x.version, &v)
+                                    }) && !p.unaffected.iter().any(|x| {
                                         version::gentoo_range_matches(&x.op, &x.version, &v)
                                     })
-                            })
-                            .unwrap_or(true);
+                                })
+                                .unwrap_or(true);
                         let newer = version::GentooVersion::parse(&best)
                             .zip(version::GentooVersion::parse(&h.installed))
                             .map(|(b, i)| b > i)
@@ -347,17 +356,26 @@ pub async fn scan(s: &Settings, now: i64) -> Report {
             detail: m
                 .gate
                 .as_ref()
-                .map(|g| format!("advisory gate at image build ({}) against {}", g.checked_at, g.source))
+                .map(|g| {
+                    format!(
+                        "advisory gate at image build ({}) against {}",
+                        g.checked_at, g.source
+                    )
+                })
                 .unwrap_or_else(|| "this image has no advisory gate result".into()),
         };
         match &m.gate {
             None => {
                 verdict_unknown = true;
-                r.reasons.push("the image carries no advisory gate result".into());
+                r.reasons
+                    .push("the image carries no advisory gate result".into());
             }
             Some(g) => {
                 // the gate's age: the build date of the image, as written by the gate
-                if let Ok(d) = chrono::NaiveDate::parse_from_str(&g.checked_at[..g.checked_at.len().min(10)], "%Y-%m-%d") {
+                if let Ok(d) = chrono::NaiveDate::parse_from_str(
+                    &g.checked_at[..g.checked_at.len().min(10)],
+                    "%Y-%m-%d",
+                ) {
                     let t = d.and_hms_opt(0, 0, 0).map(|x| x.and_utc().timestamp());
                     let (a, stale) = age(now, t, s.glsa_stale_days.max(60));
                     r.glsa.updated_at = t;
@@ -394,11 +412,13 @@ pub async fn scan(s: &Settings, now: i64) -> Report {
         r.manifest = manifest.clone();
     } else {
         verdict_unknown = true;
-        r.reasons.push("no package database and no image manifest on this system".into());
+        r.reasons
+            .push("no package database and no image manifest on this system".into());
     }
 
     // --- Rust crates compiled into the Patronus binaries
-    let paths = inventory::candidate_binaries(&s.binaries, &["/usr/bin", "/usr/sbin", "/usr/local/bin"]);
+    let paths =
+        inventory::candidate_binaries(&s.binaries, &["/usr/bin", "/usr/sbin", "/usr/local/bin"]);
     let bins: Vec<inventory::BinaryInventory> = tokio::task::block_in_place(|| {
         paths
             .iter()
@@ -414,7 +434,12 @@ pub async fn scan(s: &Settings, now: i64) -> Report {
                 updated_at: Some(db.fetched_at),
                 age_secs: a,
                 stale,
-                detail: format!("{} advisories for {} crates from {}", db.advisories, db.crates.len(), db.source_url),
+                detail: format!(
+                    "{} advisories for {} crates from {}",
+                    db.advisories,
+                    db.crates.len(),
+                    db.source_url
+                ),
             };
             if stale {
                 verdict_stale = true;
@@ -433,7 +458,8 @@ pub async fn scan(s: &Settings, now: i64) -> Report {
             };
             if !bins.is_empty() {
                 verdict_unknown = true;
-                r.reasons.push("the crate advisory data has not been downloaded".into());
+                r.reasons
+                    .push("the crate advisory data has not been downloaded".into());
             }
         }
     }
@@ -455,8 +481,11 @@ pub async fn scan(s: &Settings, now: i64) -> Report {
         }
         r.crates_checked += b.crates.len();
         if let Some(db) = &osv_db {
-            let list: Vec<(String, String)> =
-                b.crates.iter().map(|(n, v, _)| (n.clone(), v.clone())).collect();
+            let list: Vec<(String, String)> = b
+                .crates
+                .iter()
+                .map(|(n, v, _)| (n.clone(), v.clone()))
+                .collect();
             for h in osv::find_hits(db, &b.binary, &list) {
                 findings.push(Finding {
                     source: "osv".into(),
@@ -801,7 +830,10 @@ pub async fn apply_updates(store: &ConfigStore, s: &Settings, atoms: &[String]) 
             )
         }
         Ok(Err(e)) => (false, format!("cannot run {}: {e}", s.emerge)),
-        Err(_) => (false, format!("emerge timed out after {} s", s.apply_timeout_secs)),
+        Err(_) => (
+            false,
+            format!("emerge timed out after {} s", s.apply_timeout_secs),
+        ),
     };
     log(store, "apply", ok, &detail).await;
     ok
@@ -859,7 +891,12 @@ pub async fn tick(store: &ConfigStore) -> Result<Option<Report>> {
                         store,
                         "fetch",
                         true,
-                        &format!("{} advisories for {} crates ({} bytes)", db.advisories, db.crates.len(), db.archive_bytes),
+                        &format!(
+                            "{} advisories for {} crates ({} bytes)",
+                            db.advisories,
+                            db.crates.len(),
+                            db.archive_bytes
+                        ),
                     )
                     .await
                 }
@@ -872,7 +909,13 @@ pub async fn tick(store: &ConfigStore) -> Result<Option<Report>> {
         store,
         "scan",
         true,
-        &format!("{}: {} finding(s), {} packages, {} crates", report.verdict, report.findings.len(), report.packages_checked, report.crates_checked),
+        &format!(
+            "{}: {} finding(s), {} packages, {} crates",
+            report.verdict,
+            report.findings.len(),
+            report.packages_checked,
+            report.crates_checked
+        ),
     )
     .await;
 

@@ -203,7 +203,10 @@ pub fn load_dir(dir: &Path) -> GlsaSet {
                 set.newest_mtime = Some(set.newest_mtime.map_or(t, |o| o.max(t)));
             }
         }
-        match std::fs::read_to_string(e.path()).ok().and_then(|t| parse(&t)) {
+        match std::fs::read_to_string(e.path())
+            .ok()
+            .and_then(|t| parse(&t))
+        {
             Some(g) => set.advisories.push(g),
             None => set.skipped += 1,
         }

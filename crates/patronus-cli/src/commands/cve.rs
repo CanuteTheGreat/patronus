@@ -96,10 +96,19 @@ pub async fn scan(db: Option<&Path>, fetch: bool, json: bool) -> anyhow::Result<
                     &store,
                     "fetch",
                     true,
-                    &format!("{} advisories for {} crates ({} bytes)", d.advisories, d.crates.len(), d.archive_bytes),
+                    &format!(
+                        "{} advisories for {} crates ({} bytes)",
+                        d.advisories,
+                        d.crates.len(),
+                        d.archive_bytes
+                    ),
                 )
                 .await;
-                eprintln!("crate advisory data: {} advisories for {} crates", d.advisories, d.crates.len());
+                eprintln!(
+                    "crate advisory data: {} advisories for {} crates",
+                    d.advisories,
+                    d.crates.len()
+                );
             }
             Err(e) => {
                 cve::log(&store, "fetch", false, &e.to_string()).await;
@@ -138,7 +147,9 @@ pub async fn apply(db: Option<&Path>, dry_run: bool) -> anyhow::Result<()> {
         println!("installed; {} finding(s) left", r.findings.len());
         Ok(())
     } else {
-        anyhow::bail!("the update failed; see `patronus cve status --json` or the page's action list")
+        anyhow::bail!(
+            "the update failed; see `patronus cve status --json` or the page's action list"
+        )
     }
 }
 
@@ -152,7 +163,9 @@ pub async fn set(db: Option<&Path>, pairs: &[String]) -> anyhow::Result<()> {
         let k = k.trim().trim_start_matches("cve.");
         let v = v.trim();
         let val = match k {
-            "enabled" | "fetch" => serde_json::Value::Bool(matches!(v, "1" | "true" | "yes" | "on")),
+            "enabled" | "fetch" => {
+                serde_json::Value::Bool(matches!(v, "1" | "true" | "yes" | "on"))
+            }
             "binaries" => serde_json::Value::Array(
                 v.split(',')
                     .map(str::trim)
@@ -160,8 +173,8 @@ pub async fn set(db: Option<&Path>, pairs: &[String]) -> anyhow::Result<()> {
                     .map(|x| serde_json::Value::String(x.into()))
                     .collect(),
             ),
-            "osv_url" | "glsa_dir" | "pkg_db" | "manifest_path" | "data_dir" | "portageq" | "emerge"
-            | "security_updates" | "window" => serde_json::Value::String(v.into()),
+            "osv_url" | "glsa_dir" | "pkg_db" | "manifest_path" | "data_dir" | "portageq"
+            | "emerge" | "security_updates" | "window" => serde_json::Value::String(v.into()),
             _ => serde_json::Value::Number(
                 v.parse::<u64>()
                     .map_err(|_| anyhow::anyhow!("{k}: a number expected, got {v:?}"))?

@@ -136,10 +136,10 @@ pub mod wifichan;
 #[cfg(feature = "wifi-ap")]
 pub mod wireless;
 
-#[cfg(feature = "intrusion-detection")]
-pub mod ids;
 #[cfg(feature = "cve")]
 pub mod cve;
+#[cfg(feature = "intrusion-detection")]
+pub mod ids;
 
 #[cfg(feature = "dynamic-routing")]
 pub mod frr;
