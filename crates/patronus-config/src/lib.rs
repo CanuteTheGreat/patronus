@@ -10,6 +10,7 @@ pub mod apply;
 pub mod dashboard;
 pub mod declarative;
 pub mod defaults;
+pub mod hasync;
 pub mod migrate;
 pub mod policy;
 pub mod seg;

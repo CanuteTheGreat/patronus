@@ -94,6 +94,8 @@ pub mod shaping;
 pub mod ha;
 #[cfg(feature = "ha")]
 pub mod ha_maint;
+#[cfg(feature = "ha")]
+pub mod ha_sync;
 
 pub mod svc;
 pub mod wol;

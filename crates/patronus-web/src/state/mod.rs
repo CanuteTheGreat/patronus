@@ -20,6 +20,8 @@ pub mod fwfeeds;
 pub mod fwlog;
 #[cfg(feature = "ha")]
 pub mod ha_maint;
+#[cfg(feature = "ha")]
+pub mod ha_sync;
 pub mod host;
 pub mod insight;
 pub mod interfaces;
@@ -238,6 +240,9 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
     // a node that went into maintenance before a restart / upgrade leaves it once healthy again
     #[cfg(feature = "ha")]
     ha_maint::resume_at_start(state.clone());
+    // the source node of an HA pair pushes its configuration to the peer when it changed
+    #[cfg(feature = "ha")]
+    ha_sync::spawn_pusher(state.clone());
     // scheduled internet speed tests (off unless an interval is set)
     speedtest::spawn_scheduler(state.config_store.clone());
     // CPU / memory / throughput history and monthly data accounting

@@ -104,6 +104,8 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "traffic_daily",
     "system_events",
     "firewall_log",
+    // HA configuration sync (lane g): one row per push / receive, pruned by the sync code
+    "ha_sync_history",
 ];
 
 /// Revisions kept by [`ConfigStore::snapshot`] (older ones are pruned).
