@@ -314,7 +314,7 @@ that are not finished are listed separately under
   one: a refused one is undone and the old one keeps serving, and a listener on
   the web UI's port or another listener's port is refused with the reason.
   Every value is a setting in the configuration (export, history, rollback),
-  the API and the page. [C87]
+  the API and the page. [C1201]
 - Packet capture (admin API `POST /api/system/capture`): captures packets on one
   interface with tcpdump, filtered by protocol, host and port (at most 500
   packets or 30 seconds), and returns the decoded lines. [C72]
