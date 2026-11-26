@@ -21,7 +21,7 @@ export OPENSSL_DIR=$SYS/usr OPENSSL_STATIC=1 OPENSSL_LIB_DIR=$SYS/usr/lib OPENSS
 # Default: ONE multi-call binary (patronus-cli with web-multicall; /usr/bin/patronus-web is a link to it), 1.4 MiB xz
 # smaller than separate patronus-cli + patronus-web (docs/embedded-routers.md 6c). SPECS overrides (e.g. the old pair:
 # SPECS="patronus-cli:nftables,cli,dhcp-server,dns-server,uci-import patronus-web:dhcp,dns,tls-openssl").
-for spec in ${SPECS:-"patronus-cli:${CLI_FEATURES:-nftables,cli,dhcp-server,dns-server,uci-import,web-multicall}"}; do
+for spec in ${SPECS:-"patronus-cli:${CLI_FEATURES:-nftables,cli,dhcp-server,dns-server,uci-import,web-multicall,bruteforce}"}; do
   pkg=${spec%%:*}; feat=${spec#*:}
   echo "== $(date -u +%T) cargo build $pkg ($feat)"
   cargo +nightly-2026-10-18 build --release --target $T -Z build-std=std,panic_abort ${STD_FEATURES:+-Z build-std-features=$STD_FEATURES} -p $pkg --no-default-features --features $feat > /out/build-$pkg.log 2>&1
