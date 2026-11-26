@@ -18,8 +18,8 @@
 		<flag name="nftables">Use nftables for packet filtering (recommended)</flag>
 		<flag name="iptables">Use legacy iptables for packet filtering</flag>
 		<flag name="dhcp">Enable DHCP server functionality</flag>
-		<flag name="dns">Enable DNS server functionality</flag>
-		<flag name="unbound">Use Unbound as DNS resolver</flag>
+		<flag name="dns">Enable DNS server functionality, including the DNS filtering catalog (free block lists, RPZ threat-intel zones, allow list, query log; lists are downloaded with curl)</flag>
+		<flag name="unbound">Use Unbound as DNS resolver (also serves the DNS filtering catalog as RPZ zones, needs &gt;=1.13)</flag>
 		<flag name="vpn">Enable VPN support</flag>
 		<flag name="wireguard">Enable WireGuard VPN support</flag>
 		<flag name="openvpn">Enable OpenVPN support</flag>
