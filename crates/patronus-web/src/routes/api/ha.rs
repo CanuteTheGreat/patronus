@@ -135,6 +135,98 @@ mod built {
         Json(crate::state::ha_maint::progress()).into_response()
     }
 
+    /// GET /api/ha/sync -- configuration sync: settings (the API key is never returned), the
+    /// sections, the last pushes / receives and this node's own TLS pin.
+    async fn sync_overview(State(state): State<AppState>) -> Response {
+        use patronus_config::hasync::SECTIONS;
+        use patronus_network::ha_sync;
+        let store = &state.config_store;
+        let (s, hs, st) = match (
+            ha_sync::sync_settings(store).await,
+            ha::settings(store).await,
+            ha_sync::status(store).await,
+        ) {
+            (Ok(a), Ok(b), Ok(c)) => (a, b, c),
+            (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return err(anyhow::anyhow!("{e}")),
+        };
+        Json(json!({
+            "settings": s,
+            "api_key_set": !s.api_key.is_empty(),
+            "peer_base": ha_sync::peer_base(&s, hs.peer.as_deref()),
+            "sections": SECTIONS.iter().map(|x| json!({
+                "name": x.name, "label": x.label, "enabled": s.sections.iter().any(|n| n == x.name)
+            })).collect::<Vec<_>>(),
+            "status": st,
+            "own_pin": crate::state::ha_sync::own_pin(&state).await,
+        }))
+        .into_response()
+    }
+
+    /// PUT /api/ha/sync/settings (admins; the API key is write-only)
+    async fn sync_put(
+        State(state): State<AppState>,
+        _admin: crate::auth::AdminUser,
+        Json(i): Json<patronus_network::ha_sync::SyncInput>,
+    ) -> Response {
+        match patronus_network::ha_sync::save_sync_settings(&state.config_store, &i).await {
+            Ok(_) => Json(json!({"ok": true})).into_response(),
+            Err(e) => err(anyhow::anyhow!("{e}")),
+        }
+    }
+
+    /// POST /api/ha/sync/push (admins) -- push now, even when nothing changed.
+    async fn sync_push(State(state): State<AppState>, _admin: crate::auth::AdminUser) -> Response {
+        match crate::state::ha_sync::push(&state, true).await {
+            Ok(p) => Json(
+                json!({"ok": true, "message": p.message, "sections": p.sections, "hash": p.hash}),
+            )
+            .into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"ok": false, "error": e.to_string()})),
+            )
+                .into_response(),
+        }
+    }
+
+    /// POST /api/ha/sync/receive -- the peer pushes its configuration (operator API key; only on
+    /// a node that accepts it). The answer says whether it was applied, and why not.
+    async fn sync_receive(
+        State(state): State<AppState>,
+        me: AuthUser,
+        Json(body): Json<serde_json::Value>,
+    ) -> Response {
+        if !me.session.role.can_modify() {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"ok": false, "error": "this key may not change the configuration"})),
+            )
+                .into_response();
+        }
+        match crate::state::ha_sync::receive(&state, &body).await {
+            Ok(m) => Json(json!({"ok": true, "message": m})).into_response(),
+            Err(e) => {
+                let m = e.to_string();
+                let code = if m.contains("does not accept") || m.contains("itself a sync source") {
+                    StatusCode::FORBIDDEN
+                } else if m.contains("Invalid") {
+                    StatusCode::BAD_REQUEST
+                } else {
+                    StatusCode::UNPROCESSABLE_ENTITY
+                };
+                (code, Json(json!({"ok": false, "error": m}))).into_response()
+            }
+        }
+    }
+
+    /// GET /api/ha/sync/history
+    async fn sync_history(State(state): State<AppState>) -> Response {
+        match patronus_network::ha_sync::history(&state.config_store, 200).await {
+            Ok(h) => Json(h).into_response(),
+            Err(e) => err(anyhow::anyhow!("{e}")),
+        }
+    }
+
     /// POST /api/ha/vips
     async fn add_vip(State(state): State<AppState>, Json(i): Json<ha::VipInput>) -> Response {
         match state.lan.save_vip(None, i).await {
@@ -187,6 +279,14 @@ mod built {
                 "/ha/maintenance",
                 post(maintenance).get(maintenance_progress),
             )
+            .route("/ha/sync", get(sync_overview))
+            .route("/ha/sync/settings", put(sync_put))
+            .route("/ha/sync/push", post(sync_push))
+            .route(
+                "/ha/sync/receive",
+                post(sync_receive).layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)),
+            )
+            .route("/ha/sync/history", get(sync_history))
             .route("/ha/vips", post(add_vip))
             .route("/ha/vips/:id", put(put_vip).delete(del_vip))
     }
