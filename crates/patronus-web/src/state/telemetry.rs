@@ -1018,7 +1018,7 @@ pub async fn summary(state: &AppState) -> Value {
         "uptime_secs": host::uptime_secs(),
         "load": load.map(|l| json!([l.0, l.1, l.2])),
         "memory_used_percent": mem.map(|m| m.0),
-        "disk_used_percent": host::disk_percent("/"),
+        "disk_used_percent": host::disk_percent(host::storage_path()),
         "firewall": {
             "active_rules": state.firewall.count_active_rules().await.unwrap_or(0),
             "rules_hash": rules_hash(store).await,

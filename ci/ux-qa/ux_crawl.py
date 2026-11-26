@@ -192,6 +192,12 @@ def settle(page):
         page.wait_for_function("() => document.body && document.body.innerText.trim().length > 20", timeout=15000)
     except Exception:  # noqa: BLE001  (blank pages are reported by the rule, not by the wait)
         pass
+    # a page that is still fetching shows the kit's loading state: wait for it (slow units, e.g. a router under TCG)
+    try:
+        page.wait_for_function("""() => ![...document.querySelectorAll('.ui-loading, [aria-busy="true"]')]
+            .some(e => e.offsetParent !== null)""", timeout=int(os.environ.get("UX_LOADING_MS", "20000")))
+    except Exception:  # noqa: BLE001  (a page stuck loading shows in its screenshot)
+        pass
     page.wait_for_timeout(900)
 
 

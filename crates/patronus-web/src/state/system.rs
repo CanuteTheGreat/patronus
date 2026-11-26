@@ -278,7 +278,7 @@ impl SystemManager {
             uptime: super::host::uptime_secs().unwrap_or(0),
             cpu_usage: s.cpu_percent.unwrap_or(0.0),
             memory_usage: super::host::memory().map(|m| m.0).unwrap_or(0.0),
-            disk_usage: super::host::disk_percent("/").unwrap_or(0.0),
+            disk_usage: super::host::disk_percent(super::host::storage_path()).unwrap_or(0.0),
             load_avg: super::host::load_average().unwrap_or((0.0, 0.0, 0.0)),
         })
     }

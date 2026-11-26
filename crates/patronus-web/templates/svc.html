@@ -131,6 +131,7 @@
         if (r) load();
         return false;
     }
+    const svcAsk = (title, fields, okLabel) => patAsk(title, fields, okLabel, 'svc-ask');
     // one dialog per collection, built once per load: Add opens it empty, Edit opens it filled in
     function collectionDialog(c) {
         const dlg = document.createElement('dialog'); dlg.className = 'ui-dialog lan-dialog'; dlg.id = 'svc-dlg-' + c.key;
@@ -237,12 +238,23 @@
         const ab = document.getElementById('svc-action-buttons'); ab.textContent = '';
         document.getElementById('svc-actions').style.display = SCHEMA.actions.length && CAN_MODIFY ? '' : 'none';
         for (const a of SCHEMA.actions) {
-            const b = document.createElement('button'); b.type = 'button'; b.className = 'ui-btn sm'; b.textContent = a.label;
+            const b = document.createElement('button'); b.type = 'button'; b.className = 'ui-btn sm' + (SCHEMA.actions.length === 1 ? ' primary' : ''); b.textContent = a.label + (SLUG === 'wol' ? '…' : '');
             b.onclick = async () => {
                 const body = {};
-                if (SLUG === 'wol') { const mac = prompt('MAC address to wake (aa:bb:cc:dd:ee:ff)'); if (!mac) return; body.mac = mac; body.interface = '@lan'; }
-                if (SLUG === 'guest' && a.name === 'open') { const m = prompt('Open the guest network for how many minutes?', '240'); if (!m) return; body.minutes = Number(m); }
-                if (SLUG === 'guest' && a.name === 'voucher') { const n = prompt('Voucher name (optional)', ''); if (n === null) return; const m = prompt('Valid for how many minutes? (0 = never expires)', '1440'); if (!m) return; if (n) body.name = n; body.minutes = Number(m); }
+                if (SLUG === 'wol') {
+                    const v = await svcAsk('Wake a device', [{name: 'mac', label: 'MAC address', placeholder: 'aa:bb:cc:dd:ee:ff', required: true,
+                        pattern: '([0-9A-Fa-f]{2}[:\\-]){5}[0-9A-Fa-f]{2}', hint: 'Six pairs of hex digits. The magic packet goes out on the LAN.'}], 'Send magic packet');
+                    if (!v) return; body.mac = v.mac; body.interface = '@lan';
+                }
+                if (SLUG === 'guest' && a.name === 'open') {
+                    const v = await svcAsk('Open the guest network', [{name: 'minutes', label: 'For how many minutes', type: 'number', min: 1, max: 10080, value: '240', required: true}], 'Open');
+                    if (!v) return; body.minutes = Number(v.minutes);
+                }
+                if (SLUG === 'guest' && a.name === 'voucher') {
+                    const v = await svcAsk('New guest voucher', [{name: 'name', label: 'Voucher name (optional)'},
+                        {name: 'minutes', label: 'Valid for (minutes, 0 = never expires)', type: 'number', min: 0, max: 525600, value: '1440', required: true}], 'Create voucher');
+                    if (!v) return; if (v.name) body.name = v.name; body.minutes = Number(v.minutes);
+                }
                 if (SLUG === 'guest' && a.name === 'new_password' && !confirm('Replace the shared guest Wi-Fi password? Guests using the old one are disconnected.')) return;
                 const res = await api('POST', '/api/svc/' + SLUG + '/action/' + a.name, body);
                 if (res) {
