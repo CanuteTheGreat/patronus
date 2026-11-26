@@ -67,7 +67,14 @@ NL_CURL_MAX=20 diag '{"tool":"dns","name":"www.example.test","server":"198.51.10
 nl_ok "a server that never answers: 504 with the reason"
 
 echo "=== 3b. TCP port test (open / closed / filtered)"
-nl_bg INET python3 "$NL_T/nl-sink.py" 0.0.0.0 9100
+cat > "$NL_T/nl-listen.py" <<'PY'
+import socket, sys
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind((sys.argv[1], int(sys.argv[2]))); s.listen(16)
+while True:
+    c, _ = s.accept(); c.close()
+PY
+nl_bg INET python3 "$NL_T/nl-listen.py" 0.0.0.0 9100
 INET nft add table ip nlt
 INET nft add chain ip nlt in '{ type filter hook input priority 0; }'
 INET nft add rule ip nlt in tcp dport 9102 drop

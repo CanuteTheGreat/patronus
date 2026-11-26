@@ -160,10 +160,12 @@
     }
     function add(id) {
         layout.forEach(function (e) { if (e.id === id) e.on = true; });
-        save().then(function () { location.reload(); }).catch(function () {});
+        // the page is drawn again on the server; stay in edit mode so several widgets can be added
+        save().then(function () { try { sessionStorage.setItem('dash-edit', '1'); } catch (e) {} location.reload(); }).catch(function () {});
     }
     function setEditing(on) {
         editing = on;
+        try { if (!on) sessionStorage.removeItem('dash-edit'); } catch (e) {}
         document.body.classList.toggle('dash-edit', on);
         document.getElementById('dash-customize').setAttribute('aria-pressed', on ? 'true' : 'false');
         document.getElementById('dash-customize').hidden = on;
@@ -174,6 +176,7 @@
     }
 
     document.getElementById('dash-customize').addEventListener('click', function () { setEditing(true); });
+    try { if (sessionStorage.getItem('dash-edit') === '1') { sessionStorage.removeItem('dash-edit'); setEditing(true); } } catch (e) {}
     document.getElementById('dash-done').addEventListener('click', function () { setEditing(false); });
     document.getElementById('dash-reset').addEventListener('click', function () {
         fetch('/api/v1/dashboard/layout', { method: 'DELETE', credentials: 'same-origin' })
@@ -200,6 +203,8 @@
     });
     grid.addEventListener('pointermove', function (ev) {
         if (!drag) return;
+        // near the top or bottom edge of the screen the page follows the pointer (a long list on a phone)
+        if (ev.clientY < 40) window.scrollBy(0, -24); else if (ev.clientY > window.innerHeight - 40) window.scrollBy(0, 24);
         var under = document.elementsFromPoint(ev.clientX, ev.clientY).map(function (e) { return e.closest ? e.closest('.widget') : null; })
             .filter(function (w) { return w && w !== drag && w.parentNode === grid; })[0];
         if (!under) return;
