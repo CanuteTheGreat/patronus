@@ -598,7 +598,7 @@ pub fn interpret(text: &str) -> Outcome {
     if m.is_empty() {
         return Outcome::NoUps("upsd returned no data".into());
     }
-    if m.get("ups.status").is_none() {
+    if !m.contains_key("ups.status") {
         return Outcome::NoUps("the UPS reports no status (driver not connected)".into());
     }
     Outcome::Reading(snapshot(&m))
@@ -672,6 +672,21 @@ fn prepare_dirs(d: &Dirs, user: &str) -> Result<bool> {
         return Ok(false);
     };
     let gid = u.gid;
+    // The daemons drop to the NUT user, who must be able to walk down to both directories: a parent such as
+    // /run/patronus (0750 root) otherwise ends in "Can't chdir ...: Permission denied" and the driver exits at
+    // once. Give search (x, not read) to others on the ancestors that lack it, stopping at the first one that has it.
+    for dir in [&d.conf, &d.state] {
+        for anc in dir.ancestors().skip(1) {
+            let Ok(md) = std::fs::metadata(anc) else {
+                break;
+            };
+            let mode = md.permissions().mode();
+            if mode & 0o001 != 0 {
+                break;
+            }
+            let _ = std::fs::set_permissions(anc, std::fs::Permissions::from_mode(mode | 0o001));
+        }
+    }
     let _ = nix::unistd::chown(&d.conf, Some(nix::unistd::Uid::from_raw(0)), Some(gid));
     let _ = std::fs::set_permissions(&d.conf, std::fs::Permissions::from_mode(0o2750));
     let _ = nix::unistd::chown(&d.state, Some(u.uid), Some(gid));
