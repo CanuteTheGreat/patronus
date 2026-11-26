@@ -153,7 +153,7 @@ nl_web_start "$DB"; nl_login
 nl_api_ok "disable" PUT /svc/ups '{"enabled":false}'
 # killed daemons stay as zombies in this init-less container: only live processes count
 nut_gone() { local n; n=$(ps -eo stat=,comm= | awk '$1 !~ /^Z/ && ($2=="upsd" || $2=="upsmon" || $2=="dummy-ups")'); [ -z "$n" ]; }
-nl_wait 20 nut_gone || { ps -eo pid,stat,comm,args | grep -E 'ups[dm]|dummy' ; nl_fail "NUT daemons still running"; }
+nl_wait 20 nut_gone || { ps -eo pid,ppid,user,stat,args | grep -E 'ups[dm]|dummy'; cat /run/patronus/svc/*upsmon* 2>/dev/null; ls /run/patronus/svc /var/lib/patronus/net/svc 2>/dev/null; nl_fail "NUT daemons still running"; }
 nl_assert_nft_lacks "tcp dport 3493"
 nl_api_ok "status" GET /v1/ups
 [ "$(nl_json "$NL_OUT" 'd["reading"]')" = None ] || nl_fail "a reading is still shown while disabled"
