@@ -22,7 +22,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
-use std::collections::BTreeMap;
+use patronus_config::notify_matcher as matcher;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 /// Events kept in the store.
@@ -213,6 +214,9 @@ pub struct Hook {
     pub username: String,
     /// info | warning | critical: events below it are not sent
     pub min_severity: String,
+    /// Name of the notification matcher (`notify_matchers`) that decides which
+    /// events this channel gets; empty = the channel's own kinds + min_severity.
+    pub matcher: String,
 }
 
 /// Notification channel types (`event_hooks.channel`).
@@ -240,13 +244,16 @@ pub struct HookSpec {
     pub username: String,
     #[serde(default)]
     pub min_severity: String,
+    /// Existing matcher to use; empty = build one from `kinds` + `min_severity`.
+    #[serde(default)]
+    pub matcher: String,
 }
 
 pub async fn hooks(store: &ConfigStore) -> anyhow::Result<Vec<Hook>> {
     let pool = store.pool().map_err(|x| anyhow::anyhow!("{x}"))?;
     let rows = sqlx::query(
         "SELECT id, name, url, secret, kinds, enabled, last_attempt_at, last_result,
-                channel, target, sender, username, min_severity
+                channel, target, sender, username, min_severity, matcher
          FROM event_hooks ORDER BY name",
     )
     .fetch_all(pool)
@@ -270,6 +277,7 @@ pub async fn hooks(store: &ConfigStore) -> anyhow::Result<Vec<Hook>> {
                 sender: r.get(10),
                 username: r.get(11),
                 min_severity: r.get(12),
+                matcher: r.get(13),
             }
         })
         .collect())
@@ -487,21 +495,26 @@ pub fn check_spec(
 pub async fn save_channel(store: &ConfigStore, h: &HookSpec) -> anyhow::Result<i64> {
     let (channel, url, target, sender, username, min, kinds) = check_spec(h)?;
     let name = h.name.trim();
+    let wanted = h.matcher.trim();
+    if !wanted.is_empty() && matcher::get_tree(store, wanted).await?.is_none() {
+        anyhow::bail!("Invalid matcher {wanted:?}: no such notification matcher");
+    }
     let pool = store.pool().map_err(|x| anyhow::anyhow!("{x}"))?;
     let r = sqlx::query(
         "INSERT INTO event_hooks (name, url, secret, kinds, enabled, created_at, channel, target, \
-         sender, username, min_severity) VALUES (?,?,?,?,1,?,?,?,?,?,?)",
+         sender, username, min_severity, matcher) VALUES (?,?,?,?,1,?,?,?,?,?,?,?)",
     )
     .bind(name)
     .bind(url)
     .bind(h.secret.trim())
-    .bind(kinds)
+    .bind(&kinds)
     .bind(chrono::Utc::now().timestamp())
     .bind(channel)
     .bind(target)
     .bind(sender)
     .bind(username)
-    .bind(min)
+    .bind(&min)
+    .bind(wanted)
     .execute(pool)
     .await
     .map_err(|e| {
@@ -511,11 +524,66 @@ pub async fn save_channel(store: &ConfigStore, h: &HookSpec) -> anyhow::Result<i
             anyhow::anyhow!("saving the webhook: {e}")
         }
     })?;
-    Ok(r.last_insert_rowid())
+    let id = r.last_insert_rowid();
+    if wanted.is_empty() {
+        // the channel's own kinds + minimum severity, as a matcher
+        let auto = format!("auto-{name}");
+        matcher::upsert(
+            store,
+            &auto,
+            "Built from the channel's event kinds and minimum severity",
+            matcher::Matcher::legacy(&kinds, &min),
+            EVENT_KINDS,
+        )
+        .await?;
+        sqlx::query("UPDATE event_hooks SET matcher=? WHERE id=?")
+            .bind(&auto)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(id)
+}
+
+/// Point a channel at another matcher (`""` = back to its own kinds +
+/// minimum severity).
+pub async fn set_hook_matcher(
+    store: &ConfigStore,
+    id: i64,
+    name: &str,
+) -> anyhow::Result<bool> {
+    let name = name.trim();
+    if !name.is_empty() && matcher::get_tree(store, name).await?.is_none() {
+        anyhow::bail!("Invalid matcher {name:?}: no such notification matcher");
+    }
+    let pool = store.pool().map_err(|x| anyhow::anyhow!("{x}"))?;
+    Ok(sqlx::query("UPDATE event_hooks SET matcher=? WHERE id=?")
+        .bind(name)
+        .bind(id)
+        .execute(pool)
+        .await?
+        .rows_affected()
+        > 0)
 }
 
 pub async fn delete_hook(store: &ConfigStore, id: i64) -> anyhow::Result<bool> {
     let pool = store.pool().map_err(|x| anyhow::anyhow!("{x}"))?;
+    let own: Option<(String, String)> =
+        sqlx::query_as("SELECT name, matcher FROM event_hooks WHERE id=?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    let deleted = delete_hook_row(pool, id).await?;
+    if let Some((name, m)) = own {
+        // the matcher built for this channel goes with it (a shared one stays)
+        if deleted && m == format!("auto-{name}") {
+            let _ = matcher::delete(store, &m).await;
+        }
+    }
+    Ok(deleted)
+}
+
+async fn delete_hook_row(pool: &sqlx::SqlitePool, id: i64) -> anyhow::Result<bool> {
     Ok(sqlx::query("DELETE FROM event_hooks WHERE id=?")
         .bind(id)
         .execute(pool)
@@ -807,8 +875,97 @@ fn wants(hook: &Hook, kind: &str) -> bool {
     hook.enabled && (hook.kinds.is_empty() || hook.kinds.split(',').any(|k| k == kind))
 }
 
-fn wants_event(hook: &Hook, e: &Event) -> bool {
-    wants(hook, &e.kind) && severity_rank(&e.severity) >= severity_rank(&hook.min_severity)
+/// Does `hook` get `e`? A channel with a matcher follows the matcher (a name
+/// that no longer resolves falls back to the channel's own kinds + minimum
+/// severity: a lost notification is worse than an extra one); `local` is the
+/// box's wall-clock time for calendar leaves.
+fn wants_event(
+    hook: &Hook,
+    e: &Event,
+    matchers: &HashMap<String, matcher::Matcher>,
+    local: chrono::NaiveDateTime,
+) -> bool {
+    if !hook.enabled {
+        return false;
+    }
+    match matchers.get(&hook.matcher) {
+        Some(m) => m.matches(&matcher::EventCtx {
+            kind: &e.kind,
+            severity: &e.severity,
+            subject: &e.subject,
+            local,
+        }),
+        None => wants(hook, &e.kind) && severity_rank(&e.severity) >= severity_rank(&hook.min_severity),
+    }
+}
+
+/// Matchers by name.
+async fn matcher_map(store: &ConfigStore) -> HashMap<String, matcher::Matcher> {
+    matcher::list(store)
+        .await
+        .map(|l| l.into_iter().map(|m| (m.name, m.tree)).collect())
+        .unwrap_or_default()
+}
+
+/// One past event judged by a matcher tree.
+#[derive(Debug, Clone, Serialize)]
+pub struct PreviewRow {
+    pub id: i64,
+    pub ts: i64,
+    pub kind: String,
+    pub subject: String,
+    pub severity: String,
+    pub matched: bool,
+}
+
+/// How many past events a preview judges (typed: `notify.preview_events`).
+pub const DEFAULT_PREVIEW_EVENTS: i64 = 50;
+
+/// "Would match" preview: the last events of `system_events`, newest first,
+/// each judged by `tree` at the box-local time it happened.
+pub async fn preview(store: &ConfigStore, tree: &matcher::Matcher) -> anyhow::Result<Vec<PreviewRow>> {
+    use chrono::TimeZone;
+    let n = store
+        .load_system_config("notify.preview_events")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|n| (1..=1000).contains(n))
+        .unwrap_or(DEFAULT_PREVIEW_EVENTS);
+    let pool = store.pool().map_err(|x| anyhow::anyhow!("{x}"))?;
+    let rows = sqlx::query(
+        "SELECT id, ts, kind, subject, severity FROM system_events ORDER BY id DESC LIMIT ?",
+    )
+    .bind(n)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| {
+            let ts: i64 = r.get(1);
+            let (kind, subject, severity): (String, String, String) = (r.get(2), r.get(3), r.get(4));
+            let local = chrono::Local
+                .timestamp_opt(ts, 0)
+                .single()
+                .map(|d| d.naive_local())
+                .unwrap_or_default();
+            let matched = tree.matches(&matcher::EventCtx {
+                kind: &kind,
+                severity: &severity,
+                subject: &subject,
+                local,
+            });
+            PreviewRow {
+                id: r.get(0),
+                ts,
+                kind,
+                subject,
+                severity,
+                matched,
+            }
+        })
+        .collect())
 }
 
 async fn note_result(store: &ConfigStore, id: i64, result: &str) {
@@ -847,7 +1004,10 @@ pub async fn send_test(store: &ConfigStore, id: i64) -> anyhow::Result<Option<St
 pub async fn deliver(store: Arc<ConfigStore>, e: Event) {
     let Ok(all) = hooks(&store).await else { return };
     let me = host::hostname();
-    for h in all.into_iter().filter(|h| wants_event(h, &e)) {
+    let matchers = matcher_map(&store).await;
+    // the box's local time; PATRONUS_FAKE_TIME_FILE moves it in tests
+    let local = patronus_firewall::schedule::now();
+    for h in all.into_iter().filter(|h| wants_event(h, &e, &matchers, local)) {
         let (store, e, me) = (store.clone(), e.clone(), me.clone());
         tokio::spawn(async move {
             let req = request(&me, &h, &e);
@@ -1678,6 +1838,7 @@ mod tests {
             sender: sender.into(),
             username: user.into(),
             min_severity: "info".into(),
+            matcher: String::new(),
         }
     }
 
@@ -1778,10 +1939,67 @@ mod tests {
         // severity filter
         let mut h = hook("ntfy", "https://n.example/t", "", "", "", "");
         h.min_severity = "critical".into();
-        assert!(wants_event(&h, &e));
+        let none = HashMap::new();
+        let t = chrono::NaiveDate::from_ymd_opt(2026, 11, 25)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        assert!(wants_event(&h, &e, &none, t));
         let mut info = e.clone();
         info.severity = "warning".into();
-        assert!(!wants_event(&h, &info));
+        assert!(!wants_event(&h, &info, &none, t));
+    }
+
+    #[tokio::test]
+    async fn channels_follow_their_matcher() {
+        let store = ConfigStore::open_in_memory().await.unwrap();
+        // a plain channel gets an equivalent matcher of its own
+        let id = save_hook(&store, "legacy", "https://w.example", "", "gateway_down")
+            .await
+            .unwrap();
+        let hs = hooks(&store).await.unwrap();
+        assert_eq!(hs[0].matcher, "auto-legacy");
+        let ms = matcher_map(&store).await;
+        let t = chrono::NaiveDate::from_ymd_opt(2026, 11, 23) // a Monday
+            .unwrap()
+            .and_hms_opt(23, 0, 0)
+            .unwrap();
+        let down = ev("gateway_down", "wan", "critical", String::new());
+        let up = ev("gateway_up", "wan", "info", String::new());
+        assert!(wants_event(&hs[0], &down, &ms, t));
+        assert!(!wants_event(&hs[0], &up, &ms, t));
+        // a night-time matcher: WAN problems on weekday nights, never guest*
+        let tree: matcher::Matcher = serde_json::from_value(json!({"op":"all","items":[
+            {"op":"any","items":[{"op":"kind","kinds":["gateway_down"]},{"op":"kind","kinds":["tunnel_down"]}]},
+            {"op":"calendar","days":["mon","tue","wed","thu","fri"],"start":"22:00","end":"06:00"},
+            {"op":"not","items":[{"op":"subject","glob":"guest*"}]}]}))
+        .unwrap();
+        matcher::upsert(&store, "night", "", tree.clone(), EVENT_KINDS).await.unwrap();
+        assert!(set_hook_matcher(&store, id, "night").await.unwrap());
+        assert!(set_hook_matcher(&store, id, "nope").await.is_err());
+        let hs = hooks(&store).await.unwrap();
+        let ms = matcher_map(&store).await;
+        assert!(wants_event(&hs[0], &down, &ms, t));
+        let noon = t.date().and_hms_opt(12, 0, 0).unwrap();
+        assert!(!wants_event(&hs[0], &down, &ms, noon));
+        let guest = ev("gateway_down", "guest-wan", "critical", String::new());
+        assert!(!wants_event(&hs[0], &guest, &ms, t));
+        // a shared matcher stays when its channel goes; the auto one goes
+        assert!(delete_hook(&store, id).await.unwrap());
+        assert!(matcher::get_tree(&store, "night").await.unwrap().is_some());
+        assert!(matcher::get_tree(&store, "auto-legacy").await.unwrap().is_none());
+        // channel naming a matcher that does not exist is refused
+        let mut sp = spec("webhook", "https://w.example", "", "", "");
+        sp.name = "x".into();
+        sp.matcher = "missing".into();
+        assert!(save_channel(&store, &sp).await.unwrap_err().to_string().starts_with("Invalid"));
+        // preview judges stored events
+        for e in [&down, &up, &guest] {
+            record(&store, e).await.unwrap();
+        }
+        let rows = preview(&store, &tree).await.unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|r| r.id > 0));
     }
 
     #[test]
