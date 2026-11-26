@@ -140,7 +140,7 @@ Letters: **S**poofing, **T**ampering, **R**epudiation, **I**nformation disclosur
 
 | # | STRIDE | Threat | Control | Test |
 |---|---|---|---|---|
-| T37 | T | Tampered installer media | Signed ISO, checksums and SBOM (T29); the ISO carries no personal data and no private image variant exists. Secure Boot is not supported yet (documented in [ISO-INSTALL.md](ISO-INSTALL.md)). | `gentoo/live-iso/common/tests/test_release_signing.py` |
+| T37 | T | Tampered installer media | Signed ISO, checksums and SBOM (T29); the ISO carries no personal data and no private image variant exists. UEFI Secure Boot is supported on the standard tier (shim + our signed GRUB, kernel and modules, one-time key enrollment: [SECURE-BOOT.md](SECURE-BOOT.md)). | `gentoo/live-iso/common/tests/test_release_signing.py` |
 | T38 | I | Secrets in the unattended-install answer file | The answer file lives on the install USB, not in the image; the installer's secret rules are enforced on the answer file (for example a disk passphrase equal to the root password is refused). | `gentoo/live-iso/common/tests/test_harness_answer_secrets.py` |
 | T39 | D | A firewall that waits for a disk passphrase at boot | The installer encrypts only when an unattended unlock works on that box (TPM2-sealed key or a proven remote unlock); otherwise it installs unencrypted and says so. | `gentoo/live-iso/common/zfs-enc-test.py` |
 | T40 | E | Default credentials on a fresh install | None exist: the live installer creates the first administrator, and a router without one serves only the first-run claim (T17). | `ci/netlab/journey-first-boot.sh` |
