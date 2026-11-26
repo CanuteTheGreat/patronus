@@ -335,7 +335,11 @@ impl FirewallManager {
             other => anyhow::bail!("Invalid chain {other:?} (input, forward or output)"),
         };
         let ext = Self::ext_from_api(rule)?;
-        let chain = if ext.floating { ChainType::Forward } else { chain };
+        let chain = if ext.floating {
+            ChainType::Forward
+        } else {
+            chain
+        };
         let iface = if ext.floating {
             None
         } else {
@@ -433,9 +437,7 @@ impl FirewallManager {
                     .chars()
                     .all(|ch| ch.is_alphanumeric() || matches!(ch, ' ' | '_' | '-' | '.'))
             {
-                anyhow::bail!(
-                    "Invalid category {c:?} (at most 40 letters, digits, space, _ - .)"
-                );
+                anyhow::bail!("Invalid category {c:?} (at most 40 letters, digits, space, _ - .)");
             }
         }
         for (what, v) in [
@@ -454,7 +456,11 @@ impl FirewallManager {
             floating: rule.floating,
             quick: rule.quick.unwrap_or(true),
             direction,
-            interfaces: if rule.floating { interfaces } else { Vec::new() },
+            interfaces: if rule.floating {
+                interfaces
+            } else {
+                Vec::new()
+            },
             max_states: rule.max_states,
             max_src_conn: rule.max_src_conn,
             max_src_rate: rule.max_src_rate,
@@ -488,7 +494,10 @@ impl FirewallManager {
             }
         }
         let mut ctx = patronus_firewall::nftables::RenderCtx {
-            limiters: limiters.iter().map(|l| (l.name.clone(), l.spec())).collect(),
+            limiters: limiters
+                .iter()
+                .map(|l| (l.name.clone(), l.spec()))
+                .collect(),
             ..Default::default()
         };
         if core.ext.floating {
@@ -1816,7 +1825,12 @@ mod tests {
         assert_eq!(got.ext.interfaces, vec!["eth1", "@lan"]);
         assert_eq!(got.ext.category.as_deref(), Some("guests"));
         assert_eq!(got.chain, "forward");
-        assert!(got.ext_summary.contains("floating, not quick, any on eth1, LAN"), "{}", got.ext_summary);
+        assert!(
+            got.ext_summary
+                .contains("floating, not quick, any on eth1, LAN"),
+            "{}",
+            got.ext_summary
+        );
         // a plain rule has no options and no summary
         let plain = fw.add_rule(sample_rule("192.0.2.0/24")).await.unwrap();
         let p = fw.get_rule(plain).await.unwrap().unwrap();
@@ -1824,10 +1838,20 @@ mod tests {
         // refused: bad direction, category with quotes, zero limit, limit on a block rule, unknown group/limiter
         let mut bad = f.clone();
         bad.direction = Some("sideways".into());
-        assert!(fw.add_rule(bad).await.unwrap_err().to_string().contains("Invalid"));
+        assert!(fw
+            .add_rule(bad)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid"));
         let mut bad = sample_rule("any");
         bad.category = Some("x\"; flush ruleset".into());
-        assert!(fw.add_rule(bad).await.unwrap_err().to_string().contains("Invalid category"));
+        assert!(fw
+            .add_rule(bad)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid category"));
         let mut bad = sample_rule("any");
         bad.max_states = Some(0);
         assert!(fw.add_rule(bad).await.is_err());
@@ -1838,13 +1862,28 @@ mod tests {
         assert!(e.contains("Invalid") && e.contains("pass rules"), "{e}");
         let mut bad = sample_rule("any");
         bad.limiter = Some("nope".into());
-        assert!(fw.add_rule(bad).await.unwrap_err().to_string().contains("unknown limiter"));
+        assert!(fw
+            .add_rule(bad)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unknown limiter"));
         let mut bad = sample_rule("any");
         bad.interface = "group:nope".into();
-        assert!(fw.add_rule(bad).await.unwrap_err().to_string().contains("does not exist"));
+        assert!(fw
+            .add_rule(bad)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("does not exist"));
         let mut bad = f.clone();
         bad.interfaces = vec!["group:nope".into()];
-        assert!(fw.add_rule(bad).await.unwrap_err().to_string().contains("does not exist"));
+        assert!(fw
+            .add_rule(bad)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("does not exist"));
         // groups: validation, use protection, delete
         let g = |name: &str, m: &[&str]| IfGroup {
             name: name.into(),
@@ -1871,7 +1910,12 @@ mod tests {
             per_source: true,
             description: None,
         };
-        assert!(fw.save_limiter(lim("cap", 0)).await.unwrap_err().to_string().contains("Invalid"));
+        assert!(fw
+            .save_limiter(lim("cap", 0))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid"));
         fw.save_limiter(lim("cap", 4000)).await.unwrap();
         let mut with_lim = sample_rule("any");
         with_lim.name = Some("wl".into());
@@ -1880,7 +1924,12 @@ mod tests {
         with_lim.max_src_rate_secs = Some(10);
         with_lim.overload = Some("flood".into());
         let lid = fw.add_rule(with_lim).await.unwrap();
-        assert!(fw.delete_limiter("cap").await.unwrap_err().to_string().contains("used by"));
+        assert!(fw
+            .delete_limiter("cap")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("used by"));
         let cats = fw.categories().await.unwrap();
         assert_eq!(cats, vec![("guests".to_string(), 1)]);
         let tables = fw.overload_tables().await.unwrap();
@@ -1890,7 +1939,10 @@ mod tests {
         fw.delete_rule(lid).await.unwrap();
         fw.delete_limiter("cap").await.unwrap();
         assert!(fw.release_overload("x\"y", None).await.is_err());
-        assert!(fw.release_overload("flood", Some("not-an-ip")).await.is_err());
+        assert!(fw
+            .release_overload("flood", Some("not-an-ip"))
+            .await
+            .is_err());
     }
 
     #[tokio::test]

@@ -285,9 +285,14 @@ api_ok DELETE /firewall/rules/$STATES
 sleep 5
 
 echo "=== 5. max-src-rate puts a flooding client into the overload table"
-api_ok POST /firewall/rules "$(rj lb-flood accept @lan 80 ',"max_src_rate":5,"max_src_rate_secs":10,"overload":"flooders","overload_secs":120,"category":"limits"')"
+api_code 400 PUT /firewall/limit-settings '{"set_size":3,"overload_secs":900}'
+api_ok PUT /firewall/limit-settings '{"set_size":4096,"overload_secs":900}'
+api_ok POST /firewall/rules "$(rj lb-flood accept @lan 80 ',"max_src_rate":5,"max_src_rate_secs":10,"overload":"flooders","category":"limits"')"
 FLOOD=$(json_id)
 nl_assert_nft_has "set ov_flooders_v4" "ip saddr @ov_flooders_v4 drop"
+SET=$(R nft list set inet patronus ov_flooders_v4)
+grep -qF 'size 4096' <<<"$SET" && grep -qF 'timeout 15m' <<<"$SET" || { echo "$SET"; nl_fail "the overload table does not follow the limit settings (size 4096, timeout 15 min)"; }
+nl_ok "the limit settings set the table size and the default overload timeout"
 cat > "$NL_T/lb-flood.py" <<'EOF'
 import socket, sys
 ok = 0
