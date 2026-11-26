@@ -41,7 +41,8 @@ pub struct ChannelArgs {
 
 pub async fn channel(db: Option<&Path>, a: ChannelArgs) -> anyhow::Result<()> {
     let store = open_store(db).await?;
-    let change = a.set.is_some() || a.mirror.is_some() || a.binhost.is_some() || a.location.is_some();
+    let change =
+        a.set.is_some() || a.mirror.is_some() || a.binhost.is_some() || a.location.is_some();
     if change {
         let before = updates::save(
             &store,
