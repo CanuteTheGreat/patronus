@@ -36,6 +36,10 @@ pub fn area_for_path(path: &str) -> Option<&'static str> {
     // privilege of any group.
     if path.starts_with("/static/")
         || path.starts_with("/api/auth/")
+        || path == "/api/i18n"
+        || path == "/api/i18n/me"
+        || path == "/api/docs"
+        || path == "/api/openapi.json"
         || path == "/login"
         || path == "/licenses"
         || path.starts_with("/licenses/")

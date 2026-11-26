@@ -10,6 +10,9 @@
 //! - `PUT|DELETE /api/routing/routes/:id`
 //! - `POST /api/routing/apply`              re-run the routes phase
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use crate::state::AppState;
 use askama::Template;
 use axum::{

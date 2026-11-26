@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block title %}{{ "apidocs-title"|t }} - Patronus{% endblock %}
+
+{% block content %}
+<style>
+    .api-op { border: 1px solid var(--border); border-radius: 6px; margin: .5rem 0; background: var(--card-bg); }
+    .api-op > summary { cursor: pointer; padding: .5rem .75rem; display: flex; gap: .75rem; align-items: baseline; flex-wrap: wrap; }
+    .api-op[open] > summary { border-bottom: 1px solid var(--border); }
+    .api-method { font: 600 .75rem var(--font-mono, monospace); text-transform: uppercase; min-width: 4.5rem; text-align: center;
+        border: 1px solid var(--border); border-radius: 4px; padding: .1rem .4rem; color: var(--text); }
+    .api-method.m-get { border-color: var(--success); }
+    .api-method.m-post { border-color: var(--primary); }
+    .api-method.m-put, .api-method.m-patch { border-color: var(--warning); }
+    .api-method.m-delete { border-color: var(--danger); }
+    .api-path { font-family: var(--font-mono, monospace); word-break: break-all; }
+    .api-sum { color: var(--text-muted); }
+    .api-body { padding: .5rem .75rem; }
+    .api-body h4 { margin: .75rem 0 .25rem; font-size: .85rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+    .api-body table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+    .api-body td, .api-body th { border-top: 1px solid var(--border); padding: .25rem .5rem; text-align: left; vertical-align: top; }
+    .api-body pre { white-space: pre-wrap; margin: 0; font-family: var(--font-mono, monospace); font-size: .85rem; }
+    .api-tag { margin-top: 1.25rem; }
+    .api-tag h3 { font-size: 1rem; text-transform: capitalize; }
+    .api-note { font-size: .8rem; color: var(--text-muted); }
+    #api-search { max-width: 28rem; width: 100%; }
+</style>
+<div class="page-header">
+    <h1 class="page-title">{{ "apidocs-title"|t }}</h1>
+    <p class="page-subtitle">{{ "apidocs-intro"|t }}</p>
+</div>
+<div class="card" id="apidocs"
+     data-l-parameters="{{ "apidocs-parameters"|t }}" data-l-body="{{ "apidocs-request-body"|t }}"
+     data-l-responses="{{ "apidocs-responses"|t }}" data-l-noauth="{{ "apidocs-no-auth"|t }}"
+     data-l-people="{{ "apidocs-people-only"|t }}" data-l-required="{{ "apidocs-required"|t }}"
+     data-l-nomatch="{{ "apidocs-no-match"|t }}" data-l-count="{{ "apidocs-count"|t }}"
+     data-l-failed="{{ "apidocs-failed"|t }}">
+    <p>
+        <label for="api-search" class="api-note">{{ "apidocs-search"|t }}</label><br>
+        <input id="api-search" type="search" autocomplete="off">
+        <a class="btn btn-secondary btn-sm" href="/api/openapi.json" download="openapi.json">{{ "apidocs-download"|t }}</a>
+    </p>
+    <p class="api-note" id="api-count" aria-live="polite">{{ "apidocs-loading"|t }}</p>
+    <div id="api-list"></div>
+</div>
+<script>
+(function () {
+    const root = document.getElementById('apidocs');
+    const L = k => root.dataset['l' + k];
+    const list = document.getElementById('api-list');
+    const count = document.getElementById('api-count');
+    let spec = null;
+    function el(tag, cls, text) {
+        const e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (text !== undefined) e.textContent = text;
+        return e;
+    }
+    function refName(s) { return s.$ref.split('/').pop(); }
+    function typeOf(s, depth) {
+        if (!s || typeof s !== 'object') return 'any';
+        if (s.$ref) return refName(s);
+        if (s.oneOf || s.anyOf) return (s.oneOf || s.anyOf).map(x => typeOf(x, depth)).join(' | ');
+        if (s.allOf) return s.allOf.map(x => typeOf(x, depth)).join(' + ');
+        if (s.enum) return s.enum.map(v => JSON.stringify(v)).join(' | ');
+        const t = Array.isArray(s.type) ? s.type.join(' | ') : s.type;
+        if (t === 'array') return 'array<' + typeOf(s.items, depth + 1) + '>';
+        if (t === 'object' && s.additionalProperties) return 'map<' + typeOf(s.additionalProperties, depth + 1) + '>';
+        return t || 'any';
+    }
+    function resolve(s) {
+        let n = 0;
+        while (s && s.$ref && n++ < 8) s = spec.components.schemas[refName(s)];
+        return s;
+    }
+    function fields(s) {
+        const out = [];
+        const r = resolve(s);
+        if (!r) return out;
+        (r.allOf || []).forEach(x => out.push(...fields(x)));
+        const req = new Set(r.required || []);
+        Object.entries(r.properties || {}).forEach(([k, v]) => out.push([k, typeOf(v, 1), req.has(k), v.description || '']));
+        return out;
+    }
+    function schemaBlock(s) {
+        const f = fields(s);
+        if (!f.length) return el('pre', '', typeOf(s, 0));
+        const t = el('table');
+        f.forEach(([k, ty, req, d]) => {
+            const tr = el('tr');
+            tr.append(el('td', 'api-path', k + (req ? ' *' : '')), el('td', '', ty), el('td', 'api-note', d));
+            t.append(tr);
+        });
+        return t;
+    }
+    function op(path, method, o) {
+        const d = el('details', 'api-op');
+        const sm = el('summary');
+        sm.append(el('span', 'api-method m-' + method, method), el('span', 'api-path', path), el('span', 'api-sum', o.summary || ''));
+        d.append(sm);
+        const b = el('div', 'api-body');
+        if (o.description && o.description !== o.summary) b.append(el('pre', '', o.description));
+        if (o.security && o.security.length === 0) b.append(el('p', 'api-note', L('Noauth')));
+        if (o['x-api-keys-allowed'] === false) b.append(el('p', 'api-note', L('People')));
+        if (o.parameters && o.parameters.length) {
+            b.append(el('h4', '', L('Parameters')));
+            const t = el('table');
+            o.parameters.forEach(p => {
+                const tr = el('tr');
+                tr.append(el('td', 'api-path', p.name + (p.required ? ' *' : '')), el('td', '', p.in), el('td', '', typeOf(p.schema, 1)), el('td', 'api-note', p.description || ''));
+                t.append(tr);
+            });
+            b.append(t);
+        }
+        if (o.requestBody) {
+            b.append(el('h4', '', L('Body')));
+            Object.entries(o.requestBody.content).forEach(([ct, c]) => { b.append(el('p', 'api-note', ct)); b.append(schemaBlock(c.schema)); });
+        }
+        b.append(el('h4', '', L('Responses')));
+        Object.entries(o.responses).forEach(([code, r]) => {
+            const rr = r.$ref ? spec.components.responses[r.$ref.split('/').pop()] : r;
+            b.append(el('p', '', code + ' ' + (rr.description || '')));
+            if (rr.content && code === '200') Object.entries(rr.content).forEach(([ct, c]) => { b.append(el('p', 'api-note', ct)); if (c.schema && Object.keys(c.schema).length) b.append(schemaBlock(c.schema)); });
+        });
+        d.append(b);
+        return d;
+    }
+    function render(q) {
+        list.textContent = '';
+        q = (q || '').toLowerCase();
+        let n = 0;
+        const tags = {};
+        Object.keys(spec.paths).sort().forEach(path => {
+            Object.entries(spec.paths[path]).forEach(([method, o]) => {
+                const hay = (path + ' ' + method + ' ' + (o.summary || '') + ' ' + (o.description || '')).toLowerCase();
+                if (q && !hay.includes(q)) return;
+                const tag = (o.tags || ['api'])[0];
+                (tags[tag] = tags[tag] || []).push([path, method, o]);
+                n++;
+            });
+        });
+        Object.keys(tags).sort().forEach(tag => {
+            const sec = el('section', 'api-tag');
+            sec.append(el('h3', '', tag));
+            tags[tag].forEach(([p, m, o]) => sec.append(op(p, m, o)));
+            list.append(sec);
+        });
+        count.textContent = n ? n + ' ' + L('Count') : L('Nomatch');
+    }
+    fetch('/api/openapi.json', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : Promise.reject()).then(j => {
+        spec = j;
+        render('');
+        document.getElementById('api-search').addEventListener('input', e => render(e.target.value));
+    }).catch(() => { count.textContent = L('Failed'); });
+})();
+</script>
+{% endblock %}

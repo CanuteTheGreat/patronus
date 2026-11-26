@@ -13,6 +13,9 @@
 //! refuses to run there. `PATRONUS_SETUP_PROVISIONED=1` does the same for a
 //! router image whose network was provisioned at build or first boot.
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use crate::state::interfaces::InterfaceUpdate;
 use crate::state::AppState;
 use askama::Template;

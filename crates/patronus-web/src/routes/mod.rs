@@ -115,6 +115,13 @@ pub fn build_router(
             app_state.clone(),
             require_session,
         ))
+        // Language of the request: account / login-page choice / system default / Accept-Language
+        // (inside the session middleware, which provides the session; outside everything that
+        // answers, so the 401/403 JSON errors are translated too).
+        .layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            crate::i18n::middleware,
+        ))
         // Session middleware
         .layer(axum::middleware::from_fn_with_state(
             app_state,
@@ -293,6 +300,7 @@ async fn require_session(
             // the handler scopes it to the signed-in user)
             let own_account = path == "/api/auth/logout"
                 || path == "/api/auth/password"
+                || path == "/api/i18n/me"
                 || path.starts_with("/api/auth/2fa/")
                 || path == "/api/v1/dashboard/layout";
             // Group membership replaces the coarse role: an account in a
@@ -668,10 +676,16 @@ fn api_routes() -> Router<AppState> {
         .merge(api::device::router())
         .merge(api::activity::router())
         .merge(api::dashboard::router())
+        .merge(api::i18n::router())
+        .merge(api::docs::router())
 }
 
 #[cfg(test)]
+mod api_spec_tests;
+#[cfg(test)]
 mod honesty_tests;
+#[cfg(test)]
+mod i18n_tests;
 #[cfg(test)]
 mod insight_api_tests;
 

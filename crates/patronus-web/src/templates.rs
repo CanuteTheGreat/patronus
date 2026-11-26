@@ -2,6 +2,9 @@
 //!
 //! This module defines the template structs that map to HTML templates.
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use askama::Template;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -256,6 +259,17 @@ pub struct MonitoringTemplate {
     pub logs_error: String,
 }
 
+/// One language in the Language card.
+pub struct LangOption {
+    pub code: String,
+    /// The language's own name.
+    pub name: String,
+    /// This is the signed-in account's own choice.
+    pub mine: bool,
+    /// This is the system default.
+    pub system: bool,
+}
+
 /// System template
 #[derive(Template)]
 #[template(path = "system.html")]
@@ -269,6 +283,12 @@ pub struct SystemTemplate {
     pub me_id: u32,
     pub me_username: String,
     pub me_two_factor: bool,
+    /// Language settings card: every language, with the account's and the system's choice marked.
+    pub languages: Vec<LangOption>,
+    /// The account has no language of its own (follows the system default).
+    pub my_language_unset: bool,
+    /// The system default is `auto` (follow the browser).
+    pub system_language_auto: bool,
     pub is_admin: bool,
     pub can_modify: bool,
     /// USE=totp: two-factor enrolment is built in.

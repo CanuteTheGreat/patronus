@@ -1031,11 +1031,11 @@ impl IntoResponse for AuthError {
 /// "45 seconds", "1 minute", "15 minutes": how long a login refusal lasts.
 pub fn wait_text(secs: u64) -> String {
     let secs = secs.max(1);
+    // in the request's language (English outside a request)
     if secs < 60 {
-        format!("{secs} second{}", if secs == 1 { "" } else { "s" })
+        crate::i18n::tr_num("wait-seconds", secs)
     } else {
-        let m = secs.div_ceil(60);
-        format!("{m} minute{}", if m == 1 { "" } else { "s" })
+        crate::i18n::tr_num("wait-minutes", secs.div_ceil(60))
     }
 }
 
@@ -1356,6 +1356,8 @@ pub struct AuthState {
     pub rbac: crate::rbac::RbacStore,
     /// System-account login (PAM / shadow), see `crate::syslogin`.
     pub syslogin: crate::syslogin::SysLogin,
+    /// Accounts' languages and the system default language (see `crate::i18n`).
+    pub lang: Arc<crate::i18n::Prefs>,
 }
 
 impl AuthState {
@@ -1365,8 +1367,9 @@ impl AuthState {
             session_store: SessionStore::new(),
             login_throttle: LoginThrottle::new(),
             api_keys: crate::apikeys::ApiKeyStore::new(store.clone()),
-            rbac: crate::rbac::RbacStore::new(store),
+            rbac: crate::rbac::RbacStore::new(store.clone()),
             syslogin: crate::syslogin::SysLogin::from_env(),
+            lang: Arc::new(crate::i18n::Prefs::new(store)),
         }
     }
 }

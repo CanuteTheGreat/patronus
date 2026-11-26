@@ -1,0 +1,23 @@
+[package]
+name = "patronus-openapi"
+description = "Generates the OpenAPI 3.1 document and the UI-page/API coverage table from the patronus-web sources"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "patronus_openapi"
+path = "src/lib.rs"
+
+[[bin]]
+name = "patronus-openapi"
+path = "src/main.rs"
+
+[dependencies]
+# Reads the axum route tables and the serde types straight from the Rust sources, so the
+# document cannot drift from the routes the way hand-written annotations do.
+syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
+serde_json.workspace = true
