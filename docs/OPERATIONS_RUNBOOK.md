@@ -1507,9 +1507,9 @@ patronus-cli status
 ### External Resources
 
 - [Project Documentation](../README.md)
-- [Architecture Overview](ARCHITECTURE.md)
+- [Architecture Overview](../ARCHITECTURE.md)
 - [API Reference](api/openapi.yaml)
-- [Security Guide](SECURITY.md)
+- [Security Guide](../SECURITY.md)
 - [Disaster Recovery](DISASTER_RECOVERY.md)
 - [Performance Tuning](PERFORMANCE_TUNING.md)
 
