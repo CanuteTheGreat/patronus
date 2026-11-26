@@ -64,7 +64,7 @@ PY
 mk 1.0.0 3600 60; "$P" plugin pack "$W/src" --key "$W/good.key" --out "$W/v1.pplug" >/dev/null
 mk 1.1.0 50 30; "$P" plugin pack "$W/src" --key "$W/good.key" --out "$W/v11.pplug" >/dev/null
 # a schema that breaks its own rule is refused at pack time, before anything is signed
-sed 's/"min":5,"max":3600/"min":9,"max":3/' "$W/src/plugin.json" > "$W/bad.json"
+sed -E 's/"min":5,"max":[0-9]+/"min":9,"max":3/' "$W/src/plugin.json" > "$W/bad.json"
 cp -r "$W/src" "$W/badsrc"; cp "$W/bad.json" "$W/badsrc/plugin.json"
 ! "$P" plugin pack "$W/badsrc" --key "$W/good.key" --out "$W/bad.pplug" >/dev/null 2>&1 || nl_fail "a schema with min > max was signed"
 nl_ok "bundles with a settings schema made and signed (v1.0.0, v1.1.0 with a narrower limit); a broken schema is refused at pack time"
