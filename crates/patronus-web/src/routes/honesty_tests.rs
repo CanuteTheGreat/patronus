@@ -5,7 +5,7 @@
 //! it cannot -- driven through the real router with a logged-in session.
 
 use axum::body::Body;
-use axum::http::{Method, Request, StatusCode, header};
+use axum::http::{header, Method, Request, StatusCode};
 use tower::ServiceExt;
 
 /// Literals of the old fixtures. None may appear in any response.

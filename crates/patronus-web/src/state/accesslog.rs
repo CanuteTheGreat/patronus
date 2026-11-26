@@ -1299,17 +1299,15 @@ mod tests {
         let l = load_settings(&s).await;
         assert_eq!(l.retention_rows, 500);
         assert!(!l.enabled);
-        assert!(
-            save_settings(
-                &s,
-                SettingsInput {
-                    retention_days: Some(0),
-                    ..Default::default()
-                }
-            )
-            .await
-            .is_err()
-        );
+        assert!(save_settings(
+            &s,
+            SettingsInput {
+                retention_days: Some(0),
+                ..Default::default()
+            }
+        )
+        .await
+        .is_err());
         assert_eq!(load_settings(&s).await.retention_rows, 500);
     }
 
@@ -1560,28 +1558,24 @@ mod tests {
         )
         .await;
         assert_eq!(page[0].id, rows[2].id);
-        assert!(
-            search(
-                &s,
-                &Filter {
-                    status: Some("abc".into()),
-                    ..Default::default()
-                }
-            )
-            .await
-            .is_err()
-        );
-        assert!(
-            search(
-                &s,
-                &Filter {
-                    since: Some("never".into()),
-                    ..Default::default()
-                }
-            )
-            .await
-            .is_err()
-        );
+        assert!(search(
+            &s,
+            &Filter {
+                status: Some("abc".into()),
+                ..Default::default()
+            }
+        )
+        .await
+        .is_err());
+        assert!(search(
+            &s,
+            &Filter {
+                since: Some("never".into()),
+                ..Default::default()
+            }
+        )
+        .await
+        .is_err());
     }
 
     #[tokio::test]
