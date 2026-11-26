@@ -82,6 +82,9 @@ export default function Sites() {
   const [editLocation, setEditLocation] = useState('')
   const [name, setName] = useState('')
   const [location, setLocation] = useState('')
+  const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('ALL')
+  const [sortBy, setSortBy] = useState<'name' | 'status' | 'updated'>('name')
   const role = getUser()?.role
   const canWrite = role === 'admin' || role === 'operator'
   const canDelete = role === 'admin'
@@ -127,6 +130,17 @@ export default function Sites() {
   if (error) return <div role="alert">Error: {error.message}</div>
   if (!data) return <div>No data</div>
 
+  const q = query.trim().toLowerCase()
+  const statusRank: Record<string, number> = { OFFLINE: 0, DEGRADED: 1, MAINTENANCE: 2, ACTIVE: 3 }
+  const shown = data.sites
+    .filter((x) => statusFilter === 'ALL' || x.status === statusFilter)
+    .filter((x) => !q || x.name.toLowerCase().includes(q) || (x.location ?? '').toLowerCase().includes(q))
+    .sort((a, b) =>
+      sortBy === 'updated' ? b.updatedAt.localeCompare(a.updatedAt)
+      : sortBy === 'status' ? (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9) || a.name.localeCompare(b.name)
+      : a.name.localeCompare(b.name))
+  const filtered = q !== '' || statusFilter !== 'ALL'
+
   const mutationError = createState.error?.message ?? deleteState.error?.message ?? updateState.error?.message
 
   return (
@@ -134,7 +148,7 @@ export default function Sites() {
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Sites</h1>
         <div className="text-sm text-gray-600 dark:text-gray-300" data-testid="site-count">
-          Total: {data.sites.length} sites
+          {filtered ? `Showing ${shown.length} of ${data.sites.length} sites` : `Total: ${data.sites.length} sites`}
         </div>
       </div>
 
@@ -158,12 +172,44 @@ export default function Sites() {
         </form>
       )}
 
+      {data.sites.length > 1 && (
+        <div className="flex flex-wrap items-end gap-3" role="search" aria-label="Filter sites">
+          <div>
+            <label htmlFor="site-search" className="block text-xs text-gray-600 dark:text-gray-300">Search</label>
+            <input id="site-search" type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name or location"
+              className="mt-1 rounded border border-gray-300 dark:border-gray-600 px-3 py-2 dark:bg-gray-800 dark:text-gray-100" />
+          </div>
+          <div>
+            <label htmlFor="site-status" className="block text-xs text-gray-600 dark:text-gray-300">Status</label>
+            <select id="site-status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+              className="mt-1 rounded border border-gray-300 dark:border-gray-600 px-3 py-2 dark:bg-gray-800 dark:text-gray-100">
+              <option value="ALL">All</option><option value="ACTIVE">Active</option><option value="DEGRADED">Degraded</option>
+              <option value="OFFLINE">Offline</option><option value="MAINTENANCE">Maintenance</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="site-sort" className="block text-xs text-gray-600 dark:text-gray-300">Sort by</label>
+            <select id="site-sort" value={sortBy} onChange={(e) => setSortBy(e.target.value as 'name' | 'status' | 'updated')}
+              className="mt-1 rounded border border-gray-300 dark:border-gray-600 px-3 py-2 dark:bg-gray-800 dark:text-gray-100">
+              <option value="name">Name</option><option value="status">Problems first</option><option value="updated">Recently updated</option>
+            </select>
+          </div>
+        </div>
+      )}
+
+      {data.sites.length > 0 && shown.length === 0 && (
+        <p className="text-gray-600 dark:text-gray-300" data-testid="no-match">
+          No sites match.{' '}
+          <button type="button" className="underline" onClick={() => { setQuery(''); setStatusFilter('ALL') }}>Clear filters</button>
+        </p>
+      )}
+
       {data.sites.length === 0 && (
         <p className="text-gray-600 dark:text-gray-300">No sites yet.{canWrite ? ' Add the first one above.' : ''}</p>
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {data.sites.map((site) => (
+        {shown.map((site) => (
           <div key={site.id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-6" data-testid="site-card">
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-center gap-3">
