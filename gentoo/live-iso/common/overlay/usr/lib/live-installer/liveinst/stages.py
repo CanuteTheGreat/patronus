@@ -7,7 +7,7 @@ Every stage is a small unit with
   * apply(inst)  - perform them on the target (Installer, see system.py)
 
 Stage ids (UI order): keymap, hostname, disk, extract, rootpass, desktop (only with a hardware profile
-that ships a desktop), netconfig, services, hardening, use_flags, finish.  `extract` and `finish` have no form.  Disk and extract run first when installing
+that ships a desktop), netconfig, netadv (Patronus: bonds, VLANs, management network), services, hardening, use_flags, finish.  `extract` and `finish` have no form.  Disk and extract run first when installing
 (APPLY_ORDER); everything else writes into the extracted system.
 
 The install type (Server by default; Workstation is reserved for a future desktop profile) is part of
@@ -16,7 +16,7 @@ stack, skip the server sysctl lock-down and use the desktop USE preset.
 """
 import re
 
-from . import portableswap, secretcheck
+from . import portableswap, secretcheck, zfsroot
 from . import system as S
 
 ERASE_WORD = "ERASE"
@@ -222,11 +222,14 @@ class DiskStage(Stage):
         why = c.get("fs_why") or ""
         luks = lambda v: v.get("fs") == "xfs-luks"  # noqa: E731
         return [Field("fs", "Root file system", "choice", c["fs"], [(x, opts.get(x, x)) for x in fss],
-                      hint=("Default: " + why + ". " if why else "") + "ext4 and XFS use one disk. ZFS uses the whole disk as a pool 'rpool'."),
+                      hint=("Default: " + why + ". " if why else "") + "ext4 and XFS use one disk. ZFS uses the whole disk(s) as one pool (layout and pool name under Advanced)."),
                 Field("zfs_raid", "ZFS layout", "choice", c["zfs_raid"],
-                      [("single", "single disk"), ("mirror", "mirror (RAID1, two disks)")],
+                      [(x, zfsroot.RAID_LABELS[x]) for x in zfsroot.RAID_LEVELS],
                       visible=lambda v: v.get("fs") == "zfs", advanced=True,
-                      hint="A mirror needs two disks and survives one failing; /boot lives on the first disk only."),
+                      hint="Pick the disks on the next screen (mirror/stripe 2+, RAID-Z1 3+, RAID-Z2 4+). Every disk gets a bootable copy of /boot."),
+                Field("zfs_pool", "ZFS pool name", "text", zfsroot.pool_name(c), width=24,
+                      visible=lambda v: v.get("fs") == "zfs", advanced=True,
+                      hint="Default rpool. A letter first, then letters, digits, _ - . : (the boot environments live in <pool>/ROOT)."),
                 *self._enc_fields(c, p),
                 Field("lpw", "Disk passphrase", "password", c.get("luks_passphrase", ""), width=40, visible=luks,
                       hint="Typed at every boot (the Type Cover / a USB keyboard works). Min 12 chars. Lose it = lose the data"),
@@ -257,6 +260,10 @@ class DiskStage(Stage):
                 Field("pp2", "Confirm passphrase", "password", c.get("zfs_passphrase", ""), width=40, visible=lambda v: v.get("fs") == "zfs" and v.get("enc"))]
 
     def validate(self, ctx, v):
+        if v.get("fs") == "zfs" and "zfs_pool" in v:
+            bad = zfsroot.pool_name_problem((v.get("zfs_pool") or "").strip())
+            if bad:
+                return bad
         if v.get("fs") == "xfs-luks":
             if v.get("lpw") != v.get("lpw2"):
                 return "The two passphrases do not match."
@@ -266,12 +273,13 @@ class DiskStage(Stage):
         if v.get("fs") == "zfs" and v.get("enc"):
             if v.get("pp") != v.get("pp2"):
                 return "The two passphrases do not match."
-            from . import zfsroot
             return zfsroot.passphrase_problem(v.get("pp") or "") or self._reuse(ctx, v.get("pp") or "")
         return None
 
     def commit(self, ctx, v):
         ctx.c["fs"], ctx.c["zfs_raid"] = v["fs"], v["zfs_raid"]
+        if v.get("zfs_pool"):
+            ctx.c["zfs_pool"] = v["zfs_pool"].strip()
         ctx.c["test_machine_no_encryption"] = bool(v.get("tm"))
         if ctx.c["test_machine_no_encryption"]:
             from . import testmachine
@@ -287,22 +295,32 @@ class DiskStage(Stage):
         ctx.c["swap"] = v.get("swap", "auto") if (v["fs"] != "zfs" or ctx.c["zfs_encrypt"] or ctx.c["test_machine_no_encryption"]) else "auto"
 
     def need_disks(self, c):
-        return 2 if (c["fs"] == "zfs" and c["zfs_raid"] == "mirror") else 1
+        """the FEWEST disks the layout takes (single = exactly one; the multi-disk ZFS layouts take that many or more)"""
+        return zfsroot.MIN_DISKS.get(c["zfs_raid"], 1) if c["fs"] == "zfs" else 1
+
+    def multi_disk(self, c):
+        """the disk picker lets the user tick several disks"""
+        return c["fs"] == "zfs" and c["zfs_raid"] != "single"
 
     def check_selection(self, ctx, sel):
         """Return (error, warning) for a disk selection."""
         need = self.need_disks(ctx.c)
-        if len(sel) != need:
-            return f"Select exactly {need} disk{'s' if need > 1 else ''} (selected: {len(sel)}).", None
+        if not self.multi_disk(ctx.c) and len(sel) != 1:
+            return f"Select exactly one disk (selected: {len(sel)}).", None
+        if len(sel) < need:
+            w = {2: "two", 3: "three", 4: "four"}.get(need, str(need))
+            return f"ZFS {ctx.c['zfs_raid']} needs at least {w} disks (selected: {len(sel)}).", None
         by = {d["path"]: d for d in ctx.disks}
         small = [by[x] for x in sel if x in by and by[x]["size"] < 8 * 10**9]
         if small:
             return f"{small[0]['path']} is smaller than 8 GB; the installed system needs more room.", None
         warn = None
-        if need == 2 and all(x in by for x in sel):
-            a, b = by[sel[0]]["size"], by[sel[1]]["size"]
-            if abs(a - b) > 0.1 * max(a, b):
-                warn = "The disks differ in size by more than 10%; the mirror is limited to the smaller one."
+        if len(sel) > 1 and all(x in by for x in sel):
+            sizes = [by[x]["size"] for x in sel]
+            if max(sizes) - min(sizes) > 0.1 * max(sizes):
+                warn = "The disks differ in size by more than 10%; every disk of the pool is limited to the smallest one."
+            if ctx.c.get("zfs_raid") == "stripe":
+                warn = ((warn + " ") if warn else "") + "A stripe has NO redundancy: one failed disk loses the whole pool."
         return None, warn
 
     def plan(self, ctx):
@@ -320,7 +338,7 @@ class DiskStage(Stage):
         if c["fs"] == "xfs-luks":
             out.append("Encrypt the root partition with LUKS2 (argon2id) and create XFS inside it; zram instead of swap")
         elif c["fs"] == "zfs":
-            out.append("Create ZFS pool rpool" + (" (mirror)" if c["zfs_raid"] == "mirror" else "") + " with lz4 compression"
+            out.append(f"Create ZFS pool {zfsroot.pool_name(c)}" + ("" if c["zfs_raid"] == "single" else f" ({c['zfs_raid']}, {len(c['disks'])} disks)") + " with zstd compression"
                        + ((", natively ENCRYPTED (AES-256-GCM, key sealed to the TPM 2.0: unattended boot)" if c.get("zfs_keymode") == "tpm" else ", natively ENCRYPTED (AES-256-GCM, passphrase at every boot)") if c.get("zfs_encrypt") else ""))
         if ctx.p.get("encryption") == "tpm-or-none":
             out.append("Disk encryption: " + (c.get("enc_why") or "none"))
@@ -429,15 +447,134 @@ class NetconfigStage(Stage):
     def plan(self, ctx):
         c = ctx.c
         out = []
+        if ctx.wanlan and S.netvirt.enabled(ctx.p) and S.netvirt.in_use(c):
+            return S.netvirt.plan_lines(c) + ([" (Wi-Fi WAN)"] if c["wifi"] else [])
         if ctx.wanlan:
             w, l = c["wan"], c["lan"]
             out.append(f"WAN {w['iface'] or '-'}: " + (w["address"] if w["mode"] == "static" else "DHCP") + (" (Wi-Fi)" if c["wifi"] else ""))
             out.append(f"LAN {l['iface'] or '-'}: {l['address'] if l['iface'] else '-'}")
+            for i, o in enumerate(c.get("opt") or [], 1):
+                out.append(f"OPT{i} {o}: role only (address set later: console menu or web UI)")
         else:
             n = c["mgmt"]
             out.append(f"Management NIC {n['iface'] or '-'}: " + (f"{n['address']} gw {n['gateway']} dns {n['dns']}" if n["mode"] == "static" else "DHCP")
                        + (" (Wi-Fi)" if c["wifi"] else ""))
         return out
+
+
+class NetAdvStage(Stage):
+    """Optional: a bond (LAGG / LACP), VLAN tags on WAN / LAN, PPPoE and a dedicated management network (netvirt.py).
+
+    Rendered by the GUI's generic form page and the text installer's form (one definition); the answer file sets the same keys."""
+    id, title, short = "netadv", "Bonds, VLANs and management network", "LAGG / VLAN"
+    intro = ("Optional. Combine ports into a bond (LAGG; LACP needs a switch with LACP), put the WAN, the LAN or a separate management "
+             "network on VLAN tags, or log in to the ISP with PPPoE. The firewall sets them up itself at its first boot, so it is reachable "
+             "on the right network without a console. Leave it off for one plain WAN port and one plain LAN port.")
+
+    def applies(self, ctx):
+        return ctx.wanlan and S.netvirt.enabled(ctx.p)
+
+    def fields(self, ctx):
+        NV = S.netvirt
+        c = NV.defaults(ctx.c)
+        wired = [(n["name"], S.nic_line(n)) for n in ctx.nics if not n.get("wifi")]
+        b = c["bonds"][0] if c["bonds"] else {"members": [], "mode": NV.DEFAULT_BOND_MODE, "hash": NV.DEFAULT_HASH, "lacp_rate": NV.DEFAULT_LACP_RATE}
+        bname = b.get("name", "bond0")
+        on = lambda key: "bond" if c[key].get("iface") == bname and c["bonds"] else ("none" if not c[key].get("iface") else "port")
+        m = c["mgmt_net"]
+        mg_on = "none" if not m.get("iface") else ("bond" if m["iface"] == bname and c["bonds"] else m["iface"])
+        use = lambda v: bool(v.get("use"))
+        has_bond = lambda v: use(v) and bool(v.get("bond_members"))
+        w = c["wan"]
+        return [
+            Field("use", "Set up a bond, VLANs, PPPoE or a management network", "check", NV.in_use(c)),
+            Field("bond_members", "Bond (LAGG) member ports", "multi", list(b["members"]), wired, visible=use,
+                  hint="Space toggles a port. Two or more ports become bond0; leave all off for no bond", optional=True),
+            Field("bond_mode", "Bond mode", "choice", b["mode"], NV.BOND_MODES, visible=has_bond),
+            Field("bond_hash", "Transmit hash policy", "choice", b.get("hash") or NV.DEFAULT_HASH, NV.HASH_POLICIES, advanced=True,
+                  visible=lambda v: has_bond(v) and v.get("bond_mode") != "active-backup"),
+            Field("lacp_rate", "LACP rate", "choice", b.get("lacp_rate") or NV.DEFAULT_LACP_RATE, NV.LACP_RATES, advanced=True,
+                  visible=lambda v: has_bond(v) and v.get("bond_mode") == "802.3ad"),
+            Field("wan_on", "WAN runs on", "choice", on("wan") if on("wan") != "none" else "port",
+                  [("port", f"the WAN port ({w.get('iface') or 'chosen before'})"), ("bond", "the bond")], visible=has_bond),
+            Field("wan_vlan", "WAN VLAN tag (0 = untagged)", "text", str(w.get("vlan") or 0), validate=lambda v, a: NV.vlan_problem(v), visible=use, width=8),
+            Field("wan_pppoe", "WAN logs in with PPPoE", "check", w.get("mode") == "pppoe", visible=use),
+            Field("pppoe_user", "PPPoE user name", "text", w.get("pppoe_user", ""), visible=lambda v: use(v) and v.get("wan_pppoe")),
+            Field("pppoe_password", "PPPoE password", "password", w.get("pppoe_password", ""), visible=lambda v: use(v) and v.get("wan_pppoe")),
+            Field("lan_on", "LAN runs on", "choice", on("lan") if on("lan") != "none" else "port",
+                  [("port", f"the LAN port ({c['lan'].get('iface') or 'chosen before'})"), ("bond", "the bond"), ("none", "no LAN")], visible=use),
+            Field("lan_vlan", "LAN VLAN tag (0 = untagged)", "text", str(c["lan"].get("vlan") or 0), validate=lambda v, a: NV.vlan_problem(v),
+                  visible=use, width=8),
+            Field("mgmt_on", "Management network", "choice", mg_on, [("none", "none: SSH and the web UI stay on the LAN"), ("bond", "on the bond")] + wired,
+                  visible=use, hint="SSH and the web UI move to this network (port or VLAN)"),
+            Field("mgmt_vlan", "Management VLAN tag (0 = untagged)", "text", str(m.get("vlan") or 0), validate=lambda v, a: NV.vlan_problem(v),
+                  visible=lambda v: use(v) and v.get("mgmt_on") != "none", width=8),
+            Field("mgmt_addr", "Management address/prefix", "text", m.get("address") or "", validate=lambda v, a: S.cidr_problem(v),
+                  visible=lambda v: use(v) and v.get("mgmt_on") != "none", hint="The firewall's own address there, e.g. 10.20.0.1/24"),
+            Field("mgmt_gw", "Management gateway (optional)", "text", m.get("gateway") or "", optional=True,
+                  validate=lambda v, a: S.ip_problem(v, a.get("mgmt_addr")), visible=lambda v: use(v) and v.get("mgmt_on") != "none"),
+            Field("mgmt_only", "SSH and the web UI answer only on the management network", "check", bool(m.get("only", True)),
+                  visible=lambda v: use(v) and v.get("mgmt_on") != "none"),
+        ]
+
+    def _apply(self, c, v):
+        NV = S.netvirt
+        NV.defaults(c)
+        # the plain ports chosen on the interface screen, remembered so switching back from the bond restores them
+        for k in ("wan", "lan"):
+            if c[k].get("iface") and not NV.bond(c, c[k]["iface"]):
+                c[k]["_port"] = c[k]["iface"]
+        if not v.get("use"):
+            c["bonds"] = []
+            for k in ("wan", "lan"):
+                c[k]["vlan"] = 0
+                c[k]["iface"] = c[k].get("_port", c[k].get("iface", ""))
+            if c["wan"].get("mode") == "pppoe":
+                c["wan"]["mode"] = "dhcp"
+            c["mgmt_net"].update({"iface": "", "vlan": 0, "address": "", "gateway": ""})
+            return c
+        members = list(v.get("bond_members") or [])
+        c["bonds"] = []
+        if members:
+            NV.add_bond(c, members, v.get("bond_mode"), v.get("bond_hash") if v.get("bond_mode") != "active-backup" else "",
+                        v.get("lacp_rate") if v.get("bond_mode") == "802.3ad" else "", name="bond0")
+        for k in ("wan", "lan"):
+            where = v.get(f"{k}_on", "port")
+            if k == "wan" and not members:
+                where = "port"
+            c[k]["iface"] = "bond0" if (where == "bond" and members) else ("" if where == "none" else c[k].get("_port", ""))
+            c[k]["vlan"] = int(v.get(f"{k}_vlan") or 0) if not NV.vlan_problem(v.get(f"{k}_vlan") or 0) else 0
+        if v.get("wan_pppoe"):
+            c["wan"].update({"mode": "pppoe", "pppoe_user": v.get("pppoe_user", "").strip(), "pppoe_password": v.get("pppoe_password", "")})
+        elif c["wan"].get("mode") == "pppoe":
+            c["wan"]["mode"] = "dhcp"
+        mo = v.get("mgmt_on", "none")
+        if mo == "none" or (mo == "bond" and not members):
+            c["mgmt_net"].update({"iface": "", "vlan": 0, "address": "", "gateway": ""})
+        else:
+            c["mgmt_net"].update({"iface": "bond0" if mo == "bond" else mo, "vlan": int(v.get("mgmt_vlan") or 0) if not NV.vlan_problem(v.get("mgmt_vlan") or 0) else 0,
+                                  "mode": "static", "address": (v.get("mgmt_addr") or "").strip(), "gateway": (v.get("mgmt_gw") or "").strip(),
+                                  "only": bool(v.get("mgmt_only", True))})
+        return c
+
+    def validate(self, ctx, v):
+        import copy
+        trial = self._apply(copy.deepcopy(S.netvirt.defaults(ctx.c)), v)
+        if v.get("use") and v.get("bond_members") and len(v["bond_members"]) < 2:
+            return "A bond needs at least two ports (or leave all ports off for no bond)."
+        if v.get("use") and v.get("mgmt_on", "none") == "none" and not S.netvirt.in_use(trial):
+            return "Nothing to set up: choose a bond, a VLAN tag, PPPoE or a management network, or untick the first box."
+        p = S.netvirt.problems(ctx.p, trial, [n["name"] for n in ctx.nics] if ctx.nics else None)
+        return p[0] if p else None
+
+    def commit(self, ctx, v):
+        self._apply(ctx.c, v)
+
+    def plan(self, ctx):
+        return []           # the netconfig stage plans (and applies) the whole network
+
+    def apply(self, inst):
+        pass                # written by the netconfig stage (Installer.write_roles -> netvirt.apply_bootstrap)
 
 
 class ServicesStage(Stage):
@@ -460,17 +597,29 @@ class ServicesStage(Stage):
                            hint="Space toggles the highlighted service (Left/Right moves)"))
         else:
             f.append(Field("none", "There are no optional services for this product.", "label"))
+        if S.updchan.enabled(p):
+            f.append(Field("update_channel", "Update channel", "choice", c.get("update_channel") or S.updchan.default(p), S.updchan.options(p),
+                           hint="Where updates come from; changeable later on the web UI (System) and the console menu"))
         return f
 
     def commit(self, ctx, v):
         if "opt" in v:
             ctx.c["services_off"] = [s for s in self.optional(ctx.p) if s not in v["opt"]]
+        if v.get("update_channel"):
+            ctx.c["update_channel"] = v["update_channel"]
+
+    def validate(self, ctx, v):
+        if "update_channel" in v:
+            return S.updchan.problem(ctx.p, v["update_channel"])
+        return None
 
     def plan(self, ctx):
         on = [s for s in ctx.p["services"] if s not in ctx.c["services_off"] and s != "sshd"]
         out = ["Enable at boot: " + ", ".join(on)]
         if ctx.c["services_off"]:
             out.append("Left disabled: " + ", ".join(ctx.c["services_off"]))
+        if S.updchan.enabled(ctx.p) and ctx.c.get("update_channel"):
+            out.append(f"Update channel: {ctx.c['update_channel']}")
         return out
 
 
@@ -676,12 +825,12 @@ class GnomeStage(Stage):
         pass            # desktop.apply runs from Installer.profile_extras
 
 
-STAGES = [KeymapStage(), HostnameStage(), DiskStage(), ExtractStage(), RootpassStage(), DesktopStage(), T2Stage(), GnomeStage(), NetconfigStage(),
+STAGES = [KeymapStage(), HostnameStage(), DiskStage(), ExtractStage(), RootpassStage(), DesktopStage(), T2Stage(), GnomeStage(), NetconfigStage(), NetAdvStage(),
           ServicesStage(), HardeningStage(), UseFlagsStage(), MachineStage(), FinishStage()]
 BY_ID = {s.id: s for s in STAGES}
 UI_ORDER = [s.id for s in STAGES]
 # disks must exist and be extracted before anything is written into the new system
-APPLY_ORDER = ["disk", "extract", "keymap", "hostname", "rootpass", "desktop", "t2", "gnome", "netconfig", "services", "hardening", "use_flags", "machine", "finish"]
+APPLY_ORDER = ["disk", "extract", "keymap", "hostname", "rootpass", "desktop", "t2", "gnome", "netconfig", "netadv", "services", "hardening", "use_flags", "machine", "finish"]
 
 
 def stage_list(ctx, ui_only=False):

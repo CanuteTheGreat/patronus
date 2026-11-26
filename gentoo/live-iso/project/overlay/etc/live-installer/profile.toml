@@ -24,6 +24,22 @@ db_table = "web_users"
 config_paths = ["/etc/patronus", "/var/lib/patronus/config.db"]
 factory_reset_files = []
 reapply_services = ["patronus-firewall", "patronus-applyd"]
+# console menu 1 (Assign interfaces) writes wan/lan/opt_interfaces into patronus.toml, then this hands them to the store
+# (the file is only read at the first boot)
+roles_sync_cmd = ["patronus", "interfaces", "assign", "--from-bootstrap"]
+# update channel: chosen on the installer's Services page / answer file [update] channel; written to [update] channel
+update_channels = ["stable", "testing", "development"]
+update_channel_file = "/etc/patronus/patronus.toml"
+update_channel_info = { stable = "tagged releases", testing = "plus release candidates", development = "main branch, live ebuild" }
+# Patronus' own console-menu items (liveinst consolemenu.console_items: argv only, {answer} is one argument)
+console_items = [
+  { key = "15", title = "Firewall log (live; Ctrl+C returns)", run = ["patronus", "firewall", "log", "-n", "40", "--follow"] },
+  { key = "16", title = "Update channel (stable / testing / development)", show = ["patronus", "update", "channel"], ask = "New channel (stable, testing or development; Enter keeps it)", run = ["patronus", "update", "channel", "--set", "{answer}"] },
+  { key = "17", title = "Check for updates", run = ["patronus", "update", "check"] },
+  { key = "18", title = "Update Patronus (shows the last check first)", run = ["patronus", "update", "status"], confirm = "Install the Patronus update now (runs in the background)?", then = ["patronus", "update", "apply"] },
+  { key = "19", title = "Restore a configuration revision", show = ["patronus", "config", "revisions"], ask = "Revision id to restore and apply (Enter cancels)", run = ["patronus", "config", "rollback", "{answer}"] },
+  { key = "20", title = "Import a pfSense / OPNsense config.xml", ask = "Path of the config.xml (a USB stick is mounted with: mount /dev/sdX1 /mnt)", run = ["patronus", "import", "pfsense", "{answer}", "--plan"], confirm = "Write this plan into the configuration and apply it?", then = [["patronus", "import", "pfsense", "{answer}", "--yes"], ["patronus", "apply"]] },
+]
 
 # official logo, crop/scale only (branding/README.md); the installer GUI + boot menu read these
 logo_mark = "/usr/share/live-installer/branding/mark-256.png"

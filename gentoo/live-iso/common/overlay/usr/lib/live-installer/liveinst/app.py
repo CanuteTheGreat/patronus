@@ -80,8 +80,9 @@ def s_disk(t, st, step):
         message(t, "No disk found", "No usable internal disk (>= 2 GB) was found. If the disk is behind a RAID/VMD "
                 "controller, switch the firmware to AHCI mode. The installer will exit to a shell.", "err")
         raise Abort()
-    mirror = stage.need_disks(c) == 2
-    intro = (stage.intro.split(".")[0] + ". ") + ("Select the TWO disks for the mirror." if mirror else "Select the disk to install to.") + \
+    mirror = stage.multi_disk(c)
+    need = stage.need_disks(c)
+    intro = (stage.intro.split(".")[0] + ". ") + (f"Select the disks for the ZFS {c['zfs_raid']} (at least {need})." if mirror else "Select the disk to install to.") + \
             " Everything on a selected disk will be ERASED. The live USB stick is not listed."
     sel = [d for d in c["disks"] if any(x["path"] == d for x in disks)]
     while True:
@@ -459,6 +460,8 @@ def summary_lines(st):
         out.append(("Network", line))
     out.append(("E-mail", c["email"] or "-"))
     out.append(("Services", ", ".join(x for x in p["services"] if x not in c["services_off"] and x != "sshd") or "-"))
+    if S.updchan.enabled(p):
+        out.append(("Update channel", c.get("update_channel") or S.updchan.default(p)))
     out.append(("SSH", ("off" if not c["ssh_enabled"] else (("key" if c["ssh_keys"] else "no key") + (", PASSWORD login ON" if c["ssh_password_auth"] else ", password login off")))))
     out.append(("Hardening", "sysctl " + ("on" if c["sysctl_hardening"] else "off") + "; console menu " + ("OPEN (no login)" if c["console_open"] else "after root login")))
     out.append(("Software", ST.BY_ID["use_flags"].plan(st.ctx)[0]))
@@ -565,7 +568,7 @@ def flow(profile, st=None):
     if st is not None:                                  # Apple T2 Mac / Desktop image: their own pages (backend keys t2*, user_*)
         desk += [s_stage(sid) for sid in ("t2", "gnome") if ST.BY_ID[sid].applies(st.ctx)]
     if profile["network_mode"] == "wan-lan":
-        scr += [s_rootpass] + desk + [s_ifaces, s_addr]
+        scr += [s_rootpass] + desk + [s_ifaces, s_addr] + ([s_stage("netadv")] if S.netvirt.enabled(profile) else [])
     else:
         scr += [s_rootpass] + desk + [s_mgmt]
     scr += [s_stage("services"), s_stage("hardening"), s_use, s_summary, s_install, s_done]
@@ -665,13 +668,14 @@ def unattended(profile, answers_path, halt=True):
                         n["iface"] = pool[which]["name"]
         if profile["network_mode"] == "wan-lan":
             resolve("wan", 0)
-            lan_pool = [x for x in wired if x["name"] != c["wan"]["iface"]]
-            if c["lan"].get("iface") in ("", "auto", None):
+            taken = {c["wan"]["iface"]} | set(S.netvirt.members(c)) | {(c.get("mgmt_net") or {}).get("iface")}
+            lan_pool = [x for x in wired if x["name"] not in taken]
+            if c["lan"].get("iface") in ("auto", None) or (c["lan"].get("iface") == "" and not c["lan"].get("_none")):
                 c["lan"]["iface"] = lan_pool[0]["name"] if lan_pool else ""
         else:
             resolve("mgmt", 0)
         c["ssh_enabled"] = c["ssh_enabled"] and True
-        errs = S.validate_config(profile, c, unattended=True)
+        errs = S.validate_config(profile, c, unattended=True, nic_names=[n["name"] for n in nics])
         if errs:
             for e in errs:
                 say("ANSWER-FILE-ERROR " + e)
@@ -714,7 +718,11 @@ def main(argv=None):
             print(f"[{sid}]")
             for l in lines:
                 print("  " + l)
-        return 0
+        # network problems in plain words (bonds, VLANs, management network): the same checks the install runs first
+        probs = S.netvirt.problems(profile, c)
+        for p in probs:
+            print("PROBLEM: " + p)
+        return 2 if probs else 0
     if a.answers:
         path = a.answers
         if path == "auto":
