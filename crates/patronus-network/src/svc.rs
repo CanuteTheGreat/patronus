@@ -205,6 +205,8 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     v.push(Arc::new(crate::guest::GuestSvc));
     #[cfg(feature = "sdwan-edge")]
     v.push(Arc::new(crate::edge::EdgeSvc));
+    #[cfg(feature = "captive-portal")]
+    v.push(Arc::new(crate::captive::CaptiveSvc));
     v
 }
 
@@ -294,6 +296,11 @@ pub const SVC_TABLES: &[&str] = &[
     "edge_endpoints",
     "edge_subnets",
     "guest_vouchers",
+    "cp_zones",
+    "cp_users",
+    "cp_voucher_rolls",
+    "cp_vouchers",
+    "cp_passthrough",
 ];
 
 pub fn find_coll(spec: &Spec, key: &str) -> Result<&'static Coll> {

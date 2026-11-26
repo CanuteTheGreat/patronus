@@ -126,6 +126,7 @@ RDEPEND="
 	vlan? ( sys-apps/iproute2 )
 	segmentation? ( sys-apps/iproute2 net-firewall/nftables )
 	guest? ( net-dns/dnsmasq sys-apps/iproute2 net-firewall/nftables hostapd? ( net-wireless/hostapd ) )
+	captive-portal? ( net-firewall/nftables sys-apps/iproute2 net-firewall/conntrack-tools )
 	wifi-ap? ( net-wireless/hostapd net-wireless/iw )
 	wifi-client? ( net-wireless/wpa_supplicant net-wireless/iw )
 	qos? ( sys-apps/iproute2 )
@@ -213,7 +214,7 @@ src_configure() {
 	# these features", which is what was actually killing the Gentoo
 	# Docker Build job (not the earlier --path-forwarding issue above,
 	# which was already fixed). Flags with no backing cargo feature at
-	# all (monitoring/prometheus/netflow/captive-portal/
+	# all (monitoring/prometheus/netflow/
 	# suricata/qos/certificates/acme/ldap/radius/geoip/
 	# scheduled-rules/wireless) are intentionally left out of this
 	# list -- see the matching IUSE comment for the ones that still gate
@@ -391,6 +392,7 @@ src_install() {
 		use segmentation && webfeatures+=( segmentation )
 		use wifi-ap && webfeatures+=( wifi-ap )
 		use guest && webfeatures+=( guest )
+		use captive-portal && webfeatures+=( captive-portal )
 		use wifi-client && webfeatures+=( wifi-client )
 		use syslog && webfeatures+=( syslog )
 		use netflow && webfeatures+=( netflow )
