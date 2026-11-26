@@ -252,6 +252,7 @@ pub async fn scan(s: &Settings, now: i64) -> Report {
     let mut findings: Vec<Finding> = Vec::new();
     let mut verdict_unknown = false;
     let mut verdict_stale = false;
+    let mut hidden_notices = 0usize;
 
     if r.tier == "standard" {
         let set = tokio::task::block_in_place(|| glsa::load_dir(&glsa_dir));
@@ -487,6 +488,10 @@ pub async fn scan(s: &Settings, now: i64) -> Report {
                 .map(|(n, v, _)| (n.clone(), v.clone()))
                 .collect();
             for h in osv::find_hits(db, &b.binary, &list) {
+                if h.informational.is_some() && !s.show_informational {
+                    hidden_notices += 1;
+                    continue;
+                }
                 findings.push(Finding {
                     source: "osv".into(),
                     subject: h.name,
@@ -495,7 +500,11 @@ pub async fn scan(s: &Settings, now: i64) -> Report {
                     advisory: h.id,
                     aliases: h.aliases,
                     title: h.summary,
-                    severity: "unknown".into(),
+                    severity: if h.severity.is_empty() {
+                        "unknown".into()
+                    } else {
+                        h.severity
+                    },
                     fixed_in: h.fixed_in,
                     update: "needs-release".into(),
                     update_version: String::new(),
@@ -507,6 +516,11 @@ pub async fn scan(s: &Settings, now: i64) -> Report {
         }
     }
     r.binaries = bins;
+    if hidden_notices > 0 {
+        r.reasons.push(format!(
+            "{hidden_notices} notice(s) about unmaintained or unsound crates are not counted (setting show_informational)"
+        ));
+    }
 
     findings.sort_by(|a, b| {
         let rank = |s: &str| match s {
@@ -947,8 +961,18 @@ pub fn spawn_task(
     tokio::spawn(async move {
         let mut last_err = String::new();
         loop {
-            let secs = load(&store).await.map(|s| s.tick_secs).unwrap_or(60);
-            tokio::time::sleep(Duration::from_secs(secs)).await;
+            // sleep in short slices and re-read the interval: a settings change (or a scan request) must not
+            // wait out a long previous interval
+            let mut waited = 0u64;
+            loop {
+                let secs = load(&store).await.map(|s| s.tick_secs).unwrap_or(5);
+                if waited >= secs {
+                    break;
+                }
+                let step = (secs - waited).min(2);
+                tokio::time::sleep(Duration::from_secs(step)).await;
+                waited += step;
+            }
             if only_without_applyd && applyd_socket.exists() {
                 continue;
             }
