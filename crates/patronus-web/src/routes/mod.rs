@@ -489,7 +489,10 @@ pub fn absent_features(
         ("netflow", "NetFlow export"),
         ("igmp", "IGMP proxy"),
         ("mdns", "mDNS repeater (device discovery across networks)"),
-        ("lldp", "LLDP (announce this router, list switch neighbours)"),
+        (
+            "lldp",
+            "LLDP (announce this router, list switch neighbours)",
+        ),
         ("nat64", "NAT64 / DNS64"),
         ("upnp", "UPnP / NAT-PMP"),
         ("vrf", "VRFs"),

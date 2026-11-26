@@ -106,10 +106,10 @@ pub mod netflow;
 
 #[cfg(feature = "igmp")]
 pub mod igmp;
-#[cfg(feature = "mdns")]
-pub mod mdns;
 #[cfg(feature = "lldp")]
 pub mod lldp;
+#[cfg(feature = "mdns")]
+pub mod mdns;
 
 #[cfg(feature = "nat64")]
 pub mod nat64;
