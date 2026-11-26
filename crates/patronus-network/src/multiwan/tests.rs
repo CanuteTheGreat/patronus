@@ -1,6 +1,6 @@
 use super::*;
 use crate::routes::{
-    desired, GatewayGroup, GroupInput, KillInfo, MembersInput, Member, Resolved, GatewayInput,
+    desired, GatewayGroup, GatewayInput, GroupInput, KillInfo, Member, MembersInput, Resolved,
 };
 use patronus_config::store::ConfigStore;
 use std::sync::Mutex;
@@ -161,7 +161,10 @@ fn conntrack_output_is_counted() {
         parse_deleted("conntrack v1.4.7 (conntrack-tools): 1 flow entries have been deleted."),
         1
     );
-    assert_eq!(parse_deleted("conntrack: 0 flow entries have been deleted."), 0);
+    assert_eq!(
+        parse_deleted("conntrack: 0 flow entries have been deleted."),
+        0
+    );
     assert_eq!(parse_deleted("no idea"), 0);
 }
 
@@ -228,11 +231,17 @@ fn sticky_script_v6_one_member_stale_and_flush() {
 }
 
 #[test]
-fn live_table_json_gives_maps_and_marks() {
-    let j = r#"{"nftables":[{"metainfo":{}},{"map":{"name":"st1_4","elem":[[{"elem":{"val":"10.0.0.5","timeout":1800,"expires":1700}},65538],["10.0.0.6",65537]]}},{"map":{"name":"st2_4"}}]}"#;
-    let t = parse_table(j);
-    assert_eq!(t["st1_4"], vec![65538, 65537]);
-    assert!(t["st2_4"].is_empty());
+fn live_table_text_gives_maps_and_marks() {
+    // as printed by nftables 1.0.6 and 1.1.7; Gentoo's build has no JSON
+    let t = "table inet patronus_wan {\n\tmap st1_4 {\n\t\ttype ipv4_addr : mark\n\t\tsize 65535\n\t\tflags timeout\n\t\telements = { 10.0.0.1 timeout 1m expires 59s993ms : 0x00010001,\n\t\t\t     10.0.0.2 timeout 1h expires 59m59s993ms : 0x00010002 }\n\t}\n\n\tmap st2_6 {\n\t\ttype ipv6_addr : mark\n\t\tflags timeout\n\t\telements = { fd00::5 timeout 1m expires 59s997ms : 0x00010002 }\n\t}\n\n\tmap st3_4 {\n\t\ttype ipv4_addr : mark\n\t\tflags timeout\n\t}\n\n\tchain sticky {\n\t\ttype filter hook prerouting priority mangle + 10; policy accept;\n\t\tmeta mark 0x00020001 ip saddr @st1_4 meta mark set ip saddr map @st1_4 update @st1_4 { ip saddr timeout 30m : meta mark }\n\t}\n}\n";
+    let m = parse_table(t);
+    assert_eq!(m["st1_4"], vec![0x10001, 0x10002]);
+    assert_eq!(m["st2_6"], vec![0x10002]);
+    assert!(m["st3_4"].is_empty());
+    assert_eq!(m.len(), 3, "{m:?}");
+    // decimal values and an empty or broken listing
+    let d = "table inet patronus_wan {\n\tmap st1_4 {\n\t\telements = { 10.0.0.1 : 65537 }\n\t}\n}\n";
+    assert_eq!(parse_table(d)["st1_4"], vec![65537]);
     assert!(parse_table("nonsense").is_empty());
 }
 
@@ -248,9 +257,10 @@ impl Cmd for FakeNft {
         let line = format!("{prog} {}", args.join(" "));
         self.calls.lock().unwrap().push(line.clone());
         if line.contains("list table") {
-            return self.live.clone().ok_or_else(|| {
-                patronus_core::Error::Network("No such file or directory".into())
-            });
+            return self
+                .live
+                .clone()
+                .ok_or_else(|| patronus_core::Error::Network("No such file or directory".into()));
         }
         Ok(String::new())
     }
@@ -280,7 +290,7 @@ async fn apply_creates_keeps_flushes_and_removes_the_table() {
         .iter()
         .any(|c| c.starts_with("nft -f ")));
     // clients on a member that is still carrying traffic keep it ...
-    let keep = r#"{"nftables":[{"map":{"name":"st1_4","elem":[["10.0.0.6",65537],["10.0.0.7",65538]]}}]}"#;
+    let keep = "table inet patronus_wan {\n\tmap st1_4 {\n\t\telements = { 10.0.0.6 timeout 5m expires 4m : 0x00010001,\n\t\t\t     10.0.0.7 timeout 5m expires 4m : 0x00010002 }\n\t}\n}\n";
     let n = FakeNft {
         live: Some(keep.into()),
         calls: Mutex::new(vec![]),
@@ -288,7 +298,7 @@ async fn apply_creates_keeps_flushes_and_removes_the_table() {
     let done = apply_sticky(&n, &[sticky(true)], &dir).await.unwrap();
     assert!(!done.iter().any(|l| l.contains("dropped")), "{done:?}");
     // ... entries of a member that left are dropped, a stale map is deleted
-    let lost = r#"{"nftables":[{"map":{"name":"st1_4","elem":[["10.0.0.6",65539]]}},{"map":{"name":"st7_4"}}]}"#;
+    let lost = "table inet patronus_wan {\n\tmap st1_4 {\n\t\telements = { 10.0.0.6 timeout 5m expires 4m : 0x00010003 }\n\t}\n\tmap st7_4 {\n\t\ttype ipv4_addr : mark\n\t}\n}\n";
     let n = FakeNft {
         live: Some(lost.into()),
         calls: Mutex::new(vec![]),
@@ -296,8 +306,14 @@ async fn apply_creates_keeps_flushes_and_removes_the_table() {
     let done = apply_sticky(&n, &[sticky(true)], &dir).await.unwrap();
     assert!(done.iter().any(|l| l.contains("dropped")), "{done:?}");
     let script = std::fs::read_to_string(dir.join("wan-sticky.nft")).unwrap();
-    assert!(script.contains("flush map inet patronus_wan st1_4"), "{script}");
-    assert!(script.contains("delete map inet patronus_wan st7_4"), "{script}");
+    assert!(
+        script.contains("flush map inet patronus_wan st1_4"),
+        "{script}"
+    );
+    assert!(
+        script.contains("delete map inet patronus_wan st7_4"),
+        "{script}"
+    );
     // sticky switched off: the table goes
     let n = FakeNft {
         live: Some(keep.into()),
@@ -323,7 +339,10 @@ fn gateway_dns_servers_count_while_the_gateway_carries_traffic() {
     let down = map(&[("A", GwState::Down), ("B", GwState::Online)]);
     assert_eq!(
         usable_dns_servers(&c, &down),
-        vec!["1.1.1.1".parse::<IpAddr>().unwrap(), "9.9.9.9".parse().unwrap()]
+        vec![
+            "1.1.1.1".parse::<IpAddr>().unwrap(),
+            "9.9.9.9".parse().unwrap()
+        ]
     );
     let both = map(&[("A", GwState::Down), ("B", GwState::Down)]);
     assert!(usable_dns_servers(&c, &both).is_empty());
@@ -410,7 +429,9 @@ fn input_validation_of_the_new_settings() {
     assert!(gi(&|i| i.dns_servers = Some("2001:db8::1".into())).is_err());
     assert!(gi(&|i| i.dns_servers = Some("not-an-ip".into())).is_err());
     assert!(gi(&|i| i.dns_servers = Some("127.0.0.1".into())).is_err());
-    assert!(gi(&|i| i.dns_servers = Some("1.1.1.1 1.0.0.1 9.9.9.9 8.8.8.8 8.8.4.4".into())).is_err());
+    assert!(
+        gi(&|i| i.dns_servers = Some("1.1.1.1 1.0.0.1 9.9.9.9 8.8.8.8 8.8.4.4".into())).is_err()
+    );
     let grp = |sticky: Option<u32>, kill: Option<&str>| {
         GroupInput {
             name: "LB".into(),
@@ -423,9 +444,15 @@ fn input_validation_of_the_new_settings() {
         .validated()
     };
     let g = grp(Some(900), Some("down_recovery")).unwrap();
-    assert_eq!((g.sticky_secs, g.kill_states), (900, KillStates::DownRecovery));
+    assert_eq!(
+        (g.sticky_secs, g.kill_states),
+        (900, KillStates::DownRecovery)
+    );
     assert_eq!(grp(None, None).unwrap().kill_states, KillStates::Down);
-    assert_eq!(grp(None, Some("none")).unwrap().kill_states, KillStates::None);
+    assert_eq!(
+        grp(None, Some("none")).unwrap().kill_states,
+        KillStates::None
+    );
     assert!(grp(Some(8 * 86_400), None).is_err());
     assert!(grp(None, Some("always")).is_err());
 }
@@ -469,7 +496,10 @@ async fn settings_round_trip_through_the_store() {
     if crate::routes::MULTIWAN {
         r.unwrap();
         let g = c.group("LB").unwrap();
-        assert_eq!((g.sticky_secs, g.kill_states), (300, KillStates::DownRecovery));
+        assert_eq!(
+            (g.sticky_secs, g.kill_states),
+            (300, KillStates::DownRecovery)
+        );
     }
 }
 
@@ -514,9 +544,19 @@ async fn gitops_group_documents_carry_the_new_settings() {
     assert_eq!(g.kill_states, KillStates::DownRecovery);
     assert_eq!(g.trigger, Trigger::LossLatency);
     // the older `sticky: true` means the documented default timeout
-    ap.upsert_resource(&s, &doc("    sticky: true\n")).await.unwrap();
-    let g = crate::routes::load(&s).await.unwrap().group("LB").cloned().unwrap();
-    assert_eq!(g.sticky_secs, patronus_config::declarative::DEFAULT_STICKY_SECS);
+    ap.upsert_resource(&s, &doc("    sticky: true\n"))
+        .await
+        .unwrap();
+    let g = crate::routes::load(&s)
+        .await
+        .unwrap()
+        .group("LB")
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        g.sticky_secs,
+        patronus_config::declarative::DEFAULT_STICKY_SECS
+    );
     assert_eq!(g.kill_states, KillStates::Down);
     // an unknown kill-states value is refused
     assert!(ap
