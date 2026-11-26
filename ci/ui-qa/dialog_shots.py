@@ -31,6 +31,7 @@ DIALOGS = [
     ("/segmentation", "device", None, "[data-open=seg-device-form]", "#seg-device-form-dlg"),
     ("/segmentation", "group", "[data-tab=groups]", "[data-open=seg-group-form]", "#seg-group-form-dlg"),
     ("/segmentation", "service-rule", "[data-tab=groups]", "[data-open=seg-service-form]", "#seg-service-form-dlg"),
+    ("/insights", "uplink-probe", "[data-tab=uplinks]", "[data-open=probe-form]", "#probe-form-dlg"),
     ("/svc/wol", "wol-host", None, "[data-open=svc-form-hosts]", "#svc-dlg-hosts"),
 ]
 

@@ -42,7 +42,7 @@
     <a href="/segmentation/time">Time limits</a>
     <a href="/segmentation/dns" class="on">DNS policy &amp; logs</a>
 </div>
-<div id="d-error" class="alert-error" style="display:none"></div>
+<div id="d-error" class="ui-banner crit" role="alert" style="display:none"></div>
 <div id="d-status" class="hint"></div>
 
 <div class="card">
@@ -60,8 +60,8 @@
         <label><span>Family preset (adult + malware lists, safe search)</span><input name="family" type="checkbox"></label>
         <label><span>Log queries (personal data!)</span><input name="log_queries" type="checkbox"></label>
         <label><span>Keep the global block lists and overrides</span><input name="inherit_global" type="checkbox" checked></label>
-        <button class="btn btn-primary btn-sm" type="submit" id="d-save">Create policy</button>
-        <button class="btn btn-sm" type="button" id="d-cancel" style="display:none" onclick="resetForm()">Cancel edit</button>
+        <button class="ui-btn primary sm" type="submit" id="d-save">Create policy</button>
+        <button class="ui-btn sm" type="button" id="d-cancel" style="display:none" onclick="resetForm()">Cancel edit</button>
     </form>
     <p class="hint">Devices with a policy are sent to this router's resolver even if they have another DNS server configured, and DNS-over-TLS (port 853) is refused. DNS-over-HTTPS cannot be blocked reliably. Query logs are off by default and stored only for the policies that switch them on.</p>
 </div>
@@ -72,7 +72,7 @@
         <label>Applies to<select name="kind"><option value="group">group</option><option value="device">device</option></select></label>
         <label>Name<select name="id" id="d-target"></select></label>
         <label>Policy<select name="policy_id" id="d-policy-pick"></select></label>
-        <button class="btn btn-primary btn-sm" type="submit">Apply</button>
+        <button class="ui-btn primary sm" type="submit">Apply</button>
     </form>
 </div>
 
@@ -83,9 +83,9 @@
         <label>Name contains<input name="q" placeholder="example.com"></label>
         <label>Since<select name="since"><option value="0">any time</option><option value="3600">last hour</option><option value="86400">last 24 h</option><option value="604800">last 7 days</option></select></label>
         <label><span>Blocked only</span><input name="blocked" type="checkbox"></label>
-        <button class="btn btn-primary btn-sm" type="submit">Search</button>
-        <button class="btn btn-sm" type="button" onclick="exportCsv()">Export CSV</button>
-        <button class="btn btn-sm btn-danger" type="button" id="d-clear" onclick="clearLog()">Clear log</button>
+        <button class="ui-btn primary sm" type="submit">Search</button>
+        <button class="ui-btn sm" type="button" onclick="exportCsv()">Export CSV</button>
+        <button class="ui-btn danger sm" type="button" id="d-clear" onclick="clearLog()">Clear log</button>
     </form>
     <div class="scroll-x" id="d-log"><p class="empty">Loading...</p></div>
 </div>
@@ -134,7 +134,7 @@
             const rules = h('td', {class: 'rules'});
             for (const r of p.rules) {
                 const chip = h('div', {}, [h('span', {class: 'pill' + (r.action === 'block' ? ' blocked' : ''), text: r.action}), r.domain + (r.address ? ' -> ' + r.address : '')]);
-                if (CAN_MODIFY) chip.appendChild(h('button', {class: 'btn btn-sm btn-link', text: 'remove', onclick: async () => { if (await api('DELETE', '/api/segmentation/dns/policies/' + p.id + '/rules/' + r.id)) load(); }}));
+                if (CAN_MODIFY) chip.appendChild(h('button', {class: 'ui-btn sm btn-link', text: 'remove', onclick: async () => { if (await api('DELETE', '/api/segmentation/dns/policies/' + p.id + '/rules/' + r.id)) load(); }}));
                 rules.appendChild(chip);
             }
             if (CAN_MODIFY) {
@@ -144,14 +144,14 @@
                     h('select', {name: 'action'}, ['block', 'allow', 'override'].map(a => h('option', {value: a, text: a}))),
                     h('input', {name: 'domain', placeholder: 'domain', required: ''}),
                     h('input', {name: 'address', placeholder: 'address (for override)'}),
-                    h('button', {class: 'btn btn-sm', type: 'submit', text: 'Add rule'})]);
+                    h('button', {class: 'ui-btn sm', type: 'submit', text: 'Add rule'})]);
                 rules.appendChild(f);
             }
             const who = p.groups.map(g => 'group ' + g).concat(p.devices.map(d => 'device ' + d)).join(', ') || '-';
             const acts = h('td', {class: 'row-actions'});
             if (CAN_MODIFY) {
-                acts.appendChild(h('button', {class: 'btn btn-sm', text: 'Edit', onclick: () => editPolicy(p)}));
-                acts.appendChild(h('button', {class: 'btn btn-sm btn-danger', text: 'Delete', onclick: async () => {
+                acts.appendChild(h('button', {class: 'ui-btn sm', text: 'Edit', onclick: () => editPolicy(p)}));
+                acts.appendChild(h('button', {class: 'ui-btn danger sm', text: 'Delete', onclick: async () => {
                     if (confirm('Delete policy ' + p.name + '?')) { if (await api('DELETE', '/api/segmentation/dns/policies/' + p.id)) load(); } }}));
             }
             t.appendChild(h('tr', {}, [h('td', {}, [h('b', {text: p.name})]), h('td', {text: flags.join(', ')}), rules, h('td', {text: who}), acts]));

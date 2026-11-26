@@ -13,7 +13,7 @@
         applied at once and again at every boot; the status columns are read live from the kernel and strongSwan.</p>
 </div>
 
-{% if !config_error.is_empty() %}<div class="alert-error">VPN configuration unavailable: {{ config_error }}</div>{% endif %}
+{% if !config_error.is_empty() %}<div class="ui-banner crit" role="alert">VPN configuration unavailable: {{ config_error }}</div>{% endif %}
 
 <div class="card">
     <div class="card-header"><h2 class="card-title">WireGuard tunnels</h2></div>
@@ -24,7 +24,7 @@
     <p class="text-sm text-muted">A tunnel is a WireGuard interface with its own key pair and UDP port (opened on the firewall
         automatically). What peers may reach is decided by firewall rules on the tunnel interface (e.g. interface <code>wg0</code>).</p>
     {% if tunnels.is_empty() %}<p class="empty">No WireGuard tunnels configured.</p>{% else %}
-    <table class="lan" id="wg-tunnels">
+    <table class="lan ui-grid" id="wg-tunnels">
         <thead><tr><th>Interface</th><th>Port</th><th>Tunnel addresses</th><th>Public key</th><th>Client endpoint</th><th>Peers</th><th>Enabled</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for t in tunnels %}
@@ -36,11 +36,11 @@
             <td class="mono">{% if t.endpoint.is_empty() %}<span class="text-muted">not set</span>{% else %}{{ t.endpoint }}{% endif %}</td>
             <td>{{ t.peers }}</td>
             <td>{% if t.enabled %}yes{% else %}<span class="bad">no</span>{% endif %}</td>
-            <td>{% if can_modify %}<button class="btn btn-secondary btn-sm" onclick="editTunnel(this)" data-name="{{ t.name }}"
+            <td>{% if can_modify %}<button class="ui-btn sm" onclick="editTunnel(this)" data-name="{{ t.name }}"
                     data-port="{{ t.listen_port }}" data-addresses="{{ t.addresses }}" data-endpoint="{{ t.endpoint }}"
                     data-dns="{{ t.client_dns }}" data-allowed="{{ t.client_allowed_ips }}" data-enabled="{{ t.enabled }}"
                     data-description="{{ t.description }}">Edit</button>
-                <button class="btn btn-danger btn-sm" onclick="del('/api/vpn/wireguard/tunnels/{{ t.name }}', 'Delete tunnel {{ t.name }} and its peers?')">Delete</button>{% endif %}</td>
+                <button class="ui-btn danger sm" onclick="del('/api/vpn/wireguard/tunnels/{{ t.name }}', 'Delete tunnel {{ t.name }} and its peers?')">Delete</button>{% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -56,8 +56,8 @@
         <label>Client routes <input name="client_allowed_ips" placeholder="0.0.0.0/0, ::/0"></label>
         <label>Enabled <input type="checkbox" name="enabled" checked></label>
         <label>Description <input name="description"></label>
-        <button class="btn btn-primary btn-sm" type="submit" id="wg-tunnel-submit">Add tunnel</button>
-        <button class="btn btn-secondary btn-sm" type="button" onclick="call('POST', '/api/vpn/wireguard/apply')">Re-apply</button>
+        <button class="ui-btn primary sm" type="submit" id="wg-tunnel-submit">Add tunnel</button>
+        <button class="ui-btn sm" type="button" onclick="call('POST', '/api/vpn/wireguard/apply')">Re-apply</button>
     </form>
     {% endif %}
     {% endif %}
@@ -70,7 +70,7 @@
         and QR code can then be downloaded here (for phones and laptops). For a site-to-site peer paste the other side's
         public key and give its endpoint and the networks behind it.</p>
     {% if peers.is_empty() %}<p class="empty">No peers configured.</p>{% else %}
-    <table class="lan" id="wg-config-peers">
+    <table class="lan ui-grid" id="wg-config-peers">
         <thead><tr><th>Peer</th><th>Tunnel</th><th>Allowed IPs</th><th>Endpoint</th><th>Status</th><th>Last handshake</th><th>Transfer</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for p in peers %}
@@ -83,12 +83,12 @@
             <td>{{ p.handshake }}</td>
             <td>{{ p.transfer }}</td>
             <td>{% if can_modify %}
-                {% if p.exportable %}<a class="btn btn-secondary btn-sm" href="/api/vpn/wireguard/config/{{ p.id }}">Config</a>
-                <button class="btn btn-secondary btn-sm" onclick="showQr({{ p.id }})">QR</button>{% endif %}
-                <button class="btn btn-secondary btn-sm" onclick="editPeer(this)" data-id="{{ p.id }}" data-name="{{ p.name }}"
+                {% if p.exportable %}<a class="ui-btn sm" href="/api/vpn/wireguard/config/{{ p.id }}">Config</a>
+                <button class="ui-btn sm" onclick="showQr({{ p.id }})">QR</button>{% endif %}
+                <button class="ui-btn sm" onclick="editPeer(this)" data-id="{{ p.id }}" data-name="{{ p.name }}"
                     data-interface="{{ p.interface }}" data-allowed="{{ p.allowed_ips }}" data-endpoint="{{ p.endpoint }}"
                     data-keepalive="{{ p.keepalive }}" data-psk="{{ p.has_psk }}" data-enabled="{{ p.enabled }}" data-description="{{ p.description }}">Edit</button>
-                <button class="btn btn-danger btn-sm" onclick="del('/api/vpn/wireguard/peers/{{ p.id }}', 'Delete peer {{ p.name }}?')">Delete</button>{% endif %}</td>
+                <button class="ui-btn danger sm" onclick="del('/api/vpn/wireguard/peers/{{ p.id }}', 'Delete peer {{ p.name }}?')">Delete</button>{% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -106,7 +106,7 @@
         <label>Pre-shared key <input type="checkbox" name="preshared_key"></label>
         <label>Enabled <input type="checkbox" name="enabled" checked></label>
         <label>Description <input name="description"></label>
-        <button class="btn btn-primary btn-sm" type="submit" id="wg-peer-submit">Add peer</button>
+        <button class="ui-btn primary sm" type="submit" id="wg-peer-submit">Add peer</button>
     </form>
     {% endif %}
 </div>
@@ -124,7 +124,7 @@
         IKE/ESP are allowed on the firewall, traffic between the tunnel's networks is allowed and not NATed.
         Leave the key empty to have one generated (shown once).</p>
     {% if connections.is_empty() %}<p class="empty">No IPsec tunnels configured.</p>{% else %}
-    <table class="lan" id="ipsec-connections">
+    <table class="lan ui-grid" id="ipsec-connections">
         <thead><tr><th>Name</th><th>Local</th><th>Remote gateway</th><th>Local networks</th><th>Remote networks</th><th>Start</th><th>State</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for c in connections %}
@@ -136,11 +136,11 @@
             <td class="mono">{{ c.remote_ts }}</td>
             <td>{{ c.start_action }}</td>
             <td class="ipsec-state">{% if c.established %}<span class="ok">{{ c.state }}</span>{% else %}<span class="text-muted">{{ c.state }}</span>{% endif %}</td>
-            <td>{% if can_modify %}<button class="btn btn-secondary btn-sm" onclick="editIpsec(this)" data-id="{{ c.id }}" data-name="{{ c.name }}"
+            <td>{% if can_modify %}<button class="ui-btn sm" onclick="editIpsec(this)" data-id="{{ c.id }}" data-name="{{ c.name }}"
                     data-local="{{ c.local_address }}" data-remote="{{ c.remote_address }}" data-localid="{{ c.local_id }}" data-remoteid="{{ c.remote_id }}"
                     data-lts="{{ c.local_ts }}" data-rts="{{ c.remote_ts }}" data-start="{{ c.start_action }}" data-enabled="{{ c.enabled }}"
                     data-description="{{ c.description }}">Edit</button>
-                <button class="btn btn-danger btn-sm" onclick="del('/api/vpn/ipsec/connections/{{ c.id }}', 'Delete IPsec tunnel {{ c.name }}?')">Delete</button>{% endif %}</td>
+                <button class="ui-btn danger sm" onclick="del('/api/vpn/ipsec/connections/{{ c.id }}', 'Delete IPsec tunnel {{ c.name }}?')">Delete</button>{% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -159,8 +159,8 @@
         <label>Start <select name="start_action"><option value="start">start (initiate)</option><option value="trap">trap (on traffic)</option><option value="none">none (respond only)</option></select></label>
         <label>Enabled <input type="checkbox" name="enabled" checked></label>
         <label>Description <input name="description"></label>
-        <button class="btn btn-primary btn-sm" type="submit" id="ipsec-submit">Add tunnel</button>
-        <button class="btn btn-secondary btn-sm" type="button" onclick="call('POST', '/api/vpn/ipsec/apply')">Re-apply</button>
+        <button class="ui-btn primary sm" type="submit" id="ipsec-submit">Add tunnel</button>
+        <button class="ui-btn sm" type="button" onclick="call('POST', '/api/vpn/ipsec/apply')">Re-apply</button>
     </form>
     {% endif %}
     {% endif %}
@@ -177,8 +177,8 @@
         setup file for each user: iOS / macOS (<code>.mobileconfig</code>), Android (strongSwan app
         <code>.sswan</code>) or Windows (PowerShell script).</p>
     <div id="rw-msg" class="text-sm"></div>
-    <table class="lan" id="rw-profiles"><thead><tr><th>Profile</th><th>Auth</th><th>Server name</th><th>Pool</th><th>Reaches</th><th>Users</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
-    <p><button class="btn btn-secondary btn-sm" type="button" onclick="window.location = '/api/vpn/ipsec/roadwarrior/ca'">Download the CA certificate (PEM)</button></p>
+    <table class="lan ui-grid" id="rw-profiles"><thead><tr><th>Profile</th><th>Auth</th><th>Server name</th><th>Pool</th><th>Reaches</th><th>Users</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+    <p><button class="ui-btn sm" type="button" onclick="window.location = '/api/vpn/ipsec/roadwarrior/ca'">Download the CA certificate (PEM)</button></p>
     {% if can_modify %}
     <form class="lan-form" id="rw-profile-form" onsubmit="return rwSaveProfile(event)" data-dialog="Add profile">
         <input type="hidden" name="_editing" value="">
@@ -191,13 +191,13 @@
         <label>Networks reachable <input name="local_ts" placeholder="192.168.1.0/24 (empty = everything)"></label>
         <label>Enabled <input type="checkbox" name="enabled" checked></label>
         <label>Description <input name="description"></label>
-        <button class="btn btn-primary btn-sm" type="submit" id="rw-profile-submit">Add profile</button>
+        <button class="ui-btn primary sm" type="submit" id="rw-profile-submit">Add profile</button>
     </form>
     <form class="lan-form" id="rw-user-form" onsubmit="return rwSaveUser(event)" data-dialog="Add user">
         <label>Profile <select name="profile" id="rw-user-profile"></select></label>
         <label>User name <input name="username" placeholder="alice" required></label>
         <label>Password <input name="password" type="password" placeholder="empty = generate (EAP profiles)" autocomplete="new-password"></label>
-        <button class="btn btn-primary btn-sm" type="submit">Add user</button>
+        <button class="ui-btn primary sm" type="submit">Add user</button>
     </form>
     {% endif %}
 </div>
@@ -206,11 +206,11 @@
 <div class="card">
     <div class="card-header"><h2 class="card-title">Live WireGuard peers ({{ wg_peers.len() }})</h2></div>
     {% if !wg_error.is_empty() %}
-    <div class="alert-error">WireGuard state unavailable: {{ wg_error }}</div>
+    <div class="ui-banner crit" role="alert">WireGuard state unavailable: {{ wg_error }}</div>
     {% else if wg_peers.is_empty() %}
     <p class="empty">No WireGuard peers: no WireGuard interface with peers exists on this system (`wg show` is empty).</p>
     {% else %}
-    <table class="lan" id="wg-peers">
+    <table class="lan ui-grid" id="wg-peers">
         <thead><tr><th>Interface / peer</th><th>Public key</th><th>Allowed IPs</th><th>Endpoint</th><th>Last handshake</th><th>Transfer</th><th>Status</th></tr></thead>
         <tbody>
         {% for peer in wg_peers %}
@@ -232,13 +232,13 @@
 <div class="card">
     <div class="card-header"><h2 class="card-title">IPsec security associations ({{ ipsec_tunnels.len() }})</h2></div>
     {% if !ipsec_error.is_empty() %}
-    <div class="alert-error">IPsec state unavailable: {{ ipsec_error }}</div>
+    <div class="ui-banner crit" role="alert">IPsec state unavailable: {{ ipsec_error }}</div>
     {% else if ipsec_not_running %}
     <p class="empty" id="ipsec-not-running">IPsec is not running: strongSwan is installed but its charon daemon is stopped, so there are no SAs (IPsec is not in use on this box).</p>
     {% else if ipsec_tunnels.is_empty() %}
     <p class="empty">No IPsec SAs (`swanctl --list-sas` is empty).</p>
     {% else %}
-    <table class="lan" id="ipsec-sas">
+    <table class="lan ui-grid" id="ipsec-sas">
         <thead><tr><th>Name</th><th>State</th><th>Local subnets</th><th>Remote subnets</th><th>Remote gateway</th></tr></thead>
         <tbody>
         {% for t in ipsec_tunnels %}
@@ -354,15 +354,15 @@
                 const div = document.createElement('div'); div.className = 'rw-user'; div.dataset.user = u.username;
                 const n = document.createElement('span'); n.textContent = u.username + (u.enabled ? ' ' : ' (disabled) '); div.appendChild(n);
                 [['mobileconfig', 'iOS / macOS'], ['sswan', 'Android'], ['ps1', 'Windows']].concat(p.auth === 'cert' ? [['p12', '.p12']] : []).forEach(f => {
-                    const a = document.createElement('button'); a.className = 'btn btn-secondary btn-sm'; a.textContent = f[1]; a.title = 'Download the setup file';
+                    const a = document.createElement('button'); a.className = 'ui-btn sm'; a.textContent = f[1]; a.title = 'Download the setup file';
                     a.onclick = () => rwExport(u.id, f[0], p.auth);
                     div.appendChild(a);
                 });
                 {% if can_modify %}
-                const t = document.createElement('button'); t.className = 'btn btn-secondary btn-sm'; t.textContent = u.enabled ? 'Disable' : 'Enable';
+                const t = document.createElement('button'); t.className = 'ui-btn sm'; t.textContent = u.enabled ? 'Disable' : 'Enable';
                 t.onclick = () => rwUserCall('PUT', '/users/' + u.id, { enabled: !u.enabled });
                 div.appendChild(t);
-                const x = document.createElement('button'); x.className = 'btn btn-danger btn-sm'; x.textContent = 'Delete';
+                const x = document.createElement('button'); x.className = 'ui-btn danger sm'; x.textContent = 'Delete';
                 x.onclick = () => { if (confirm('Delete user ' + u.username + '?')) rwUserCall('DELETE', '/users/' + u.id); };
                 div.appendChild(x);
                 {% endif %}
@@ -370,9 +370,9 @@
             });
             {% if can_modify %}
             const ac = tr.insertCell();
-            const e = document.createElement('button'); e.className = 'btn btn-secondary btn-sm'; e.textContent = 'Edit';
+            const e = document.createElement('button'); e.className = 'ui-btn sm'; e.textContent = 'Edit';
             e.onclick = () => rwEdit(p);
-            const x = document.createElement('button'); x.className = 'btn btn-danger btn-sm'; x.textContent = 'Delete';
+            const x = document.createElement('button'); x.className = 'ui-btn danger sm'; x.textContent = 'Delete';
             x.onclick = () => { if (confirm('Delete profile ' + p.name + ' and its users?')) rwUserCall('DELETE', '/profiles/' + p.id); };
             ac.appendChild(e); ac.appendChild(x);
             {% endif %}

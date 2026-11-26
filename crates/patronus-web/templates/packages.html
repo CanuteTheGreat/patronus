@@ -14,7 +14,7 @@
 <div class="card">
     <div class="card-header"><h2 class="card-title">Optional components</h2></div>
     <p class="text-sm text-muted" id="pk-portage"></p>
-    <table class="lan" id="pk-components">
+    <table class="lan ui-grid" id="pk-components">
         <thead><tr><th>Component</th><th>For feature</th><th>Package</th><th>Installed</th><th>Last job</th><th></th></tr></thead>
         <tbody></tbody>
     </table>
@@ -23,7 +23,7 @@
 
 <div class="card">
     <div class="card-header"><h2 class="card-title">Plugins</h2></div>
-    <table class="lan" id="pk-plugins">
+    <table class="lan ui-grid" id="pk-plugins">
         <thead><tr><th>Name</th><th>Version</th><th>Signed by</th><th>Trust</th><th>Service</th><th></th></tr></thead>
         <tbody></tbody>
     </table>
@@ -31,14 +31,14 @@
     {% if is_admin %}
     <form class="lan-form" id="pk-install" onsubmit="return installPlugin(event)">
         <label>Signed bundle (.pplug) <input type="file" name="bundle" required></label>
-        <button class="btn btn-primary btn-sm" type="submit">Install or update</button>
+        <button class="ui-btn primary sm" type="submit">Install or update</button>
     </form>
     {% endif %}
 </div>
 
 <div class="card">
     <div class="card-header"><h2 class="card-title">Trusted plugin keys</h2></div>
-    <table class="lan" id="pk-keys">
+    <table class="lan ui-grid" id="pk-keys">
         <thead><tr><th>Key id</th><th>Public key</th><th></th></tr></thead>
         <tbody></tbody>
     </table>
@@ -46,7 +46,7 @@
     <form class="lan-form" id="pk-key-form" onsubmit="return addKey(event)">
         <label>Label <input name="label" required></label>
         <label>Public key (base64, from <code>patronus plugin keygen</code>) <input name="public_key" required></label>
-        <button class="btn btn-primary btn-sm" type="submit">Trust this key</button>
+        <button class="ui-btn primary sm" type="submit">Trust this key</button>
     </form>
     {% endif %}
 </div>
@@ -56,7 +56,7 @@
 <script>
     const ADMIN = {{ is_admin }};
     function cellText(tr, t) { const td = document.createElement('td'); td.textContent = t; tr.appendChild(td); return td; }
-    function btn(label, cls, fn) { const b = document.createElement('button'); b.className = 'btn btn-sm ' + cls; b.textContent = label; b.onclick = fn; return b; }
+    function btn(label, cls, fn) { const b = document.createElement('button'); b.className = 'ui-btn sm ' + cls; b.textContent = label; b.onclick = fn; return b; }
     async function call(method, url, body, raw) {
         const r = await fetch(url, {method, credentials: 'same-origin',
             headers: raw ? {'content-type': 'application/json'} : (body ? {'content-type': 'application/json'} : {}),
