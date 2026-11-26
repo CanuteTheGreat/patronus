@@ -5,6 +5,7 @@
 pub mod apikeys;
 pub mod authservers;
 pub mod backup_targets;
+pub mod bootenv;
 pub mod device;
 pub mod firewall;
 pub mod groups;

@@ -343,8 +343,8 @@ The disk page shows *why* it proposed its choice ("XFS instead of ZFS: only 4.0 
 (no swap partition, no swap file, no swap zvol): compressed RAM (zram) is the only swap, on every file system.
 
 **ZFS layout.** ESP/BIOS-boot + `/boot` (ext4, GRUB reads it; ZFS cannot be read by GRUB when encrypted) + the pool. Datasets are
-boot-environment friendly: `rpool/ROOT/horcrux` is the root boot environment (the dataset and tool keep the shared installer's name; `patronus-be` is an alias of
-`horcrux-be`), `home`, `var/log`, `var/lib/*` are shared datasets. `horcrux-be snapshot|create|rollback|activate` manages boot environments; every
+boot-environment friendly: `rpool/ROOT/horcrux` is the root boot environment (the dataset and tool keep the shared installer's name, `horcrux-be`,
+package `sys-apps/horcrux-be`; the web UI drives the same tool), `home`, `var/log`, `var/lib/*` are shared datasets. `horcrux-be snapshot|create|rollback|activate` manages boot environments; every
 `emerge` run first takes an automatic snapshot, and kernels are kept per boot environment in `/boot/be/<name>/` with a static `grub.cfg`.
 ZFS uses lz4/zstd compression, `ashift=12`, autotrim.
 
@@ -515,6 +515,29 @@ per-interface clients.
 
 **Setup wizard.** It is all-or-nothing: if any step fails, the interface configuration is restored and re-applied, the completed flag
 stays unset, and the answer is one readable sentence ("Setup was not applied and nothing was changed. Configuring the WAN port ... failed: ...").
+
+The wizard (`/setup`, `POST /api/setup/apply`) covers what the pfSense and OPNsense setup wizards ask, each field stored as the same
+typed setting the other pages edit:
+
+| Wizard field (API key) | Stored as | Edited later on |
+|---|---|---|
+| Host name, DNS domain, time zone (`hostname`, `domain`, `timezone`) | `general.hostname/domain/timezone` | System > General |
+| NTP servers (`ntp_servers`, USE=ntp) | `ntp.servers` | Services > NTP |
+| WAN type DHCP / static / PPPoE (`wan_mode`; `pppoe_username`, `pppoe_password`, `pppoe_service_name`, `pppoe_mtu` default 1492, `pppoe_device` default `pppoe0`) | interface rows; a PPPoE WAN is a PPPoE link on the WAN port and the `wan` role moves to the ppp device (the port keeps no role or address) | Interfaces |
+| WAN IPv6: off / DHCPv6 / SLAAC / static (`wan_ipv6_mode`, `wan_ipv6`, `wan_gateway6`) | `interfaces.ipv6_mode` | Interfaces |
+| Delegated prefix size to ask the ISP for, /48 to /64 (`wan_pd_len`) | `interfaces.dhcp6_pd_len` (dhcpcd `ia_pd N/::/LEN`) | Interfaces (WAN, DHCPv6) |
+| LAN IPv6: off / track the WAN / static (`lan_ipv6_mode`, `lan_ipv6`) | track = the WAN's `pd_downstream` gets the LAN (a /64 of the delegated prefix); router advertisements are turned on for the LAN | Interfaces, Services > Router advertisements |
+
+The whole body is checked before anything changes (`plan()` in `routes/api/setup.rs`: a host name with dots, an unknown time zone, LAN
+tracking without DHCPv6 on the WAN, a PPPoE WAN without user name or password are refused with nothing applied). A build without a
+feature (USE=pppoe, dhcp, ntp: the router image of the embedded tier) does not offer its fields (`features` in `/api/setup/status`).
+An access point (`PATRONUS_DEVICE_ROLE=ap`) has no wizard. Proof: `ci/netlab/lane-n-wizard.sh` (identity fields, DHCPv6-PD with a /56
+hint against ISC dhcpd + radvd, PPPoE against a real `pppoe-server`).
+
+**Boot environments in the web UI.** System > *Boot environments* (`/boot-environments`, `GET/POST /api/system/boot-environments[/op]`)
+lists the ZFS boot environments and snapshots (`horcrux-be list --json`, run as root through `patronus applyd`) and lets an admin
+choose the one booted next, roll back to a snapshot (a new environment, activated), take a snapshot, pin and delete. Installs on
+XFS/ext4 and the router tier say that they have no boot environments.
 
 ## Shared installer source
 
