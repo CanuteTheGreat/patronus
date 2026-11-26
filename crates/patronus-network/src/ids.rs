@@ -36,7 +36,7 @@ pub const LOG_DIR: &str = "/var/log/suricata";
 pub const DISTRO_RULES: &str = "/var/lib/suricata/rules/suricata.rules";
 pub const QUEUE: u16 = 3;
 
-static FIELDS: [Field; 11] = [
+static FIELDS: [Field; 12] = [
     Field::new("enabled", "Intrusion detection", Kind::Bool).def("0"),
     Field::new("mode", "Mode", Kind::Select(&["ids", "ips"]))
         .def("ids")
@@ -80,6 +80,12 @@ static FIELDS: [Field; 11] = [
         Kind::Int(1, 720),
     )
     .def("24"),
+    Field::new(
+        "update_retry_minutes",
+        "Retry a failed download after (minutes)",
+        Kind::Int(5, 1440),
+    )
+    .def("60"),
     Field::new(
         "alert_retention_days",
         "Keep alerts for (days)",
@@ -651,6 +657,7 @@ impl IdsApplier {
             hour: s.n("update_hour"),
             window_hours: s.n("update_window_hours"),
             interval_hours: s.n("update_interval_hours"),
+            retry_minutes: s.n("update_retry_minutes"),
         }
     }
 
@@ -1078,23 +1085,61 @@ mod tests {
         assert_eq!(a[0]["dst"], "2.2.2.2:80");
     }
 
-    /// By hand (`IDS_YAML_OUT=/x/suricata.yaml IDS_RULES_DIR=/x cargo test ... -- --ignored`): the
-    /// generated config for a real rule set, so a real Suricata can be asked to load ET Open with it.
-    #[test]
-    #[ignore = "writes a config for a manual run against a real rule set"]
-    fn dump_yaml_for_a_real_rule_set() {
-        let out = std::env::var("IDS_YAML_OUT").expect("IDS_YAML_OUT");
-        let dir = std::env::var("IDS_RULES_DIR").expect("IDS_RULES_DIR");
+    /// By hand (`IDS_RULES_SRC=<dir with a real set's *.rules> IDS_OUT=<dir> [IDS_POLICY=drop]
+    /// cargo test -p patronus-network --features intrusion-detection --lib bundle_for_a_real -- --ignored`):
+    /// the bundle (`sources.rules`, `patronus.rules`, `threshold.config`, `suricata.yaml`) the product would write for a
+    /// real rule set, so a real Suricata can be asked to load it (`suricata -T -c <dir>/suricata.yaml`).
+    #[tokio::test]
+    #[ignore = "writes a bundle for a manual run against a real rule set"]
+    async fn bundle_for_a_real_rule_set() {
+        let src = std::path::PathBuf::from(std::env::var("IDS_RULES_SRC").expect("IDS_RULES_SRC"));
+        let out = std::path::PathBuf::from(std::env::var("IDS_OUT").expect("IDS_OUT"));
+        let s = crate::lan::testutil::store().await;
+        sqlx::query("UPDATE ids_sources SET enabled = 1 WHERE key = 'et-open'")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        if let Ok(a) = std::env::var("IDS_POLICY") {
+            sqlx::query("INSERT INTO ids_policies (scope, target, action, enabled, updated_at) VALUES ('ruleset','et-open',?,1,0)")
+                .bind(a)
+                .execute(s.pool().unwrap())
+                .await
+                .unwrap();
+        }
+        let cur = out.join("sources/et-open/current");
+        std::fs::create_dir_all(&cur).unwrap();
+        for e in std::fs::read_dir(&src).unwrap().flatten() {
+            if e.path().extension().is_some_and(|x| x == "rules") {
+                std::fs::copy(e.path(), cur.join(e.file_name())).unwrap();
+            }
+        }
+        let t0 = std::time::Instant::now();
+        let sets = crate::ids_sets::render_sources(&s, &out, None)
+            .await
+            .unwrap();
+        eprintln!(
+            "rendered {} rules ({} dropping) in {:?}",
+            sets.loaded(),
+            sets.per_source.values().map(|x| x.dropping).sum::<usize>(),
+            t0.elapsed()
+        );
+        std::fs::write(out.join("sources.rules"), &sets.text).unwrap();
+        std::fs::write(out.join("patronus.rules"), render_rules(&[])).unwrap();
+        std::fs::write(
+            out.join("threshold.config"),
+            crate::ids_sets::render_threshold(&s).await.unwrap(),
+        )
+        .unwrap();
         let y = render_yaml(&YamlInput {
             mode: "ids",
             devices: &["eth0".to_string()],
             home_net: &["192.168.0.0/16".to_string(), "10.0.0.0/8".to_string()],
-            rules_dir: &dir,
+            rules_dir: &out.to_string_lossy(),
             log_dir: "/tmp/ids-log",
             distro_rules: false,
             classification: std::path::Path::new("/etc/suricata/classification.config").exists(),
         });
-        std::fs::write(out, y).unwrap();
+        std::fs::write(out.join("suricata.yaml"), y).unwrap();
     }
 
     #[tokio::test]
