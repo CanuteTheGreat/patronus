@@ -15,6 +15,9 @@ timezone = "UTC"
 # Names that don't exist on the box are ignored; with no LAN the anti-lockout
 # rule goes on the WAN, with no roles at all on every interface.
 # Lists are accepted too: lan_interfaces = ["eth1", "eth2"].
+# OPT interfaces (roles opt1, opt2 ... in order): opt_interfaces = ["eth2", "eth3"].
+# To change roles later: the console menu's "Assign interfaces", the web UI
+# (Interfaces), or `patronus interfaces assign --wan X --lan Y --opt Z`.
 wan_interface = "eth0"
 lan_interface = "eth1"
 

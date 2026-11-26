@@ -18,6 +18,7 @@ pub mod guest;
 #[cfg(feature = "uci-import")]
 pub mod import;
 pub mod init;
+pub mod interfaces;
 pub mod ipdb;
 pub mod metrics;
 #[cfg(feature = "plugins")]
