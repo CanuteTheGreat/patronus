@@ -51,7 +51,7 @@ pub fn area_for_path(path: &str) -> Option<&'static str> {
         "interfaces" | "network" => "interfaces",
         "routing" | "uplinks" => "routing",
         "vpn" => "vpn",
-        "dhcp" | "dns" | "ntp" | "svc" | "lan" => "services",
+        "dhcp" | "dns" | "ntp" | "svc" | "lan" | "captive-portal" => "services",
         "qos" => "qos",
         "ha" => "ha",
         "segmentation" => "segmentation",
@@ -268,6 +268,11 @@ mod tests {
         assert_eq!(area_for_path("/api/firewall/rules"), Some("firewall"));
         assert_eq!(area_for_path("/firewall"), Some("firewall"));
         assert_eq!(area_for_path("/api/dhcp/pools"), Some("services"));
+        assert_eq!(
+            area_for_path("/api/captive-portal/sessions"),
+            Some("services")
+        );
+        assert_eq!(area_for_path("/captive-portal"), Some("services"));
         assert_eq!(area_for_path("/api/system/backups"), Some("system"));
         assert_eq!(area_for_path("/api/unknown-thing"), Some("system"));
         assert_eq!(area_for_path("/"), Some("dashboard"));

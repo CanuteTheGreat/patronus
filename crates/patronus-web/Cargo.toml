@@ -17,7 +17,7 @@ path = "src/lib.rs"
 # builds patronus-web with --no-default-features and the USE-selected list):
 # lane C interfaces (vlan, pppoe, dhcpcd) and the lane D LAN-service pages
 # (dhcp, dns, ntp).
-default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "udp-relay", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "threat-feeds", "journal", "tls-rustls"]
+default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "udp-relay", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "captive-portal", "wifi-client", "threat-feeds", "journal", "tls-rustls"]
 vlan = ["patronus-network/vlan"]
 pppoe = ["patronus-network/pppoe"]
 dhcpcd = ["patronus-network/dhcpcd"]
@@ -43,6 +43,8 @@ nat64 = ["patronus-network/nat64"]
 l2tp = ["patronus-network/l2tp"]
 upnp = ["patronus-network/upnp"]
 guest = ["patronus-network/guest"]
+# captive portal: zones, splash page, local/voucher/RADIUS login, sessions, RFC 8908 API
+captive-portal = ["patronus-network/captive-portal", "dep:patronus-captiveportal", "patronus-captiveportal/portal"]
 vrf = ["patronus-network/vrf"]
 openvpn = ["patronus-network/openvpn"]
 web-proxy = ["patronus-network/web-proxy"]
