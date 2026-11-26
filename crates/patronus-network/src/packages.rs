@@ -41,6 +41,13 @@ pub const CATALOG: &[Component] = &[
         binary: "avahi-daemon",
     },
     Component {
+        id: "tailscale",
+        feature: "tailscale",
+        title: "Tailscale / Headscale mesh VPN client",
+        atom: "net-vpn/tailscale",
+        binary: "tailscaled",
+    },
+    Component {
         id: "miniupnpd",
         feature: "upnp",
         title: "UPnP / NAT-PMP daemon",

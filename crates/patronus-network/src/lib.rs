@@ -72,6 +72,8 @@ pub mod openvpn_server;
 pub mod ipsec;
 #[cfg(feature = "ipsec")]
 pub mod ipsec_rw;
+#[cfg(feature = "ipsec")]
+pub mod ipsec_xfrm;
 
 #[cfg(feature = "dns")]
 pub mod dns;
@@ -110,6 +112,8 @@ pub mod igmp;
 pub mod mdns;
 #[cfg(feature = "udp-relay")]
 pub mod udprelay;
+#[cfg(feature = "tailscale")]
+pub mod tailscale;
 
 #[cfg(feature = "nat64")]
 pub mod nat64;

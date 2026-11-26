@@ -133,6 +133,14 @@ that are not finished are listed separately under
   revokes it). The page exports a ready-made setup file per user: iOS / macOS
   `.mobileconfig`, Android strongSwan `.sswan`, a Windows PowerShell script
   or the `.p12`. [C60]
+- Route-based IPsec (USE=ipsec): a tunnel in route mode binds its SA to an XFRM
+  interface Patronus creates (address, MTU), routes decide what enters it
+  (static, or OSPF through FRR over the tunnel), and the VPN page lists the SAs
+  with byte counters, the kernel policies and the interface, with Connect and
+  Disconnect per tunnel. [C1301]
+- Tailscale / Headscale client (USE=tailscale): the router joins a tailnet with
+  a pre-auth key read from a file, can advertise LAN routes or act as an exit
+  node, and keeps the tailnet interface closed until a setting opens it. [C1302]
 
 ### LAN services (DHCP, DNS, NTP)
 

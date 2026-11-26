@@ -33,6 +33,8 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | WAN + routing, multi-uplink failover, policy routing | `ci/netlab/lane-e-routing.sh` | netlab | PASS 33 s|
 | IPsec road warriors (IKEv2, real strongSwan client) | `ci/netlab/lane-f-ipsec-rw.sh` | netlab | PASS 32 s, live EAP-MSCHAPv2 + certificate connections, mobileconfig/sswan/PS1 export, reboot, revoke (run 933 job 86298)|
 | WireGuard tunnels + road warrior | `ci/netlab/lane-f-wireguard.sh` | netlab | PASS 15 s|
+| Route-based IPsec (XFRM interface) + OSPF over the tunnel | `ci/netlab/lane-f-ipsec-vti.sh` | netlab | pending first CI run |
+| Tailscale / Headscale client | `ci/netlab/lane-j-tailscale.sh` | netlab | pending first CI run |
 | API keys + monitoring hooks | `ci/netlab/lane-h-apikeys.sh` | netlab | PASS 48 s|
 | Web accounts, 2FA login, backup/restore API | `ci/netlab/lane-h-system.sh` | netlab | PASS 36 s|
 | Dynamic routing BGP/OSPF (FRR) | `ci/netlab/lane-j-frr.sh` | netlab | PASS 82 s|
