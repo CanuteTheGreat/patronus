@@ -240,7 +240,8 @@ fn live_table_text_gives_maps_and_marks() {
     assert!(m["st3_4"].is_empty());
     assert_eq!(m.len(), 3, "{m:?}");
     // decimal values and an empty or broken listing
-    let d = "table inet patronus_wan {\n\tmap st1_4 {\n\t\telements = { 10.0.0.1 : 65537 }\n\t}\n}\n";
+    let d =
+        "table inet patronus_wan {\n\tmap st1_4 {\n\t\telements = { 10.0.0.1 : 65537 }\n\t}\n}\n";
     assert_eq!(parse_table(d)["st1_4"], vec![65537]);
     assert!(parse_table("nonsense").is_empty());
 }
