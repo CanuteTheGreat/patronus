@@ -358,6 +358,19 @@ that are not finished are listed separately under
   crate) that works offline and says why when the list is left out (router
   tier). [C82] CI refuses a dependency whose license is not on the allowlist.
   [C83]
+- The API is documented by an OpenAPI 3.1 document generated from the router's own
+  routes and types (`docs/openapi.json`, served at `/api/docs` and
+  `/api/openapi.json` to signed-in sessions and API keys on every tier). CI fails
+  when the document is out of date, when a route the router serves is missing from
+  it, and when a UI page neither calls the API nor says why not
+  (`docs/API-COVERAGE.md`). [C170]
+- The web UI and the API's error messages are available in English and German
+  (Fluent catalogs; more languages are one file). A language is chosen per account,
+  per sign-in page, or as the system default, and otherwise follows the browser's
+  `Accept-Language`; the menu, the sign-in page, the System language card, the API
+  reference page and the messages of the sign-in and account APIs are translated,
+  and CI refuses new hard-coded text in converted pages. Pages that are not yet
+  converted stay in English. [C171]
 - Gentoo: installed by the in-tree ebuild (an `emerge` runs in CI), and every
   USE flag that maps to a cargo feature compiles on its own. [C12]
 - The installer partitions a real disk, installs, and the installed system
