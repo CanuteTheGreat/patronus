@@ -59,7 +59,7 @@ Each architecture has its own job, its own assets and its own status marker (`da
 `daily-status-server-openrc-aarch64`), so a failing arch never blocks the other. Test evidence is attached per arch
 (`patronus-server-openrc-daily-<arch>-test-evidence.tgz`). Build one yourself on a native host: `ARCH=aarch64 build/live-iso/build.sh -o ./iso`
 (`ALLOW_EMULATED=1` is needed to build a foreign arch under qemu-user; not supported for the app stage).
-On arm64 machines the ISO is written to the stick exactly as on x86 (`dd`); firmware must be UEFI (Secure Boot off).
+On arm64 machines the ISO is written to the stick exactly as on x86 (`dd`); firmware must be UEFI (Secure Boot on or off: see [Secure Boot](#secure-boot)).
 Test it in QEMU: `qemu-system-aarch64 -machine virt -cpu max -m 4G -drive if=pflash,format=raw,readonly=on,file=AAVMF_CODE.fd -drive if=pflash,format=raw,file=VARS.fd -device qemu-xhci -device usb-storage,drive=iso -drive if=none,id=iso,file=patronus-server-openrc-daily-aarch64.iso,format=raw -device virtio-gpu-pci -device usb-kbd -serial stdio`.
 
 **riscv64** is not in CI: there is no RISC-V runner, the official binhost has only ~600 riscv64 packages (about 40 of the
@@ -365,7 +365,7 @@ ZFS uses lz4/zstd compression, `ashift=12`, autotrim.
 * Not offered for Patronus: passphrase-encrypted ZFS and XFS-in-LUKS (both need a typed passphrase at every boot). An answer file with a `passphrase` is rejected.
   `encryption = "none"` in the answer file turns the TPM encryption off.
 
-Caveat: PCR 7 changes when Secure Boot is switched on/off or its keys change; the sealed key then no longer unseals and the recovery key is needed at the console. Re-sealing an installed system to a new TPM state is not automated yet (a reinstall, or `zfs change-key` + re-running the seal by hand, is the way); Secure Boot is unsupported here anyway (see below).
+Caveat: PCR 7 changes when Secure Boot is switched on/off or its keys change; the sealed key then no longer unseals and the recovery key is needed at the console. Re-sealing an installed system to a new TPM state is not automated yet (a reinstall, or `zfs change-key` + re-running the seal by hand, is the way); with Secure Boot on, see [Secure Boot](#secure-boot) for the kernel-update case.
 The TPM unlock path is tested on x86_64 (UEFI + BIOS, software TPM); on aarch64 the encryption decision logic is unit-tested, the QEMU run is the unencrypted ZFS install.
 
 ## Security defaults
@@ -376,23 +376,33 @@ The TPM unlock path is tested on x86_64 (UEFI + BIOS, software TPM); on aarch64 
 
 ## Secure Boot
 
-**Not supported yet - turn Secure Boot OFF in the firmware setup before booting this ISO.**
-The ISO uses an unsigned GRUB and an unsigned Gentoo distribution kernel; no shim/MOK chain is
-shipped. With Secure Boot on, firmware will refuse `BOOTX64.EFI` ("Secure Boot violation" /
-"Access Denied"). Nothing else needs to change in the firmware. The installed system is also
-unsigned, so keep Secure Boot off after installing.
+**Supported on the standard tier (x86_64 and arm64 ISOs), with a one-time key enrollment** (free, no paid signing). The ISO
+boots through shim (Microsoft-signed) into our GRUB and kernel, signed with our own key. The first time you boot it with
+Secure Boot on, shim shows *"Verification failed: (0x1A) Security Violation"* and opens MokManager: press Enter, press a
+key, choose **Enroll key from disk**, pick the USB stick, then **ENROLL_THIS_KEY_IN_MOKMANAGER.cer**, **Continue**,
+**Yes**, **Reboot**. The installer then boots with Secure Boot on, and so does the installed appliance (same chain plus a
+machine key for kernel updates, enrolled once at its first reboot with the password shown at the end of the install).
+Leaving Secure Boot off also works. Details, the certificate fingerprint and the configuration options:
+[SECURE-BOOT.md](SECURE-BOOT.md).
+
+* **TPM disk encryption + Secure Boot on:** PCR 7 also records which certificate verified the boot files, so the first boot of
+  a kernel signed with the machine key (after a kernel update) no longer matches the sealed policy and the console asks for
+  the recovery key once. Automatic re-sealing is not implemented yet.
+* **Embedded tier (GL-AR750S, GL-AX1800 images):** these boards boot through U-Boot, not UEFI; UEFI Secure Boot does not apply.
+  Their images are verified by the sysupgrade checks and the release signatures; hardware-rooted verified boot depends on
+  vendor-fused keys the boards do not expose.
 
 ## Target-hardware notes
 
 **ThinkPad 21KH (i5-1335U, 16 GB, NVMe, Intel I219 wired, UEFI)** - expected to work, **not yet tested on the real laptop**:
-firmware setup (F1) -> Security -> Secure Boot -> *Disabled*; F12 for the one-time boot menu, pick the USB stick (UEFI entry).
+firmware setup (F1); Secure Boot can stay enabled (one-time key enrollment, see [Secure Boot](#secure-boot)); F12 for the one-time boot menu, pick the USB stick (UEFI entry).
 The kernel is Gentoo's generic distribution kernel with the full `linux-firmware` set (I219 uses the in-kernel `e1000e`;
 the AX211 Wi-Fi needs `iwlwifi` firmware, included; use `iwctl` (or the installer's Wi-Fi screen)). NVMe installs as `/dev/nvme0n1`.
 Hybrid graphics/touchpad/suspend were not exercised; the installer image is console-only (no desktop).
 
 **Surface Pro (gen 1, Ivy Bridge i5-3317U, 4 GB, UEFI + Secure Boot, no Ethernet)** - **not tested on the real device**:
 power off, hold *Volume Down* while pressing power to boot from USB (use a USB hub/adapter for the stick);
-to disable Secure Boot hold *Volume Up* while powering on -> Security -> Secure Boot -> Disabled.
+Secure Boot can stay on (enroll the key once, see [Secure Boot](#secure-boot)); the firmware menu is *Volume Up* while powering on.
 The ISO is built for generic x86-64 (no AVX2 requirement), so it runs on Ivy Bridge. 4 GB RAM is enough for the live
 system and installer (the live root is a RAM overlay; the 1.5 GB image is read from the stick). There is **no wired NIC**: the
 installer works offline (installs from the image), but the web UI needs the network afterwards - plug a USB Ethernet
@@ -525,7 +535,7 @@ stale copy are caught.
 
 ## Known gaps
 
-* **Secure Boot**: not supported (see above). A shim + MOK-enrolment chain (own signing key for GRUB and the kernel) is the next step.
+* **Secure Boot**: needs the one-time MokManager enrollment (see above); enrollment-free (turnkey) Secure Boot needs our own Microsoft-signed shim, see [secure-boot/shim-review.md](secure-boot/shim-review.md). riscv64 images are unsigned.
 * **Real hardware**: only QEMU/KVM (OVMF + SeaBIOS, USB-storage and CD boot) is tested automatically. The ThinkPad and Surface Pro notes above are expectations, not results. In particular untested: Wi-Fi scan/connect (needs a real adapter; the code path is exercised only by unit logic), the *Auto-detect (replug the cable)* link detection (real PHYs only), NVMe/eMMC device naming (`part_path` is unit-tested), the large console font on high-DPI panels (`setfont ter-v32n` when the framebuffer is >= 1600 px wide), touch/Type Cover input.
 * The installer is text mode (curses). A graphical installer is not provided.
 * Installer language: only the *installed system's* locale/keymap are selectable; the wizard text is English.
