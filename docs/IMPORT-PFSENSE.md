@@ -20,6 +20,13 @@ the page says which part refused it. API: `POST /api/system/import/{pfsense|open
 file as the request body, `?maps=em0=eth0,em1=eth1`. The CLI and the page share one importer (crate
 `patronus-import`); the web feature `import` follows USE=uci-import.
 
+An imported file usually carries the old box's LAN address. When it differs from the address your browser uses,
+the router moves to it while applying and the answer to Import is lost: after 30 s without an answer (or when the
+connection drops) the page says so and names the new address from the preview (`open https://NEW/`), plus
+System > Configuration history for the revision kept before the import. Proof: netlab `lane-n-import-ui.sh`
+(Firefox on the LAN client: preview, import + kernel/nftables state, then an import that moves the LAN address),
+`ci/a11y` page `import`.
+
 Secrets (PPPoE and WireGuard keys, IPsec pre-shared keys) are written to the store but never
 printed: the report shows `(set)`.
 
