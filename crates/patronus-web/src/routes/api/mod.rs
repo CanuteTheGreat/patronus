@@ -10,6 +10,8 @@ pub mod dashboard;
 pub mod device;
 pub mod firewall;
 pub mod groups;
+#[cfg(feature = "bruteforce")]
+pub mod guard;
 pub mod ha;
 pub mod insight_history;
 pub mod insights;

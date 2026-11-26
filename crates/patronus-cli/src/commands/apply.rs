@@ -43,6 +43,9 @@ pub fn registry() -> ApplierRegistry {
     // the first forwarded packet (Phase::Firewall)
     #[cfg(feature = "segmentation")]
     let r = r.with(patronus_firewall::seg_time::SegTimeApplier);
+    // brute-force protection: own nft table with the active bans (Phase::Firewall)
+    #[cfg(feature = "bruteforce")]
+    let r = r.with(patronus_firewall::guard::GuardApplier);
     r
 }
 
