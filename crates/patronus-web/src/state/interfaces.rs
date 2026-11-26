@@ -60,6 +60,8 @@ pub struct InterfaceUpdate {
     pub dhcp6_duid: Option<String>,
     /// DHCPv6 IAID for IA_NA and IA_PD (the replaced router's, to keep its prefix); null = automatic.
     pub dhcp6_iaid: Option<u32>,
+    /// Size of the delegated prefix to ask the ISP for (48-64, WAN with prefix delegation); null = no hint.
+    pub dhcp6_pd_len: Option<u8>,
     /// Apply even if it may cut off the current management session.
     pub force: bool,
 }
@@ -711,6 +713,11 @@ impl InterfacesManager {
             };
             i.dhcp6_iaid = if ipv6_mode == V6Mode::Dhcp6 {
                 u.dhcp6_iaid
+            } else {
+                None
+            };
+            i.dhcp6_pd_len = if ipv6_mode == V6Mode::Dhcp6 && !i.pd_downstream.is_empty() {
+                u.dhcp6_pd_len
             } else {
                 None
             };
