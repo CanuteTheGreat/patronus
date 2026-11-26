@@ -65,6 +65,12 @@ that are not finished are listed separately under
   feed of your own): enabled feeds are refreshed, capped, and their addresses
   are dropped ahead of your rules; private ranges a feed lists are never
   blocked and an `ti_allow` alias exempts hosts. [C58]
+- Brute-force protection (USE=bruteforce, off until switched on): addresses
+  that keep failing SSH (OpenSSH, Dropbear) or web UI logins are banned in the
+  firewall, to the router and through it; repeat offenders get longer bans,
+  IPv6 sources are banned per /64, your own LAN and an allow list are never
+  banned, bans survive a reboot and can be lifted from the page or the CLI.
+  See docs/BRUTE-FORCE.md. [C151]
 - Firewall log viewer: packets that a logging rule (or a threat feed, or the
   default policy) drops or accepts are recorded with the rule that caught them;
   search by rule, action, address, port, interface or text, follow it live. [C59]
