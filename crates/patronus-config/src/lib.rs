@@ -11,6 +11,7 @@ pub mod dashboard;
 pub mod declarative;
 pub mod defaults;
 pub mod migrate;
+pub mod notify_matcher;
 pub mod policy;
 pub mod seg;
 pub mod seg_wifi;
