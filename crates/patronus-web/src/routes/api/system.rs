@@ -637,6 +637,31 @@ pub async fn get_web(State(state): State<AppState>) -> Response {
     }
 }
 
+/// GET /api/system/ui -- display settings: usage thresholds and live refresh (`patronus_config::uiprefs`).
+pub async fn get_ui(State(state): State<AppState>) -> Response {
+    Json(patronus_config::uiprefs::resolve(&state.config_store).await).into_response()
+}
+
+/// PUT /api/system/ui -- `health_warn_pct`, `health_crit_pct`, `refresh_secs` (absent = unchanged, `reset`).
+pub async fn put_ui(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(i): Json<patronus_config::uiprefs::UiInput>,
+) -> Response {
+    match patronus_config::uiprefs::save(&state.config_store, &i).await {
+        Ok(p) => Json(p).into_response(),
+        Err(e) => {
+            let m = e.to_string();
+            let code = if m.contains("Invalid") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            error(code, m)
+        }
+    }
+}
+
 /// PUT /api/system/web -- listen addresses, HTTPS port, HTTP redirect port
 /// (0 = off), extra HTTPS ports ("none" = off), TLS certificate/key paths.
 /// Absent = unchanged, empty = back to the lower layers, `reset` = forget all.
@@ -1292,6 +1317,7 @@ pub fn router() -> axum::Router<AppState> {
         .route("/system/general", get(get_general).put(put_general))
         .route("/system/ssh", get(get_ssh).put(put_ssh))
         .route("/system/web", get(get_web).put(put_web))
+        .route("/system/ui", get(get_ui).put(put_ui))
         .route("/system/reboot", post(reboot))
         .route(
             "/system/firmware",

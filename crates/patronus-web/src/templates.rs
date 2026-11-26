@@ -25,28 +25,40 @@ pub struct DashboardTemplate {
     pub internet_gw: String,
     /// Active DHCP leases; `None` = the DHCP server is not configured or its state could not be read (tile hidden).
     pub dhcp_leases: Option<usize>,
-    /// Interfaces with their roles, WAN first.
+    /// Interfaces with their roles, WAN first (kernel placeholder devices without an address left out).
     pub iface_rows: Vec<DashIface>,
-    /// Live throughput per non-loopback interface (rate over a short sample window).
-    pub traffic: Vec<DashTraffic>,
+    /// How many kernel placeholder devices (gre0, sit0, ...) were left out of `iface_rows`.
+    pub hidden_stubs: usize,
+    /// Display settings (usage thresholds, live refresh interval).
+    pub ui: patronus_config::uiprefs::UiPrefs,
+    /// This unit is an access point (`PATRONUS_DEVICE_ROLE=ap`): router tiles are left out.
+    pub ap: bool,
+    /// ui-kit tone class of CPU / memory / disk usage against the thresholds ("", "warn", "crit").
+    pub cpu_level: &'static str,
+    pub mem_level: &'static str,
+    pub disk_level: &'static str,
+    /// One sentence naming what is over a threshold (empty = all fine) and its banner tone.
+    pub health_note: String,
+    pub health_tone: &'static str,
 }
 
-/// One row of the dashboard's Traffic tile.
-#[derive(Debug, Clone)]
-pub struct DashTraffic {
-    pub name: String,
-    pub rx: String,
-    pub tx: String,
-}
-
-/// One row of the dashboard's interface list.
-#[derive(Debug, Clone)]
+/// One row of the dashboard's interface table.
+#[derive(Debug, Clone, Default)]
 pub struct DashIface {
     pub name: String,
     /// Upper-case role label (WAN, LAN, OPT1); empty = no role assigned.
     pub role: String,
     pub up: bool,
+    /// Addresses, comma separated; empty = none.
     pub addrs: String,
+    pub mac: String,
+    /// Live rate "rx / tx" (empty = not sampled).
+    pub rate: String,
+    /// Byte counters since boot, humanised, and raw (for sorting).
+    pub rx: String,
+    pub tx: String,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
 }
 
 /// Firewall template
@@ -243,6 +255,9 @@ pub struct MonitoringTemplate {
 #[derive(Template)]
 #[template(path = "system.html")]
 pub struct SystemTemplate {
+    /// Display settings (System > Display) and their defaults for the hints.
+    pub ui: patronus_config::uiprefs::UiPrefs,
+    pub ui_default: patronus_config::uiprefs::UiPrefs,
     pub page: &'static str,
     /// About card: product site and public source addresses (`about.site_url`, `about.source_url`).
     pub site_url: String,
@@ -779,13 +794,13 @@ mod tests {
         }
     }
 
-    fn dashboard(vpn_connections: usize, vpn_errors: Vec<String>) -> String {
+    fn dash_base() -> DashboardTemplate {
         DashboardTemplate {
             page: "dashboard",
             interfaces: vec![],
             active_rules: 0,
-            vpn_connections,
-            vpn_errors,
+            vpn_connections: 0,
+            vpn_errors: vec![],
             system_info: SystemInfo::default(),
             uptime: "1 min".into(),
             services: vec![],
@@ -793,7 +808,22 @@ mod tests {
             internet_gw: String::new(),
             dhcp_leases: None,
             iface_rows: vec![],
-            traffic: vec![],
+            hidden_stubs: 0,
+            ui: patronus_config::uiprefs::UiPrefs::default(),
+            ap: false,
+            cpu_level: "",
+            mem_level: "",
+            disk_level: "",
+            health_note: String::new(),
+            health_tone: "",
+        }
+    }
+
+    fn dashboard(vpn_connections: usize, vpn_errors: Vec<String>) -> String {
+        DashboardTemplate {
+            vpn_connections,
+            vpn_errors,
+            ..dash_base()
         }
         .render()
         .unwrap()
@@ -805,24 +835,15 @@ mod tests {
         let none = dashboard(0, vec![]);
         assert!(none.contains("No default route"), "{none}");
         let up = DashboardTemplate {
-            page: "dashboard",
-            interfaces: vec![],
-            active_rules: 0,
-            vpn_connections: 0,
-            vpn_errors: vec![],
-            system_info: SystemInfo::default(),
-            uptime: "1 min".into(),
-            services: vec![],
             internet_dev: "enp0s1".into(),
             internet_gw: "10.0.2.2".into(),
             dhcp_leases: Some(3),
-            iface_rows: vec![],
-            traffic: vec![],
+            ..dash_base()
         }
         .render()
         .unwrap();
         assert!(
-            up.contains("Route up") && up.contains("10.0.2.2") && up.contains("enp0s1"),
+            up.contains("Present") && up.contains("10.0.2.2") && up.contains("enp0s1"),
             "{up}"
         );
     }
@@ -833,19 +854,8 @@ mod tests {
         let hidden = dashboard(0, vec![]);
         assert!(!hidden.contains("dhcp-leases"), "{hidden}");
         let mut t = DashboardTemplate {
-            page: "dashboard",
-            interfaces: vec![],
-            active_rules: 0,
-            vpn_connections: 0,
-            vpn_errors: vec![],
-            system_info: SystemInfo::default(),
-            uptime: "1 min".into(),
-            services: vec![],
-            internet_dev: String::new(),
-            internet_gw: String::new(),
             dhcp_leases: Some(7),
-            iface_rows: vec![],
-            traffic: vec![],
+            ..dash_base()
         };
         let shown = t.render().unwrap();
         assert!(
@@ -854,62 +864,93 @@ mod tests {
         );
         t.dhcp_leases = Some(0);
         assert!(t.render().unwrap().contains(r#"id="dhcp-leases">0</div>"#));
+        // an access point leaves addresses to the main router: no router tiles
+        t.ap = true;
+        let ap = t.render().unwrap();
+        assert!(
+            !ap.contains(r#"id="dhcp-leases""#)
+                && !ap.contains("active rules")
+                && !ap.contains(r#"id="vpn-connections""#)
+        );
+        assert!(ap.contains("internet-card") && ap.contains(r#"id="ap-uplink""#));
     }
 
-    /// The dashboard lists each interface with its WAN/LAN role, state and address.
+    /// The dashboard lists each interface with its WAN/LAN role, state, address, live rate and humanised
+    /// byte counters, and one glyph for "no value".
     #[test]
     fn dashboard_lists_interfaces_with_roles() {
         let mut t = DashboardTemplate {
-            page: "dashboard",
-            interfaces: vec![],
-            active_rules: 0,
-            vpn_connections: 0,
-            vpn_errors: vec![],
-            system_info: SystemInfo::default(),
-            uptime: "1 min".into(),
-            services: vec![],
-            internet_dev: String::new(),
-            internet_gw: String::new(),
-            dhcp_leases: None,
             iface_rows: vec![
                 DashIface {
                     name: "enp0s1".into(),
                     role: "WAN".into(),
                     up: true,
                     addrs: "10.0.2.15/24".into(),
+                    mac: "52:54:00:12:34:56".into(),
+                    rate: "1.5 KB/s / 200 B/s".into(),
+                    rx: "1.2 MB".into(),
+                    tx: "300 KB".into(),
+                    rx_bytes: 1_234_567,
+                    tx_bytes: 300_000,
                 },
                 DashIface {
                     name: "enp0s3".into(),
-                    role: String::new(),
-                    up: false,
-                    addrs: "none".into(),
+                    ..Default::default()
                 },
             ],
-            traffic: vec![DashTraffic {
-                name: "enp0s1".into(),
-                rx: "1.5 KB/s".into(),
-                tx: "200 B/s".into(),
-            }],
+            hidden_stubs: 3,
+            ..dash_base()
         };
         let h = t.render().unwrap();
         assert!(
-            h.contains(r#"class="iface-role">WAN</span>"#)
+            h.contains(r#"iface-role">WAN</span>"#)
                 && h.contains("enp0s1")
                 && h.contains("10.0.2.15/24"),
             "{h}"
         );
         assert!(h.contains("enp0s3") && h.contains("down"), "{h}");
-        t.iface_rows.clear();
-        assert!(!t.render().unwrap().contains("iface-role"));
-        // Traffic tile: per-interface live rates.
         assert!(
-            h.contains(r#"data-traffic="enp0s1""#)
-                && h.contains("1.5 KB/s")
-                && h.contains("200 B/s"),
+            h.contains(r#"data-traffic="enp0s1">1.5 KB/s / 200 B/s"#),
             "{h}"
         );
-        t.traffic.clear();
-        assert!(!t.render().unwrap().contains("data-traffic"));
+        assert!(h.contains(r#"data-v="1234567">1.2 MB"#), "{h}");
+        assert!(
+            h.contains(r#"<span class="nil" title="no address">&mdash;</span>"#),
+            "{h}"
+        );
+        assert!(h.contains("3 kernel placeholder device(s)"), "{h}");
+        t.iface_rows.clear();
+        assert!(!t.render().unwrap().contains(r#"iface-role">"#));
+    }
+
+    /// Usage values carry their threshold tone and a sentence names what is over it; live refresh follows
+    /// `ui.refresh_secs` (0 = the page says it is a snapshot).
+    #[test]
+    fn dashboard_health_thresholds_and_live_refresh() {
+        let mut t = DashboardTemplate {
+            disk_level: "crit",
+            health_note: "Disk / at 91 % (critical)".into(),
+            health_tone: "crit",
+            ..dash_base()
+        };
+        let h = t.render().unwrap();
+        assert!(h.contains(r#"<div class="ui-usage crit">"#), "{h}");
+        assert!(
+            h.contains(r#"class="ui-banner crit" id="health-note""#),
+            "{h}"
+        );
+        assert!(
+            h.contains(r#"data-refresh="10""#) && h.contains("dash-live-toggle"),
+            "{h}"
+        );
+        t.ui.refresh_secs = 0;
+        t.health_note.clear();
+        let h = t.render().unwrap();
+        assert!(
+            h.contains("snapshot")
+                && !h.contains(r#"id="dash-live-toggle""#)
+                && !h.contains(r#"id="health-note""#)
+        );
     }
 
     /// A failed VPN read must not render as a plain "0" (finding: a box

@@ -4,28 +4,50 @@
 
 {% block extra_head %}
 <style>
-    .fw-page .btn-sm { padding: 3px 8px; font-size: 0.85em; }
-    .fw-page .tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--line); margin: 20px 0; }
-    .fw-page .tab-btn { padding: 10px 16px; border: none; background: none; color: var(--text); cursor: pointer; }
-    .fw-page .tab-btn.active { background: var(--surface-2); border-bottom: 2px solid var(--accent); }
     .fw-page .tab { display: none; }
     .fw-page .tab.active { display: block; }
-    .fw-page fieldset { border: 1px solid var(--line); border-radius: 5px; padding: 12px; margin: 12px 0; min-width: 0; }
-    .fw-page legend { padding: 0 6px; }
-    .fw-page h2, .fw-page h3 { margin: 16px 0 8px; }
-    .fw-page p { margin: 8px 0; }
-    .fw-page table { margin: 12px 0; }
-    .fw-page .row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
-    .fw-page .row label { display: flex; flex-direction: column; font-size: 0.85em; min-width: min(150px, 100%); }
-    .fw-page .row label.check { flex-direction: row; align-items: center; gap: 6px; min-width: 0; }
-    .fw-page input, .fw-page select, .fw-page textarea { padding: 5px; font-size: 0.95em; max-width: 100%; }
-    .fw-page .msg { padding: 8px; margin: 8px 0; border-radius: 4px; display: none; }
-    .fw-page .msg.error { display: block; background: var(--bad-bg); color: var(--bad-fg); }
-    .fw-page .msg.ok { display: block; background: var(--ok-bg); color: var(--ok-fg); }
-    .fw-page .hint { color: var(--muted); font-size: 0.85em; }
-    .fw-page .empty { color: var(--muted); font-style: italic; }
-    .fw-page .tabs { overflow-x: auto; flex-wrap: nowrap; }
-    .fw-page .tab-btn { white-space: nowrap; }
+    .fw-page fieldset { border: 1px solid var(--c-border); border-radius: var(--r-md); padding: var(--s-3); margin: var(--s-3) 0; min-width: 0; }
+    .fw-page legend { padding: 0 6px; font-weight: 600; }
+    .fw-page h2, .fw-page h3 { margin: var(--s-4) 0 var(--s-2); font-size: var(--fs-lg); }
+    .fw-page p { margin: var(--s-2) 0; }
+    .fw-page table { margin: var(--s-3) 0; }
+    .fw-page .ui-grid { margin: 0; }
+    .fw-page .row { display: flex; flex-wrap: wrap; gap: var(--s-3); margin-bottom: var(--s-2); }
+    .fw-page .row label { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-sm); min-width: min(150px, 100%); }
+    .fw-page .row label.check, .fw-page label.check { flex-direction: row; align-items: center; gap: 6px; min-width: 0; display: flex; }
+    .fw-page input, .fw-page select, .fw-page textarea { max-width: 100%; }
+    .fw-page .msg { padding: 8px var(--s-3); margin: var(--s-2) 0; border-radius: var(--r-md); display: none; border: 1px solid var(--c-border); }
+    .fw-page .msg.error { display: block; background: var(--c-crit-bg); color: var(--c-crit); }
+    .fw-page .msg.ok { display: block; background: var(--c-ok-bg); color: var(--c-ok); }
+    .fw-page .hint { color: var(--c-muted); font-size: var(--fs-sm); }
+    .fw-page .empty { color: var(--c-muted); }
+    .fw-page .stat-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+    .fw-page .stat-card div { font-size: var(--fs-lg); font-weight: 600; }
+    .fw-page .stat-card div + div { font-size: var(--fs-sm); font-weight: 400; color: var(--c-muted); }
+    /* rules grid: one line per rule, the name truncates instead of wrapping */
+    #rules-table td { white-space: nowrap; }
+    #rules-table td.fw-name { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; }
+    #rules-table td.fw-name small { color: var(--c-muted); margin-left: 6px; }
+    #rules-table td.fw-sel, #rules-table th.fw-sel { width: 32px; padding-right: 0; }
+    #rules-table tr.off td:not(.fw-sel):not(.fw-act) { color: var(--c-muted); }
+    #rules-table td.fw-act { text-align: right; }
+    #rules-table td.fw-act .ui-btn { min-width: 26px; padding: 0 6px; }
+    .fw-page .ui-toolbar .ui-input[type=search] { width: 16rem; max-width: 100%; }
+    .fw-page .ui-toolbar .fw-filter { min-height: 26px; height: 26px; padding: 0 var(--s-2); font-size: var(--fs-sm); }
+    #rules-table td.fw-name small { display: block; margin: 0; max-width: 22rem; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-sm); }
+    #rules-table td.fw-sel .fw-lock { color: var(--c-muted); }
+    .fw-sel-count { color: var(--c-muted); font-size: var(--fs-sm); }
+    /* rule dialog */
+    #rule-dialog { width: min(760px, calc(100vw - 24px)); }
+    #rule-dialog .ui-dialog-body { max-height: calc(100vh - 180px); overflow: auto; }
+    #rule-dialog .fw-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 var(--s-4); }
+    #rule-dialog .ui-field > .ui-input, #rule-dialog .ui-field > select { width: 100%; }
+    #rule-dialog .fw-checks { display: flex; gap: var(--s-4); flex-wrap: wrap; margin-bottom: var(--s-3); }
+    @media (max-width: 900px) {
+        #rules-table td.fw-name { max-width: 12rem; }
+        .fw-scroll-hint { display: block; }
+    }
+    .fw-scroll-hint { display: none; color: var(--c-muted); font-size: var(--fs-sm); padding: 4px var(--s-3); }
 </style>
 {% endblock %}
 
@@ -37,34 +59,34 @@
     </div>
 
     <div class="stat-grid">
-        <a class="stat-card stat-link" href="#tab-rules" data-goto="tab-rules" style="text-decoration:none;color:inherit;display:block"><h2 class="fw-stat-title">Filter Rules</h2>
-            <div>Total: {{ filter_rules.len() }}</div><div>Enabled: {{ enabled_filter_rules }}</div></a>
-        <a class="stat-card stat-link" href="#tab-pf" data-goto="tab-pf" style="text-decoration:none;color:inherit;display:block"><h2 class="fw-stat-title">NAT Rules</h2>
-            <div>Total: {{ nat_rules.len() }}</div><div>Enabled: {{ enabled_nat_rules }}</div></a>
-        <a class="stat-card stat-link" href="#tab-rules" data-goto="tab-rules" style="text-decoration:none;color:inherit;display:block"><h2 class="fw-stat-title">Allow Rules</h2><div>{{ accept_rules_count }}</div></a>
-        <a class="stat-card stat-link" href="#tab-rules" data-goto="tab-rules" style="text-decoration:none;color:inherit;display:block"><h2 class="fw-stat-title">Block Rules</h2><div>{{ drop_rules_count }}</div></a>
-        <a class="stat-card stat-link" href="#tab-outbound" data-goto="tab-outbound" style="text-decoration:none;color:inherit;display:block"><h2 class="fw-stat-title">Outbound NAT</h2><div>{{ outbound_mode }}</div></a>
+        <a class="stat-card stat-link" href="#tab-rules" data-goto="tab-rules"><h2 class="fw-stat-title">Filter rules</h2>
+            <div>{{ filter_rules.len() }}</div><div>{{ enabled_filter_rules }} enabled</div></a>
+        <a class="stat-card stat-link" href="#tab-pf" data-goto="tab-pf"><h2 class="fw-stat-title">NAT rules</h2>
+            <div>{{ nat_rules.len() }}</div><div>{{ enabled_nat_rules }} enabled</div></a>
+        <a class="stat-card stat-link" href="#tab-rules" data-goto="tab-rules"><h2 class="fw-stat-title">Allow rules</h2><div>{{ accept_rules_count }}</div></a>
+        <a class="stat-card stat-link" href="#tab-rules" data-goto="tab-rules"><h2 class="fw-stat-title">Block rules</h2><div>{{ drop_rules_count }}</div></a>
+        <a class="stat-card stat-link" href="#tab-outbound" data-goto="tab-outbound"><h2 class="fw-stat-title">Outbound NAT</h2><div>{{ outbound_mode }}</div></a>
     </div>
 
-    <div id="msg" class="msg"></div>
+    <div id="msg" class="msg" role="status"></div>
 
-    <div class="tabs">
-        <button class="tab-btn active" data-tab="tab-rules">Rules</button>
-        <button class="tab-btn" data-tab="tab-pf">Port Forwards</button>
-        <button class="tab-btn" data-tab="tab-outbound">Outbound NAT</button>
-        <button class="tab-btn" data-tab="tab-onetoone">1:1 NAT</button>
-        <button class="tab-btn" data-tab="tab-npt">NPTv6</button>
-        <button class="tab-btn" data-tab="tab-aliases">Aliases</button>
-        <button class="tab-btn" data-tab="tab-schedules">Schedules</button>
-        <button class="tab-btn" data-tab="tab-geoip">GeoIP</button>
-        <button class="tab-btn" data-tab="tab-threat">Threat Intel</button>
-        <button class="tab-btn" data-tab="tab-hardening">Hardening</button>
-        <button class="tab-btn" data-tab="tab-logs">Logs</button>
-        <button class="tab-btn" data-tab="tab-states">States</button>
+    <div class="ui-tabs" role="tablist" aria-label="Firewall sections" id="fw-tabs">
+        <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-rules" data-tab="tab-rules">Rules</button>
+        <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-pf" data-tab="tab-pf" tabindex="-1">Port forwards</button>
+        <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-outbound" data-tab="tab-outbound" tabindex="-1">Outbound NAT</button>
+        <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-onetoone" data-tab="tab-onetoone" tabindex="-1">1:1 NAT</button>
+        <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-npt" data-tab="tab-npt" tabindex="-1">NPTv6</button>
+        <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-aliases" data-tab="tab-aliases" tabindex="-1">Aliases</button>
+        <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-schedules" data-tab="tab-schedules" tabindex="-1">Schedules</button>
+        <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-geoip" data-tab="tab-geoip" tabindex="-1">GeoIP</button>
+        <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-threat" data-tab="tab-threat" tabindex="-1">Threat intel</button>
+        <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-hardening" data-tab="tab-hardening" tabindex="-1">Hardening</button>
+        <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-logs" data-tab="tab-logs" tabindex="-1">Logs</button>
+        <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-states" data-tab="tab-states" tabindex="-1">States</button>
     </div>
 
     <!-- ============================ RULES ============================ -->
-    <div class="tab active" id="tab-rules">
+    <div class="tab active" id="tab-rules" role="tabpanel">
         <p class="hint">Rules are evaluated top to bottom; the first match wins. The anti-lockout
             rule is a system rule: it always comes first and cannot be moved, edited or deleted.
             Traffic that matches no rule is dropped (inbound and forwarded).</p>
@@ -75,111 +97,151 @@
             <label class="check"><input type="checkbox" id="wg-private" onchange="setWanGuard()"> Block private networks and loopback (10/8, 172.16/12, 192.168/16, 100.64/10, 127/8, fc00::/7)</label>
             <label class="check"><input type="checkbox" id="wg-bogons" onchange="setWanGuard()"> Block bogon networks (reserved, documentation, multicast and future-use ranges)</label>
         </fieldset>
-        <div class="table-container">
-        <table id="rules-table">
+
+        <div class="ui-toolbar" id="rules-toolbar">
+            <div>
+                <button type="button" class="ui-btn primary sm" id="rule-add" onclick="openRule()">Add rule</button>
+                <span class="fw-sel-count" id="rules-sel-count" aria-live="polite"></span>
+                <button type="button" class="ui-btn sm" data-bulk onclick="bulkRules('enable')" disabled>Enable</button>
+                <button type="button" class="ui-btn sm" data-bulk onclick="bulkRules('disable')" disabled>Disable</button>
+                <button type="button" class="ui-btn sm danger" data-bulk onclick="bulkRules('delete')" disabled>Delete</button>
+            </div>
+            <div>
+                <input class="ui-input fw-filter" type="search" data-ui-filter="fw-rules" placeholder="Filter rules" aria-label="Filter rules">
+                <details class="ui-menu" data-ui-columns="fw-rules"><summary class="ui-btn sm">Columns</summary>
+                    <div class="ui-menu-items">
+                        <label><input type="checkbox" value="chain"> Chain</label>
+                        <label><input type="checkbox" value="ipv"> IP version</label>
+                        <label><input type="checkbox" value="log"> Log</label>
+                        <label><input type="checkbox" value="sched"> Schedule / gateway</label>
+                    </div></details>
+            </div>
+        </div>
+        <script>/* first visit: IP version and Log columns start hidden (Columns menu brings them back) */
+        try { if (localStorage.getItem('ui.cols.fw-rules') === null) localStorage.setItem('ui.cols.fw-rules', 'ipv,log'); } catch (e) {}</script>
+        <div class="ui-grid-wrap">
+        <table id="rules-table" class="ui-grid" data-ui-grid="fw-rules">
             <thead><tr>
-                <th>#</th><th>Name</th><th>Chain</th><th>Interface</th><th>Action</th><th>Proto</th>
-                <th>Source</th><th>Destination</th><th>Port</th><th>IP</th><th>Log</th>
-                <th>Schedule</th><th>On</th><th>Order / Edit</th>
+                <th class="fw-sel"><input type="checkbox" id="rules-all" aria-label="Select all user rules" onchange="selAll(this)"></th>
+                <th>#</th><th>Name</th><th data-col="chain">Chain</th><th>Interface</th><th>Action</th><th>Proto</th>
+                <th>Source</th><th>Destination</th><th>Port</th><th data-col="ipv">IP</th><th data-col="log">Log</th>
+                <th data-col="sched">Schedule</th><th>On</th><th class="fw-act"><span class="sr-only">Order / Edit</span></th>
             </tr></thead>
             <tbody>
             {% for rule in filter_rules %}
-            <tr data-rule-id="{{ rule.id }}">
+            <tr data-rule-id="{{ rule.id }}"{% if !rule.enabled %} class="off"{% endif %}>
+                <td class="fw-sel">{% if rule.origin != "system" %}<input type="checkbox" class="rule-sel" value="{{ rule.id }}" aria-label="Select rule {{ rule.name }}" onchange="selChanged()">{% else %}<svg class="fw-lock" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" role="img" aria-label="System rule, cannot be changed"><title>System rule, cannot be changed</title><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>{% endif %}</td>
                 <td>{{ loop.index }}</td>
-                <td>{{ rule.name }}{% if rule.origin == "system" %} <span class="badge" title="Anti-lockout: always enforced, cannot be changed">system</span>{% endif %}{% if rule.origin == "default" %} <span class="badge" title="Seeded default">default</span>{% endif %}</td>
-                <td>{{ rule.chain }}</td>
+                <td class="fw-name" title="{{ rule.name }}{% if !rule.description.is_empty() %}: {{ rule.description }}{% endif %}">{{ rule.name }}{% if rule.origin == "system" %} <span class="ui-badge" title="Anti-lockout: always enforced, cannot be changed">system</span>{% endif %}{% if rule.origin == "default" %} <span class="ui-badge" title="Seeded default">default</span>{% endif %}{% if !rule.description.is_empty() && rule.description != rule.name %}<small>{{ rule.description }}</small>{% endif %}</td>
+                <td data-col="chain">{{ rule.chain }}</td>
                 <td>{{ rule.interface_display }}{% if rule.interface_out != "any" %} &rarr; {{ rule.interface_out }}{% endif %}</td>
-                <td>{% if rule.action == "Accept" %}<span class="badge success">Accept</span>{% else if rule.action == "Drop" %}<span class="badge danger">Drop</span>{% else %}<span class="badge warning">{{ rule.action }}</span>{% endif %}</td>
+                <td>{% if rule.action == "Accept" %}<span class="ui-badge ok">Accept</span>{% else if rule.action == "Drop" %}<span class="ui-badge crit">Drop</span>{% else %}<span class="ui-badge warn">{{ rule.action }}</span>{% endif %}</td>
                 <td>{{ rule.protocol }}</td>
-                <td>{{ rule.source }}</td>
-                <td>{{ rule.destination }}</td>
-                <td>{{ rule.port }}</td>
-                <td>{{ rule.ip_version }}</td>
-                <td>{% if rule.log %}yes{% endif %}</td>
-                <td>{{ rule.schedule }}{% if !rule.gateway.is_empty() %}<br><span class="badge info" title="Policy routing: matching traffic leaves through this gateway">via {{ rule.gateway }}</span>{% endif %}</td>
-                <td>{% if rule.enabled %}<span class="badge success">On</span>{% else %}<span class="badge danger">Off</span>{% endif %}</td>
-                <td>
+                <td class="mono">{{ rule.source }}</td>
+                <td class="mono">{{ rule.destination }}</td>
+                <td class="mono">{{ rule.port }}</td>
+                <td data-col="ipv">{{ rule.ip_version }}</td>
+                <td data-col="log">{% if rule.log %}yes{% else %}<span class="nil">&mdash;</span>{% endif %}</td>
+                <td data-col="sched">{% if rule.schedule.is_empty() && rule.gateway.is_empty() %}<span class="nil" title="always">&mdash;</span>{% else %}{{ rule.schedule }}{% endif %}{% if !rule.gateway.is_empty() %} <span class="ui-badge info" title="Policy routing: matching traffic leaves through this gateway">via {{ rule.gateway }}</span>{% endif %}</td>
+                <td>{% if rule.enabled %}<span class="ui-badge ok"><span class="ui-dot ok"></span>On</span>{% else %}<span class="ui-badge"><span class="ui-dot off"></span>Off</span>{% endif %}</td>
+                <td class="fw-act">
                     {% if rule.origin != "system" %}
-                    <button class="btn btn-secondary btn-sm" title="Move up" onclick="moveRule({{ rule.id }}, 'up')">&#9650;</button>
-                    <button class="btn btn-secondary btn-sm" title="Move down" onclick="moveRule({{ rule.id }}, 'down')">&#9660;</button>
-                    <button class="btn btn-primary btn-sm" onclick="editRule({{ rule.id }})">Edit</button>
-                    <button class="btn btn-danger btn-sm" onclick="del('/firewall/rules/{{ rule.id }}', 'rule')">Delete</button>
+                    <button class="ui-btn sm" title="Move up" aria-label="Move {{ rule.name }} up" onclick="moveRule({{ rule.id }}, 'up')">&#9650;</button>
+                    <button class="ui-btn sm" title="Move down" aria-label="Move {{ rule.name }} down" onclick="moveRule({{ rule.id }}, 'down')">&#9660;</button>
+                    <button class="ui-btn sm" aria-label="Edit {{ rule.name }}" onclick="editRule({{ rule.id }})">Edit</button>
+                    <button class="ui-btn sm danger" aria-label="Delete {{ rule.name }}" onclick="del('/firewall/rules/{{ rule.id }}', 'rule')">Delete</button>
                     {% endif %}
                 </td>
             </tr>
             {% endfor %}
             </tbody>
         </table>
+        <div class="fw-scroll-hint">Swipe the table sideways for more columns.</div>
+        <div class="ui-grid-foot"><span>{{ filter_rules.len() }} rules, {{ enabled_filter_rules }} enabled. They run in list order: reorder with the arrows.</span></div>
         </div>
-        {% if filter_rules.is_empty() %}<p class="empty">No filter rules: everything inbound and forwarded is dropped.</p>{% endif %}
+        {% if filter_rules.is_empty() %}<div class="ui-grid-state">No filter rules: everything inbound and forwarded is dropped. <button type="button" class="ui-btn sm" onclick="openRule()">Add rule</button></div>{% endif %}
 
-        <form id="rule-form" onsubmit="return saveRule(event)">
-            <fieldset>
-                <legend id="rule-form-title">Add rule</legend>
+        <dialog class="ui-dialog" id="rule-dialog" aria-labelledby="rule-form-title">
+        <form id="rule-form" onsubmit="return saveRule(event)" novalidate>
+            <header id="rule-form-title">Add rule</header>
+            <div class="ui-dialog-body">
                 <input type="hidden" name="id">
-                <div class="row">
-                    <label>Name <input name="name" required maxlength="64"></label>
-                    <label>Action
-                        <select name="action">
+                <div class="fw-cols">
+                    <div class="ui-field"><label for="r-name">Name</label>
+                        <input class="ui-input" id="r-name" name="name" required maxlength="64" aria-describedby="r-name-hint">
+                        <span class="ui-hint" id="r-name-hint">Shown in the list and the firewall log.</span></div>
+                    <div class="ui-field"><label for="r-action">Action</label>
+                        <select class="ui-input" id="r-action" name="action" onchange="ruleFieldsChanged()">
                             <option value="accept">Accept (pass)</option>
                             <option value="drop">Drop (silently)</option>
                             <option value="reject">Reject (TCP reset / ICMP unreachable)</option>
-                        </select></label>
-                    <label>Chain
-                        <select name="chain" onchange="chainChanged()">
+                        </select></div>
+                    <div class="ui-field"><label for="r-chain">Direction</label>
+                        <select class="ui-input" id="r-chain" name="chain" onchange="chainChanged()" aria-describedby="r-chain-hint">
                             <option value="input">input (to the firewall)</option>
                             <option value="forward" selected>forward (through the firewall)</option>
                             <option value="output">output (from the firewall)</option>
-                        </select></label>
-                    <label>Interface
-                        <select name="interface">
+                        </select>
+                        <span class="ui-hint" id="r-chain-hint">Forward = traffic between networks.</span></div>
+                    <div class="ui-field"><label for="r-iface">Interface</label>
+                        <select class="ui-input" id="r-iface" name="interface">
                             {% for i in interfaces %}<option value="{{ i.value }}">{{ i.label }}</option>{% endfor %}
-                        </select></label>
-                    <label id="rule-iface-out">Out interface (forward)
-                        <select name="interface_out">
+                        </select></div>
+                    <div class="ui-field" id="rule-iface-out"><label for="r-iface-out">Out interface</label>
+                        <select class="ui-input" id="r-iface-out" name="interface_out">
                             {% for i in interfaces %}<option value="{{ i.value }}">{{ i.label }}</option>{% endfor %}
-                        </select></label>
-                    <label>IP version
-                        <select name="ip_version">
+                        </select></div>
+                    <div class="ui-field"><label for="r-ipv">IP version</label>
+                        <select class="ui-input" id="r-ipv" name="ip_version">
                             <option value="any">IPv4 + IPv6</option>
                             <option value="ipv4">IPv4 only</option>
                             <option value="ipv6">IPv6 only</option>
-                        </select></label>
-                </div>
-                <div class="row">
-                    <label>Protocol
-                        <select name="protocol">
+                        </select></div>
+                    <div class="ui-field"><label for="r-proto">Protocol</label>
+                        <select class="ui-input" id="r-proto" name="protocol" onchange="ruleFieldsChanged()">
                             <option value="any">any</option><option value="tcp">TCP</option>
                             <option value="udp">UDP</option><option value="icmp">ICMP</option>
-                        </select></label>
-                    <label>Source <input name="source" value="any" list="host-alias-list" placeholder="any, 10.0.0.0/8, 2001:db8::/32, $alias"></label>
-                    <label>Destination <input name="destination" value="any" list="host-alias-list"></label>
-                    <label>Destination port <input name="port" value="any" list="port-alias-list" placeholder="any, 443, 8000-8010, 22,80, $alias"></label>
-                    <label>Schedule
-                        <select name="schedule">
+                        </select></div>
+                    <div class="ui-field"><label for="r-src">Source</label>
+                        <input class="ui-input" id="r-src" name="source" list="host-alias-list" placeholder="any" aria-describedby="r-src-hint">
+                        <span class="ui-hint" id="r-src-hint">Empty = any. 10.0.0.0/8, 2001:db8::/32 or $alias.</span></div>
+                    <div class="ui-field"><label for="r-dst">Destination</label>
+                        <input class="ui-input" id="r-dst" name="destination" list="host-alias-list" placeholder="any" aria-describedby="r-dst-hint">
+                        <span class="ui-hint" id="r-dst-hint">Empty = any.</span></div>
+                    <div class="ui-field" id="rule-port"><label for="r-port">Destination port</label>
+                        <input class="ui-input" id="r-port" name="port" list="port-alias-list" placeholder="any" aria-describedby="r-port-hint">
+                        <span class="ui-hint" id="r-port-hint">Empty = any. 443, 8000-8010, 22,80 or $alias.</span></div>
+                    <div class="ui-field"><label for="r-sched">Schedule</label>
+                        <select class="ui-input" id="r-sched" name="schedule">
                             <option value="">always</option>
                             {% for s in schedules %}<option value="{{ s.name }}">{{ s.name }}</option>{% endfor %}
-                        </select></label>
-                    <label title="Policy routing (accept rules): send matching traffic out through this gateway or gateway group instead of the default route">Gateway
-                        <select name="gateway">
+                        </select></div>
+                    <div class="ui-field" id="rule-gateway"><label for="r-gw">Gateway</label>
+                        <select class="ui-input" id="r-gw" name="gateway" aria-describedby="r-gw-hint">
                             <option value="">default route</option>
                             {% for g in gateways %}<option value="{{ g }}">{{ g }}</option>{% endfor %}
-                        </select></label>
+                        </select>
+                        <span class="ui-hint" id="r-gw-hint">Policy routing: matching traffic leaves through this gateway.</span></div>
+                    <div class="ui-field" id="rule-before"><label for="r-before">Place before</label>
+                        <select class="ui-input" id="r-before" name="before">
+                            <option value="">after the other user rules</option>
+                            {% for rule in filter_rules %}{% if rule.origin != "system" %}<option value="{{ rule.id }}">{{ rule.name }}</option>{% endif %}{% endfor %}
+                        </select></div>
                 </div>
-                <div class="row">
-                    <label>Description <input name="description" maxlength="120" size="40"></label>
+                <div class="ui-field"><label for="r-desc">Description</label>
+                    <input class="ui-input" id="r-desc" name="description" maxlength="120"></div>
+                <div class="fw-checks">
                     <label class="check"><input type="checkbox" name="log"> Log matches</label>
                     <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
-                    <label>Place before
-                        <select name="before">
-                            <option value="">default position (after other user rules)</option>
-                            {% for rule in filter_rules %}{% if rule.origin != "system" %}<option value="{{ rule.id }}">{{ rule.name }}</option>{% endif %}{% endfor %}
-                        </select></label>
                 </div>
-                <button type="submit" class="btn btn-primary">Save rule</button>
-                <button type="button" class="btn btn-secondary" onclick="resetForm('rule-form', 'Add rule')">Clear</button>
-            </fieldset>
+                <div class="msg" id="rule-msg" role="alert"></div>
+            </div>
+            <footer>
+                <button type="button" class="ui-btn" onclick="closeRule()">Cancel</button>
+                <button type="submit" class="ui-btn primary">Save rule</button>
+            </footer>
         </form>
+        </dialog>
     </div>
 
     <!-- ========================= PORT FORWARDS ========================= -->
@@ -583,10 +645,24 @@
 const TAB_KEY = 'patronus-fw-tab';
 function showTab(id) {
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.id === id));
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
+    document.querySelectorAll('.tab-btn').forEach(b => {
+        const on = b.dataset.tab === id;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+        b.tabIndex = on ? 0 : -1;
+    });
     sessionStorage.setItem(TAB_KEY, id);
 }
-document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+document.querySelectorAll('.tab-btn').forEach((b, i, all) => {
+    b.addEventListener('click', () => showTab(b.dataset.tab));
+    // arrow keys move between tabs (WAI-ARIA tabs pattern)
+    b.addEventListener('keydown', e => {
+        const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+        if (!d) return;
+        e.preventDefault();
+        const n = all[(i + d + all.length) % all.length]; n.focus(); showTab(n.dataset.tab);
+    });
+});
 // Summary cards jump to the tab that lists what they count.
 document.querySelectorAll('a.stat-link').forEach(a => a.addEventListener('click', e => { e.preventDefault(); showTab(a.dataset.goto); document.getElementById(a.dataset.goto).scrollIntoView(); }));
 if (sessionStorage.getItem(TAB_KEY) && document.getElementById(sessionStorage.getItem(TAB_KEY))) {
@@ -659,18 +735,78 @@ function delNamed(prefix, btn, what) {
 }
 
 // ---- rules ----
-function chainChanged() {
+// Fields that only apply to some rules are shown only then: the out interface for forward rules, the port for
+// TCP/UDP, the gateway (policy routing) for accept rules that are not to the firewall itself.
+function chainChanged() { ruleFieldsChanged(); }
+function ruleFieldsChanged() {
     const f = document.getElementById('rule-form');
-    document.getElementById('rule-iface-out').style.display = f.elements['chain'].value === 'forward' ? '' : 'none';
+    const chain = f.elements['chain'].value, proto = f.elements['protocol'].value, act = f.elements['action'].value;
+    document.getElementById('rule-iface-out').style.display = chain === 'forward' ? '' : 'none';
+    document.getElementById('rule-port').style.display = (proto === 'tcp' || proto === 'udp') ? '' : 'none';
+    document.getElementById('rule-gateway').style.display = (act === 'accept' && chain !== 'input') ? '' : 'none';
 }
 chainChanged();
+const ruleDialog = document.getElementById('rule-dialog');
+function ruleMsg(text) { const m = document.getElementById('rule-msg'); m.textContent = text || ''; m.className = 'msg' + (text ? ' error' : ''); }
+function clearInvalid(f) {
+    f.querySelectorAll('[aria-invalid]').forEach(i => i.removeAttribute('aria-invalid'));
+    f.querySelectorAll('.ui-error').forEach(h => { h.className = 'ui-hint'; if (h.dataset.orig) h.textContent = h.dataset.orig; });
+}
+let ruleOpener = null;
+function openRule() {
+    ruleOpener = document.activeElement;
+    resetForm('rule-form', 'Add rule');
+    document.getElementById('rule-form-title').textContent = 'Add rule';
+    document.getElementById('rule-before').style.display = '';
+    clearInvalid(document.getElementById('rule-form')); ruleMsg('');
+    ruleDialog.showModal();
+    document.getElementById('r-name').focus();
+}
+function closeRule() { ruleDialog.close(); }
+ruleDialog.addEventListener('close', () => { if (ruleOpener && ruleOpener.focus) ruleOpener.focus(); });
+// selection + bulk actions (system rules cannot be selected)
+function selected() { return [...document.querySelectorAll('.rule-sel:checked')].map(c => parseInt(c.value, 10)); }
+function selChanged() {
+    const n = selected().length, all = document.querySelectorAll('.rule-sel').length;
+    document.querySelectorAll('[data-bulk]').forEach(b => b.disabled = n === 0);
+    document.getElementById('rules-sel-count').textContent = n ? n + ' selected' : '';
+    const a = document.getElementById('rules-all');
+    a.checked = n > 0 && n === all; a.indeterminate = n > 0 && n < all;
+}
+function selAll(box) {
+    document.querySelectorAll('#rules-table tbody tr:not([hidden]) .rule-sel').forEach(c => c.checked = box.checked);
+    selChanged();
+}
+async function bulkRules(op) {
+    const ids = selected();
+    if (!ids.length) return;
+    if (op === 'delete' && !confirm('Delete ' + ids.length + ' rule(s)?')) return;
+    try {
+        for (const id of ids) {
+            if (op === 'delete') { await api('DELETE', '/firewall/rules/' + id); continue; }
+            const r = await api('GET', '/firewall/rules/' + id);
+            await api('PUT', '/firewall/rules/' + id, ruleBody(r, op === 'enable'));
+        }
+        sessionStorage.setItem('patronus-fw-flash', ids.length + ' rule(s) ' + (op === 'delete' ? 'deleted' : op + 'd') + ' and applied.');
+        location.reload();
+    } catch (e) { flash(e.message, false); }
+}
+// the PUT body of a stored rule with `enabled` changed
+function ruleBody(r, enabled) {
+    return { name: r.name, action: r.action.toLowerCase(), chain: r.chain, interface: r.interface,
+        interface_out: r.chain === 'forward' ? r.interface_out : null, ip_version: r.ip_version, protocol: r.protocol,
+        source: r.source, destination: r.destination, port: r.port, schedule: r.schedule || null,
+        description: r.description, gateway: r.gateway || null, log: r.log, enabled };
+}
 
 function moveRule(id, direction) { run(api('POST', '/firewall/rules/' + id + '/move', { direction })); }
 
 async function editRule(id) {
     try {
+        ruleOpener = document.activeElement;
         const r = await api('GET', '/firewall/rules/' + id);
         const f = document.getElementById('rule-form');
+        clearInvalid(f); ruleMsg('');
         f.elements['id'].value = r.id; f.elements['name'].value = r.name; f.elements['action'].value = r.action.toLowerCase();
         f.elements['chain'].value = r.chain; f.elements['interface'].value = r.interface; f.elements['interface_out'].value = r.interface_out;
         f.elements['ip_version'].value = r.ip_version; f.elements['protocol'].value = r.protocol; f.elements['source'].value = r.source;
@@ -678,28 +814,50 @@ async function editRule(id) {
         f.elements['gateway'].value = r.gateway || '';
         f.elements['description'].value = r.description; f.elements['log'].checked = r.log; f.elements['enabled'].checked = r.enabled;
         f.elements['before'].value = '';
-        document.getElementById('rule-form-title').textContent = 'Edit rule #' + r.id;
+        ['source', 'destination', 'port'].forEach(k => { if (f.elements[k].value === 'any') f.elements[k].value = ''; });
+        document.getElementById('rule-before').style.display = 'none';
+        document.getElementById('rule-form-title').textContent = 'Edit rule #' + r.id + ' ' + r.name;
         chainChanged();
-        showTab('tab-rules'); f.scrollIntoView();
+        showTab('tab-rules');
+        ruleDialog.showModal();
+        f.elements['name'].focus();
     } catch (e) { flash(e.message, false); }
 }
 
 function saveRule(ev) {
     ev.preventDefault();
     const f = ev.target;
+    clearInvalid(f); ruleMsg('');
+    const name = f.elements['name'];
+    if (!name.value.trim()) {
+        name.setAttribute('aria-invalid', 'true');
+        const h = document.getElementById('r-name-hint'); h.dataset.orig = h.dataset.orig || h.textContent;
+        h.className = 'ui-error'; h.textContent = 'A name is required.';
+        name.focus();
+        return false;
+    }
+    const any = k => f.elements[k].value.trim() || 'any';
+    const proto = f.elements['protocol'].value;
     const body = {
         name: f.elements['name'].value, action: f.elements['action'].value, chain: f.elements['chain'].value,
         interface: f.elements['interface'].value,
         interface_out: f.elements['chain'].value === 'forward' ? f.elements['interface_out'].value : null,
         ip_version: f.elements['ip_version'].value, protocol: f.elements['protocol'].value,
-        source: f.elements['source'].value, destination: f.elements['destination'].value, port: f.elements['port'].value,
+        source: any('source'), destination: any('destination'), port: (proto === 'tcp' || proto === 'udp') ? any('port') : 'any',
         schedule: f.elements['schedule'].value || null, description: f.elements['description'].value,
-        gateway: f.elements['gateway'].value || null,
+        gateway: document.getElementById('rule-gateway').style.display === 'none' ? null : (f.elements['gateway'].value || null),
         log: f.elements['log'].checked, enabled: f.elements['enabled'].checked,
     };
-    if (f.elements['id'].value) return run(api('PUT', '/firewall/rules/' + f.elements['id'].value, body));
-    if (f.elements['before'].value) body.before = parseInt(f.elements['before'].value, 10);
-    return run(api('POST', '/firewall/rules', body));
+    let p;
+    if (f.elements['id'].value) p = api('PUT', '/firewall/rules/' + f.elements['id'].value, body);
+    else {
+        if (f.elements['before'].value) body.before = parseInt(f.elements['before'].value, 10);
+        p = api('POST', '/firewall/rules', body);
+    }
+    // errors stay in the dialog next to the fields, so nothing typed is lost
+    p.then(() => { sessionStorage.setItem('patronus-fw-flash', 'Saved and applied.'); location.reload(); })
+     .catch(e => ruleMsg(e.message));
+    return false;
 }
 
 // ---- NAT ----
@@ -968,6 +1126,14 @@ async function loadStates(ev) {
         const f = document.getElementById('states-filter').elements;
         const qs = new URLSearchParams({ q: f['q'].value, proto: f['proto'].value, limit: '500' });
         const r = await api('GET', '/firewall/states?' + qs.toString());
+        const sum = document.getElementById('states-summary'), tbl = document.getElementById('states-table');
+        if (r.available === false) {
+            sum.className = 'ui-banner info';
+            sum.textContent = 'Connection tracking is not available on this system, so there is no state table to show (' + r.reason + ').';
+            tbl.style.display = 'none';
+            return false;
+        }
+        sum.className = 'hint'; tbl.style.display = '';
         document.getElementById('states-summary').textContent = r.matched + ' of ' + r.total + ' states match' + (r.shown < r.matched ? ' (first ' + r.shown + ' shown)' : '');
         const tb = document.querySelector('#states-table tbody'); tb.innerHTML = '';
         r.states.forEach(x => {
@@ -981,7 +1147,7 @@ async function loadStates(ev) {
             a.onclick = () => killStates({ src: x.src }, 'Kill every state from ' + x.src + '?');
             c.appendChild(a);
         });
-    } catch (e) { document.getElementById('states-summary').textContent = e.message; }
+    } catch (e) { const sum = document.getElementById('states-summary'); sum.className = 'ui-banner crit'; sum.textContent = 'The state table could not be read: ' + e.message; }
     return false;
 }
 async function killStates(p, ask) {

@@ -318,6 +318,62 @@ async function fwFeedDownload() {
     {% endif %}
 </div>
 
+<section class="ui-panel" id="display-card">
+    <div class="ui-panel-head"><h2>Display</h2></div>
+    <div class="ui-panel-body">
+    <p class="text-sm text-muted mb-2">Where usage values (CPU, memory, disk) turn amber and red, and how often the
+        dashboard re-reads its figures. Stored as <code>ui.*</code> in the configuration (export, history, rollback).</p>
+    {% if is_admin %}
+    <form id="ui-form" class="ui-form-grid" onsubmit="return submitUi(event)" novalidate>
+        <div class="ui-field"><label for="ui-warn">Warning from (%)</label>
+            <input class="ui-input" id="ui-warn" name="health_warn_pct" type="number" min="1" max="99" required value="{{ ui.health_warn_pct }}" aria-describedby="ui-warn-hint">
+            <span class="ui-hint" id="ui-warn-hint">Default {{ ui_default.health_warn_pct }}. Must be below the critical value.</span></div>
+        <div class="ui-field"><label for="ui-crit">Critical from (%)</label>
+            <input class="ui-input" id="ui-crit" name="health_crit_pct" type="number" min="2" max="100" required value="{{ ui.health_crit_pct }}" aria-describedby="ui-crit-hint">
+            <span class="ui-hint" id="ui-crit-hint">Default {{ ui_default.health_crit_pct }}.</span></div>
+        <div class="ui-field"><label for="ui-refresh">Live refresh (seconds)</label>
+            <input class="ui-input" id="ui-refresh" name="refresh_secs" type="number" min="0" max="3600" required value="{{ ui.refresh_secs }}" aria-describedby="ui-refresh-hint">
+            <span class="ui-hint" id="ui-refresh-hint">0 = off (pages are snapshots), otherwise 2-3600. Default {{ ui_default.refresh_secs }}.</span></div>
+        <div class="ui-actions"><button class="ui-btn primary" id="save-ui" type="submit">Save</button>
+            <button class="ui-btn" type="button" onclick="uiPut({reset: true})">Back to defaults</button>
+            <span id="ui-status" class="text-sm" role="status"></span></div>
+    </form>
+    <script>
+    async function uiPut(body) {
+        const st = document.getElementById('ui-status');
+        const r = await fetch('/api/system/ui', {method: 'PUT', credentials: 'same-origin',
+            headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
+        let d = {};
+        try { d = await r.json(); } catch (_) {}
+        if (!r.ok) { st.textContent = 'Not saved: ' + (d.error || r.status); st.style.color = 'var(--c-crit)'; return; }
+        for (const [k, v] of Object.entries(d)) { const i = document.querySelector('#ui-form [name="' + k + '"]'); if (i) i.value = v; }
+        st.textContent = 'Saved.'; st.style.color = 'var(--c-ok)';
+    }
+    function submitUi(ev) {
+        ev.preventDefault();
+        const f = ev.target, warn = f.health_warn_pct, crit = f.health_crit_pct, ref = f.refresh_secs;
+        const w = +warn.value, c = +crit.value, s = +ref.value;
+        const errs = [[warn, !(w >= 1 && w < c) && 'Must be 1 or more and below the critical value.'],
+                      [crit, !(c > w && c <= 100) && 'Must be above the warning value and at most 100.'],
+                      [ref, !(s === 0 || (s >= 2 && s <= 3600)) && '0, or 2 to 3600.']];
+        let ok = true;
+        for (const [el, msg] of errs) {
+            const hint = document.getElementById(el.getAttribute('aria-describedby'));
+            hint.className = msg ? 'ui-error' : 'ui-hint';
+            if (msg) { hint.dataset.orig = hint.dataset.orig || hint.textContent; hint.textContent = msg; el.setAttribute('aria-invalid', 'true'); ok = false; }
+            else { if (hint.dataset.orig) hint.textContent = hint.dataset.orig; el.removeAttribute('aria-invalid'); }
+        }
+        if (ok) uiPut({health_warn_pct: w, health_crit_pct: c, refresh_secs: s});
+        return false;
+    }
+    </script>
+    {% else %}
+    <dl class="ui-kv"><dt>Warning from</dt><dd>{{ ui.health_warn_pct }} %</dd><dt>Critical from</dt><dd>{{ ui.health_crit_pct }} %</dd>
+        <dt>Live refresh</dt><dd>{% if ui.refresh_secs == 0 %}off{% else %}every {{ ui.refresh_secs }} s{% endif %}</dd></dl>
+    {% endif %}
+    </div>
+</section>
+
 <div class="card" id="ssh-card">
     <div class="card-header"><h2 class="card-title">SSH server</h2></div>
     <p class="text-sm text-muted">Managed OpenSSH drop-in (/etc/ssh/sshd_config.d/50-patronus.conf), checked with

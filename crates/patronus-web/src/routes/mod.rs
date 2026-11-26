@@ -183,10 +183,26 @@ async fn brand_asset(
 }
 
 const UI_KIT: &[(&str, &str, &str)] = &[
-    ("tokens.css", "text/css; charset=utf-8", include_str!("../../ui-kit/tokens.css")),
-    ("components.css", "text/css; charset=utf-8", include_str!("../../ui-kit/components.css")),
-    ("patronus.css", "text/css; charset=utf-8", include_str!("../../theme/patronus.css")),
-    ("ui.js", "text/javascript; charset=utf-8", include_str!("../../ui-kit/ui.js")),
+    (
+        "tokens.css",
+        "text/css; charset=utf-8",
+        include_str!("../../ui-kit/tokens.css"),
+    ),
+    (
+        "components.css",
+        "text/css; charset=utf-8",
+        include_str!("../../ui-kit/components.css"),
+    ),
+    (
+        "patronus.css",
+        "text/css; charset=utf-8",
+        include_str!("../../theme/patronus.css"),
+    ),
+    (
+        "ui.js",
+        "text/javascript; charset=utf-8",
+        include_str!("../../ui-kit/ui.js"),
+    ),
 ];
 
 /// One ui-kit asset. Browsers revalidate (`no-cache`) with the build's ETag, so a firmware or package
@@ -200,8 +216,15 @@ async fn ui_kit_asset(
     let Some((_, ctype, body)) = UI_KIT.iter().find(|(n, _, _)| *n == file) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let etag = format!("\"{}-{:x}\"", env!("CARGO_PKG_VERSION"), fnv1a(body.as_bytes()));
-    let cache = [(header::CACHE_CONTROL, "no-cache".to_string()), (header::ETAG, etag.clone())];
+    let etag = format!(
+        "\"{}-{:x}\"",
+        env!("CARGO_PKG_VERSION"),
+        fnv1a(body.as_bytes())
+    );
+    let cache = [
+        (header::CACHE_CONTROL, "no-cache".to_string()),
+        (header::ETAG, etag.clone()),
+    ];
     if headers
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
@@ -213,8 +236,9 @@ async fn ui_kit_asset(
 }
 
 fn fnv1a(b: &[u8]) -> u64 {
-    b.iter()
-        .fold(0xcbf2_9ce4_8422_2325, |h, &x| (h ^ x as u64).wrapping_mul(0x100_0000_01b3))
+    b.iter().fold(0xcbf2_9ce4_8422_2325, |h, &x| {
+        (h ^ x as u64).wrapping_mul(0x100_0000_01b3)
+    })
 }
 
 /// Paths reachable without a session.
@@ -471,6 +495,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "plugins",
         "segmentation",
         "wifi-ap",
+        "wifi-client",
         "guest"
     ];
     let role = api::wifi::role();
@@ -631,6 +656,7 @@ pub fn absent_features(
         ("dns", "DNS resolver"),
         ("segmentation", "Device segmentation"),
         ("guest", "Guest network"),
+        ("wifi-client", "Wi-Fi uplinks (a Wi-Fi network as WAN)"),
     ];
     let ap = role == api::setup::DeviceRole::Ap;
     let router_job = AP_ROUTER_JOBS;
