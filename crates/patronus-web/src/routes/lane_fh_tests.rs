@@ -1774,8 +1774,9 @@ async fn ha_is_managed_through_the_api_and_undone_when_the_applier_refuses() {
     );
     ha.fail.store(false, Ordering::SeqCst);
 
-    // maintenance mode
-    let (s, _) = t
+    // maintenance mode is a confirmed hand-off: with nothing to hand over to it is refused
+    // (with the reason) and changes nothing; `force` goes ahead
+    let (s, b) = t
         .call(
             &c,
             Method::POST,
@@ -1783,7 +1784,20 @@ async fn ha_is_managed_through_the_api_and_undone_when_the_applier_refuses() {
             Some(json!({"enabled": true})),
         )
         .await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
+    assert!(b["error"].as_str().unwrap().contains("virtual IP"), "{b}");
+    let (_, b) = t.call(&c, Method::GET, "/api/ha", None).await;
+    assert_eq!(b["settings"]["maintenance"], false);
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/ha/maintenance",
+            Some(json!({"enabled": true, "force": true})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["confirmed"], false);
     let (_, b) = t.call(&c, Method::GET, "/api/ha", None).await;
     assert_eq!(b["settings"]["maintenance"], true);
 
