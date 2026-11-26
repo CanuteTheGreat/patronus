@@ -319,6 +319,19 @@ def first_run():
     login()
 
 
+def setup_wizard_router():
+    # router role: the setup wizard is offered and says what this build can set up; a step the image was built
+    # without (PPPoE) is refused with a plain reason before anything changes
+    c, t, _ = web("GET", "/api/setup/status"); need(c == 200, f"setup status: {c} {t[:150]}")
+    s = json.loads(t); f = s.get("features", {})
+    need(s.get("role") == "router" and s.get("wizard") is True, f"role/wizard: {s.get('role')} {s.get('wizard')}")
+    need(f.get("dhcp") is True and f.get("pppoe") is False and f.get("ipv6") is True, f"features: {f}")
+    c, t, _ = web("POST", "/api/setup/apply", {"wan_interface": "eth0", "lan_interface": "eth1", "lan_ipv4": "192.168.9.1/24",
+                                               "wan_mode": "pppoe", "pppoe_username": "u", "pppoe_password": "p"})
+    need(c == 400 and "PPPoE" in t, f"PPPoE on a build without it: {c} {t[:150]}")
+    c, t, _ = web("GET", "/api/setup/status"); need(c == 200 and json.loads(t).get("completed") is False, f"refused apply changed setup: {t[:150]}")
+
+
 def login():
     global COOKIE
     c, t, h = web("POST", "/api/auth/login", {"username": USER, "password": PW}, auth=False); need(c == 200, f"login: {c} {t[:150]}")
@@ -429,6 +442,7 @@ def main():
     check(f"boot 1: init system {INIT}: PID 1, every service up, 0 crashed/failed", lambda: init_checks("boot1"))
     check("boot 1: ETPhoneHome router client running (baked into every Slate image)", etph)
     check("boot 1: router role: first-run claim (setup code; weak, mismatch, second claim refused) and login", first_run)
+    check("boot 1: router role: setup wizard offered with this build's features; PPPoE (not in this build) refused, nothing changed", setup_wizard_router)
     check("boot 1: web UI on 443 and the plain-http redirect on 80, both listening", web_ports)
     check("boot 1: boot guard armed, `patronus-guard ok` confirms the boot", boot_guard)
     check("boot 1: firewall rule added through the web API is in the kernel's nft chain after apply", fw_rule)
