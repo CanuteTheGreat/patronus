@@ -1,0 +1,50 @@
+/* Patronus theme layer for the shared ui-kit (loaded after tokens.css + components.css).
+   Only brand tokens are overridden here (ui-kit README "Theming contract"): the phoenix blue accent and the
+   flame brand colour of the official logo. Light/dark follow the device; <html data-theme> forces one.
+   The second block maps the names the pages used before the kit (--bg, --card-bg, --primary, ...) onto kit
+   tokens, so a page that is not migrated yet still renders in the kit palette. New markup uses --c-* only.
+   ci/check-web-theme.py resolves these and checks every text/background pair the pages use (>= 4.5:1). */
+:root {
+    --c-accent: #1a5fa6; --c-accent-solid: #1a5fa6; --c-accent-hover: #144d88; --c-accent-subtle: #e4eef9;
+    --c-focus: #1a5fa6; --c-brand: #b24a17;
+    /* a font list, not the bare generic: `monospace` alone makes browsers drop to their 13 px monospace size */
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --c-accent: #7cb6f6; --c-accent-solid: #1a63b0; --c-accent-hover: #1f6fc2; --c-accent-subtle: #12233a;
+        --c-focus: #7cb6f6; --c-brand: #f2924e;
+    }
+}
+:root[data-theme="dark"] {
+    --c-accent: #7cb6f6; --c-accent-solid: #1a63b0; --c-accent-hover: #1f6fc2; --c-accent-subtle: #12233a;
+    --c-focus: #7cb6f6; --c-brand: #f2924e;
+}
+
+/* names used by pages not yet migrated -> kit tokens */
+:root {
+    --bg: var(--c-canvas); --card-bg: var(--c-surface); --text: var(--c-ink); --text-muted: var(--c-muted);
+    --border: var(--c-border); --shadow: rgba(16,24,32,.12);
+    --primary: var(--c-accent); --primary-dark: var(--c-accent-hover);
+    --primary-solid: var(--c-accent-solid); --primary-solid-hover: var(--c-accent-hover);
+    --accent: var(--c-accent);
+    --success: var(--c-ok); --warning: var(--c-warn); --danger: var(--c-crit); --info: var(--c-info);
+    --line: var(--c-border); --line-strong: var(--c-border-strong);
+    --surface-2: var(--c-sunken); --surface-3: var(--c-border);
+    --ink: var(--c-ink); --ink-2: var(--c-ink); --muted: var(--c-muted);
+    --ok-bg: var(--c-ok-bg); --ok-fg: var(--c-ok);
+    --bad-bg: var(--c-crit-bg); --bad-fg: var(--c-crit);
+    --warn-bg: var(--c-warn-bg); --warn-fg: var(--c-warn);
+    --info-bg: var(--c-info-bg); --info-fg: var(--c-info);
+    --note-bg: var(--c-info-bg); --note-bd: var(--c-border-strong); --note-fg: var(--c-info);
+    --wnote-bg: var(--c-warn-bg); --wnote-bd: var(--c-border-strong); --wnote-fg: var(--c-warn);
+    --quar-bg: var(--c-warn-bg); --quar-fg: var(--c-warn);
+    --row-bad: var(--c-crit-bg);
+    --b-primary: var(--c-accent-solid); --b-secondary: var(--c-neutral-solid); --b-success: var(--c-ok-solid);
+    --b-info: var(--c-info-solid); --b-danger: var(--c-crit-solid);
+    --b-blue: var(--c-accent-solid); --b-blue-hover: var(--c-accent-hover);
+    --login-bg: var(--c-canvas);
+    --chart-down: var(--c-crit-bg); --chart-warn: var(--c-warn-bg); --chart-axis: var(--c-muted-soft);
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --shadow: rgba(0,0,0,.4); } }
+:root[data-theme="dark"] { --shadow: rgba(0,0,0,.4); }
