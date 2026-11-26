@@ -9,7 +9,8 @@
     .diag-out:empty { display: none; }
     #routes-out, #sockets-out { white-space: pre; }
     .diag-status { min-height: 1.4em; }
-    #neighbors-card .ui-toolbar { margin: var(--s-2) 0; }
+    #neighbors-card .ui-toolbar { margin: var(--s-2) 0 0; }
+    .diag-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); margin: var(--s-2) 0 var(--s-3); }
 </style>
 {% endblock %}
 
@@ -27,8 +28,8 @@
     <div class="card-header"><h2 class="card-title">Internet speed test</h2></div>
     <p class="text-sm">Latency, download and upload measured from the router to a test server
         (about 25 MB down and 10 MB up by default; on a metered connection, keep the schedule off).</p>
-    <button class="ui-btn primary sm" id="st-run" type="button" onclick="runSpeedtest()">Run speed test</button>
-    <span class="text-sm diag-status" id="st-status" role="status" aria-live="polite"></span>
+    <p class="diag-actions"><button class="ui-btn primary sm" id="st-run" type="button" onclick="runSpeedtest()">Run speed test</button>
+    <span class="text-sm diag-status" id="st-status" role="status" aria-live="polite"></span></p>
     <div class="ui-grid-wrap"><table class="lan ui-grid" id="st-table"><thead><tr><th>When</th><th>Download</th><th>Upload</th><th>Latency</th><th>Server</th><th>Result</th></tr></thead><tbody></tbody></table></div>
     <details><summary class="text-sm">Settings</summary>
     <form class="lan-form" id="st-form" onsubmit="return saveSpeedtest(event)">
@@ -80,7 +81,7 @@
         <button class="ui-btn primary sm" type="submit">Look up</button>
     </form>
     <p class="text-sm diag-status" id="dns-status" role="status" aria-live="polite"></p>
-    <div class="ui-grid-wrap"><table class="ui-grid" id="dns-table" style="display:none"><thead><tr><th>Name</th><th>Type</th><th class="num">TTL</th><th>Data</th></tr></thead><tbody></tbody></table></div>
+    <div class="ui-grid-wrap" id="dns-table-wrap" hidden><table class="ui-grid" id="dns-table"><thead><tr><th>Name</th><th>Type</th><th class="num">TTL</th><th>Data</th></tr></thead><tbody></tbody></table></div>
 </div>
 
 <div class="card" id="neighbors-card">
@@ -136,7 +137,7 @@
                     for (const k of ['name', 'type', 'ttl', 'data']) { const c = td(String(a[k])); if (k === 'ttl') c.className = 'num'; tr.appendChild(c); }
                     tb.appendChild(tr);
                 }
-                t.style.display = (j.answers.length + j.authority.length) ? '' : 'none';
+                el('dns-table-wrap').hidden = !(j.answers.length + j.authority.length);
             } else {
                 st.textContent = j.command + (j.received !== undefined ? ' - ' + j.received + ' of ' + j.transmitted + ' replies' : '') + (j.timed_out ? ' (time limit reached)' : '');
                 el(tool + '-out').textContent = j.output.join('\n');

@@ -59,7 +59,6 @@
             <thead><tr><th>Host (source)</th><th>Traffic</th><th>Packets</th><th>Flows</th></tr></thead>
             <tbody></tbody>
         </table></div>
-        <p class="empty" id="ins-hosts-empty" style="display:none">No tracked flows.</p>
     </div>
 
     <div class="card">
@@ -233,12 +232,23 @@
         for (const k in (attrs || {})) e.setAttribute(k, attrs[k]);
         return e;
     }
-    function fill(id, rows) {
-        const tb = document.querySelector('#' + id + ' tbody'); tb.textContent = '';
+    // amounts, counts and rates line up on the right (kit .num); an empty list says so inside the table
+    const NUMERIC = /^-?[\d.,]+(\s?([kKMGT]i?)?B(\/s)?|\s?%|\s?[kMG]?bit\/s)?$/;
+    function fill(id, rows, empty) {
+        const t = document.getElementById(id), tb = t.querySelector('tbody'); tb.textContent = '';
         for (const r of rows) {
             const tr = document.createElement('tr');
-            for (const c of r) { const td = document.createElement('td'); if (c instanceof Node) td.appendChild(c); else td.textContent = c; tr.appendChild(td); }
+            for (const c of r) {
+                const td = document.createElement('td');
+                if (c instanceof Node) td.appendChild(c); else { td.textContent = c; if (typeof c === 'number' || NUMERIC.test(String(c))) td.className = 'num'; }
+                tr.appendChild(td);
+            }
             tb.appendChild(tr);
+        }
+        if (!rows.length) {
+            const tr = document.createElement('tr'), td = document.createElement('td');
+            td.colSpan = t.querySelectorAll('thead th').length || 1; td.className = 'empty'; td.textContent = empty || 'Nothing yet.';
+            tr.appendChild(td); tb.appendChild(tr);
         }
     }
     async function api(path, method, body) {
@@ -268,8 +278,9 @@
             const r = await fetch('/api/insights', {credentials: 'same-origin'});
             if (!r.ok) throw new Error('HTTP ' + r.status);
             d = await r.json();
-        } catch (e) { $('ins-summary').textContent = 'Could not load insights: ' + e; return; }
-        $('ins-summary').textContent = d.error ? d.error :
+        } catch (e) { $('ins-summary').className = 'ui-banner crit'; $('ins-summary').textContent = 'Could not load insights: ' + e; return; }
+        $('ins-summary').className = d.error ? 'ui-banner warn' : 'text-sm';
+        $('ins-summary').textContent = d.error ? 'Live flows are not available: ' + d.error :
             d.flows + ' tracked flow(s)' + (d.accounting || d.flows === 0 ? '' :
             '; byte counters are off (connection-tracking accounting is not enabled), so traffic amounts show 0');
         const dt = prev ? d.time - prev.time : 0, old = {};
@@ -278,10 +289,9 @@
             old[i.name] ? rate(i.rx_bytes - old[i.name].rx_bytes, dt) : '-',
             old[i.name] ? rate(i.tx_bytes - old[i.name].tx_bytes, dt) : '-',
             human(i.rx_bytes), human(i.tx_bytes)]));
-        fill('ins-hosts', d.top_hosts.map(h => [h.host, human(h.bytes), h.packets, h.flows]));
-        $('ins-hosts-empty').style.display = d.top_hosts.length ? 'none' : '';
-        fill('ins-services', d.top_services.map(s => [s.proto, s.port === null ? '-' : s.port, s.name, human(s.bytes), s.flows]));
-        fill('ins-protocols', d.protocols.map(p => [p.proto, human(p.bytes), p.flows]));
+        fill('ins-hosts', d.top_hosts.map(h => [h.host, human(h.bytes), h.packets, h.flows]), 'No tracked flows.');
+        fill('ins-services', d.top_services.map(s => [s.proto, s.port === null ? '-' : s.port, s.name, human(s.bytes), s.flows]), 'No tracked flows.');
+        fill('ins-protocols', d.protocols.map(p => [p.proto, human(p.bytes), p.flows]), 'No tracked flows.');
         prev = d;
     }
 
