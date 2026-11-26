@@ -150,9 +150,12 @@ interface xfrm1
  ip ospf area 0.0.0.0
  ip ospf network point-to-point
 !
+interface blan
+ ip ospf area 0.0.0.0
+ ip ospf passive
+!
 router ospf
  ospf router-id 10.255.0.2
- redistribute connected
 !
 line vty
 EOF
@@ -260,11 +263,14 @@ PY
 nl_ok "the page and API show the SA with byte counters, the kernel policy (if_id 1) and the xfrm1 interface with its traffic"
 
 echo "=== 4. OSPF over the tunnel"
+# only the LANs and the tunnel network go into OSPF (passive LAN interfaces, no 'redistribute connected'): announcing the
+# WAN / underlay prefix over the tunnel would route the IKE and ESP packets into the tunnel itself
 api_ok POST /svc/frr/ospf_interfaces '{"iface":"xfrm1","area":"0.0.0.0"}'
 api_ok POST /svc/frr/ospf_interfaces '{"iface":"@lan","area":"0.0.0.0","passive":true}'
-api_ok PUT /svc/frr '{"ospf_enabled":true,"router_id":"10.255.0.1","ospf_redistribute_connected":true}'
+api_ok PUT /svc/frr '{"ospf_enabled":true,"router_id":"10.255.0.1"}'
 grep -qF 'interface xfrm1' /etc/frr/frr.conf && grep -qF 'ip ospf network point-to-point' /etc/frr/frr.conf || { cat /etc/frr/frr.conf; nl_fail "frr.conf: OSPF on xfrm1 is not point-to-point"; }
-nl_assert_nft_has 'iifname "xfrm1" meta l4proto 89 accept'
+NFT=$(R nft list ruleset)
+grep -Eq 'iifname "xfrm1" meta l4proto (89|ospf) accept' <<<"$NFT" || { echo "$NFT" | head -80; nl_fail "the firewall does not accept OSPF on xfrm1"; }
 b_ospf
 nl_wait 90 ospf_full || { R vtysh -c 'show ip ospf interface' || true; B vtysh -N b -c 'show ip ospf interface' || true; tail -20 /var/log/frr/b.log || true; nl_fail "no Full OSPF adjacency over the XFRM interface"; }
 nl_ok "OSPF adjacency Full over xfrm1 (point-to-point)"
@@ -306,6 +312,7 @@ C ping -c3 -W3 10.2.0.1 >/dev/null 2>&1 || nl_fail "LAN client -> 10.2.0.1 after
 nl_ok "after a reboot: xfrm1, the SA, OSPF and LAN-to-LAN traffic all come back"
 
 echo "=== 7. deleting the tunnel removes everything"
+api_ok PUT /svc/frr '{"ospf_enabled":false}'
 api_ok DELETE /vpn/ipsec/connections/$TID
 R ip link show xfrm1 >/dev/null 2>&1 && nl_fail "xfrm1 is still there"
 grep -q 'patronus-siteb' /etc/swanctl/conf.d/patronus.conf && nl_fail "the swanctl entry is still there"

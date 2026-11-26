@@ -43,6 +43,13 @@ strongSwan + FRR), LAN-to-LAN traffic over `xfrm1`, OSPF adjacency, tunnel down 
    domain and FRR would otherwise treat it as NBMA and never send hellos. Protocol 89 is accepted on
    the OSPF interfaces by `svc_rules.rs`.
 
+## Routing over the tunnel: keep the underlay out of it
+
+Do not announce the WAN (underlay) prefix over the tunnel: a route to the peer's gateway learned
+through the tunnel sends the IKE and ESP packets into the tunnel itself. On the OSPF page list the
+tunnel interface and the LAN interfaces (passive) and leave "announce connected networks" off, unless
+the connected networks are only LANs.
+
 ## Status page (`/vpn`, `/api/vpn/ipsec/...`)
 
 - IPsec security associations: state, subnets, gateway and the **received / sent bytes** of the CHILD SAs.

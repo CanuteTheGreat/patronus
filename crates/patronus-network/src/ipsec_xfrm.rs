@@ -243,13 +243,14 @@ pub fn parse_policies(text: &str) -> Vec<XfrmPolicy> {
                 ..Default::default()
             });
         } else if let Some(p) = cur.as_mut() {
+            // `if_id 0x1` sits on the `dir` line or on a line of its own, by iproute2 version
+            if let Some(i) = get("if_id").and_then(|s| num(&Value::String(s))) {
+                p.if_id = Some(i as u32);
+            }
             if w.first() == Some(&"dir") {
                 let d = get("dir").unwrap_or_default();
                 sock = d == "socket";
                 p.dir = d;
-                p.if_id = get("if_id")
-                    .and_then(|s| num(&Value::String(s)))
-                    .map(|v| v as u32);
             } else if w.first() == Some(&"tmpl") {
                 p.peer_src = get("src").unwrap_or_default();
                 p.peer_dst = get("dst").unwrap_or_default();
@@ -384,5 +385,9 @@ mod tests {
             ("esp", "tunnel", Some(1))
         );
         assert_eq!(p[1].if_id, Some(7));
+        // newer iproute2 prints the interface id on a line of its own, after the template
+        let t2 = "src 0.0.0.0/0 dst 0.0.0.0/0 \n\tdir fwd priority 399999 ptype main \n\ttmpl src 198.18.0.2 dst 203.0.113.2\n\t\tproto esp spi 0x1 reqid 1 mode tunnel\n\tif_id 0x1\n";
+        let p2 = parse_policies(t2);
+        assert_eq!((p2.len(), p2[0].if_id, p2[0].dir.as_str()), (1, Some(1), "fwd"));
     }
 }
