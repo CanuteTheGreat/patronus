@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+
+{% block title %}Access log - Patronus{% endblock %}
+
+{% block content %}
+<style>
+    .al-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); margin: 12px 0 16px; }
+    .al-tab { padding: 8px 14px; border: none; background: none; cursor: pointer; color: var(--text-muted); border-bottom: 2px solid transparent; font: inherit; }
+    .al-tab.active { color: var(--text); border-bottom-color: var(--primary); font-weight: 600; }
+    .al-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 12px; }
+    .al-bar label { display: flex; flex-direction: column; font-size: 12px; color: var(--text-muted); gap: 2px; }
+    .al-bar input, .al-bar select { padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--card-bg); color: var(--text); min-width: 0; max-width: 100%; }
+    .al-scroll { overflow-x: auto; }
+    .al-grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .al-grid th, .al-grid td { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    .al-grid th { color: var(--text-muted); font-weight: 600; }
+    .al-grid tbody tr { cursor: pointer; }
+    .al-grid tbody tr:hover { background: var(--surface-2); }
+    .al-s4 { color: var(--warn-fg); } .al-s5 { color: var(--bad-fg); font-weight: 600; }
+    .al-dlg { border: 1px solid var(--line-strong); border-radius: 8px; background: var(--card-bg); color: var(--text); max-width: min(720px, 94vw); width: 100%; }
+    .al-dlg::backdrop { background: rgba(0,0,0,0.5); }
+    .al-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 13px; }
+    .al-dl dt { color: var(--text-muted); } .al-dl dd { margin: 0; word-break: break-all; }
+    .al-chart { width: 100%; height: 160px; }
+    .al-chart rect.r { fill: var(--primary-solid); } .al-chart rect.e { fill: var(--danger); }
+    .al-chart text { font-size: 10px; fill: var(--muted); }
+    .al-sum { display: flex; flex-wrap: wrap; gap: 16px; margin: 8px 0; }
+    .al-link { background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
+    .al-pane[hidden] { display: none; }
+    .al-live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--success); margin-right: 4px; }
+</style>
+
+<div class="page-header">
+    <h1 class="page-title">Access log</h1>
+    <p class="page-subtitle">Every request the web interface and API answered (who, from where, which part
+        of the interface, the answer and how long it took), and the configuration changes made through them.
+        Addresses and ids inside paths are never stored.</p>
+</div>
+
+<div class="al-tabs" role="tablist">
+    <button class="al-tab active" id="tab-access" role="tab" aria-selected="true" aria-controls="pane-access" type="button">Requests</button>
+    <button class="al-tab" id="tab-audit" role="tab" aria-selected="false" aria-controls="pane-audit" type="button">Configuration changes</button>
+</div>
+
+<div class="al-pane" id="pane-access" role="tabpanel">
+    <form class="al-bar" id="al-form" onsubmit="return false">
+        <label>Mode
+            <select id="f-mode"><option value="span">Timespan</option><option value="live">Live</option></select></label>
+        <label>Since <select id="f-since">
+            <option value="15m">15 minutes</option><option value="1h" selected>1 hour</option>
+            <option value="24h">24 hours</option><option value="7d">7 days</option><option value="">All</option></select></label>
+        <label>User <input id="f-user" name="user" autocomplete="off"></label>
+        <label>Client <input id="f-client" name="client" autocomplete="off"></label>
+        <label>Method <select id="f-method"><option value="">any</option>
+            <option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select></label>
+        <label>Path group <input id="f-path" name="path" autocomplete="off"></label>
+        <label>Status <select id="f-status"><option value="">any</option>
+            <option value="2xx">2xx</option><option value="3xx">3xx</option><option value="4xx">4xx</option><option value="5xx">5xx</option></select></label>
+        <label>Search <input id="f-q" name="q" autocomplete="off"></label>
+        <button class="btn btn-secondary btn-sm" type="button" id="btn-apply">Apply</button>
+        <button class="btn btn-secondary btn-sm" type="button" id="btn-reset">Reset</button>
+        <button class="btn btn-secondary btn-sm" type="button" id="btn-stats">Statistics</button>
+        <a class="btn btn-secondary btn-sm" id="btn-csv" href="/api/system/access-log/csv">Download CSV</a>
+    </form>
+    <p class="text-sm text-muted" id="al-count" role="status" aria-live="polite"></p>
+    <div class="al-scroll"><table class="al-grid" id="al-grid">
+        <thead><tr><th>Time</th><th>Client</th><th>User</th><th>Method</th><th>Path group</th><th>Status</th><th>ms</th><th>Bytes</th></tr></thead>
+        <tbody></tbody></table></div>
+    <p><button class="btn btn-secondary btn-sm" id="btn-more" type="button" hidden>Older</button></p>
+</div>
+
+<div class="al-pane" id="pane-audit" role="tabpanel" hidden>
+    <form class="al-bar" onsubmit="return false">
+        <label>Since <select id="a-since">
+            <option value="1h">1 hour</option><option value="24h">24 hours</option>
+            <option value="7d" selected>7 days</option><option value="30d">30 days</option><option value="">All</option></select></label>
+        <label>User <input id="a-user" autocomplete="off"></label>
+        <label>Action <input id="a-action" autocomplete="off"></label>
+        <label>Entity <input id="a-entity" autocomplete="off"></label>
+        <label>Search <input id="a-q" autocomplete="off"></label>
+        <button class="btn btn-secondary btn-sm" type="button" id="a-apply">Apply</button>
+        <a class="btn btn-secondary btn-sm" id="a-csv" href="/api/system/audit-log/csv">Download CSV</a>
+    </form>
+    <p class="text-sm text-muted" id="a-count" role="status" aria-live="polite"></p>
+    <div class="al-scroll"><table class="al-grid" id="a-grid">
+        <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Entity</th><th>Id</th><th>Details</th></tr></thead>
+        <tbody></tbody></table></div>
+</div>
+
+<dialog class="al-dlg" id="dlg-row" aria-labelledby="dlg-row-t">
+    <h2 id="dlg-row-t" class="card-title">Request</h2>
+    <dl class="al-dl" id="dlg-row-dl"></dl>
+    <form method="dialog"><button class="btn btn-secondary btn-sm">Close</button></form>
+</dialog>
+
+<dialog class="al-dlg" id="dlg-stats" aria-labelledby="dlg-stats-t">
+    <h2 id="dlg-stats-t" class="card-title">Statistics</h2>
+    <div class="al-sum" id="st-sum"></div>
+    <svg class="al-chart" id="st-chart" role="img" aria-label="Requests and errors over time" preserveAspectRatio="none"></svg>
+    <div class="al-tabs" role="tablist" id="st-tabs">
+        <button class="al-tab active" type="button" data-k="client" role="tab">Client</button>
+        <button class="al-tab" type="button" data-k="principal" role="tab">User</button>
+        <button class="al-tab" type="button" data-k="path_group" role="tab">Path group</button>
+        <button class="al-tab" type="button" data-k="status" role="tab">Status</button>
+    </div>
+    <table class="al-grid" id="st-top"><thead><tr><th>Value</th><th>Requests</th></tr></thead><tbody></tbody></table>
+    <form method="dialog"><button class="btn btn-secondary btn-sm">Close</button></form>
+</dialog>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+    const $ = (id) => document.getElementById(id);
+    const FIELDS = {user: 'f-user', client: 'f-client', method: 'f-method', path: 'f-path', status: 'f-status', q: 'f-q', since: 'f-since'};
+    let liveTimer = null, lastId = 0, oldest = null, rows = [];
+
+    function params(extra) {
+        const p = new URLSearchParams();
+        for (const [k, id] of Object.entries(FIELDS)) { const v = $(id).value.trim(); if (v) p.set(k, v); }
+        for (const [k, v] of Object.entries(extra || {})) p.set(k, v);
+        return p;
+    }
+    async function api(path) {
+        const r = await fetch('/api' + path, {credentials: 'same-origin'});
+        let j = {}; try { j = await r.json(); } catch (_) {}
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        return j;
+    }
+    function td(tr, text, cls) { const c = document.createElement('td'); c.textContent = text; if (cls) c.className = cls; tr.appendChild(c); return c; }
+    function who(r) {
+        if (r.principal_kind === 'user') return r.principal_name || '';
+        if (r.principal_kind === 'api_key') return 'key:' + (r.principal_name || r.api_key_id);
+        return r.attempted_user ? '? ' + r.attempted_user : 'anonymous';
+    }
+    function scls(s) { return s >= 500 ? 'al-s5' : s >= 400 ? 'al-s4' : ''; }
+    function addRow(tb, r, prepend) {
+        const tr = document.createElement('tr');
+        tr.tabIndex = 0;
+        td(tr, new Date(r.timestamp_ms).toLocaleString());
+        td(tr, r.client); td(tr, who(r)); td(tr, r.method); td(tr, r.path_group);
+        td(tr, String(r.status), scls(r.status)); td(tr, String(r.duration_ms)); td(tr, r.bytes == null ? '' : String(r.bytes));
+        const open = () => showRow(r);
+        tr.addEventListener('click', open);
+        tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
+        if (prepend && tb.firstChild) tb.insertBefore(tr, tb.firstChild); else tb.appendChild(tr);
+    }
+    function showRow(r) {
+        const dl = $('dlg-row-dl'); dl.textContent = '';
+        const items = [['Time', new Date(r.timestamp_ms).toLocaleString()], ['Client', r.client], ['Principal', who(r)],
+            ['Kind', r.principal_kind], ['Method', r.method], ['Path group', r.path_group], ['Status', String(r.status)],
+            ['Duration', r.duration_ms + ' ms'], ['Bytes', r.bytes == null ? '-' : String(r.bytes)], ['Id', String(r.id)]];
+        for (const [k, v] of items) {
+            const dt = document.createElement('dt'); dt.textContent = k;
+            const dd = document.createElement('dd'); dd.textContent = v; dl.append(dt, dd);
+        }
+        $('dlg-row').showModal();
+    }
+    function csvLink() { $('btn-csv').href = '/api/system/access-log/csv?' + params().toString(); }
+    async function load(more) {
+        stopLive();
+        const tb = $('al-grid').querySelector('tbody');
+        const extra = {limit: 200};
+        if (more && oldest) extra.before_id = oldest;
+        try {
+            const j = await api('/system/access-log?' + params(extra).toString());
+            if (!more) { tb.textContent = ''; rows = []; }
+            for (const r of j.rows) addRow(tb, r, false);
+            rows = rows.concat(j.rows);
+            if (j.rows.length) oldest = Math.min(...j.rows.map(r => r.id));
+            lastId = Math.max(lastId, j.last_id || 0);
+            $('al-count').textContent = j.total + ' matching requests';
+            $('btn-more').hidden = j.rows.length < 200;
+            csvLink();
+            if ($('f-mode').value === 'live') startLive();
+        } catch (e) { $('al-count').textContent = 'Not loaded: ' + e.message; }
+    }
+    function stopLive() { if (liveTimer) { clearInterval(liveTimer); liveTimer = null; } }
+    function startLive() {
+        liveTimer = setInterval(async () => {
+            try {
+                const j = await api('/system/access-log?' + params({after_id: lastId, limit: 200}).toString());
+                const tb = $('al-grid').querySelector('tbody');
+                for (const r of j.rows) addRow(tb, r, true);
+                if (j.last_id) lastId = Math.max(lastId, j.last_id);
+            } catch (_) {}
+        }, 2000);
+    }
+    function applyFilter(k, v) {
+        const id = {client: 'f-client', principal: 'f-user', path_group: 'f-path', status: 'f-status'}[k];
+        if (k === 'principal') v = v.replace(/^key:/, '').replace(/^\? /, '');
+        if (k === 'status') v = /^\d$/.test(v[0]) ? v : v;
+        const el = $(id);
+        if (el.tagName === 'SELECT' && ![...el.options].some(o => o.value === v)) {
+            const o = document.createElement('option'); o.value = v; o.textContent = v; el.appendChild(o);
+        }
+        el.value = v;
+        $('dlg-stats').close();
+        load(false);
+    }
+    let stats = null, topKey = 'client';
+    function renderTop() {
+        const tb = $('st-top').querySelector('tbody'); tb.textContent = '';
+        const list = stats['top_' + topKey] || [];
+        for (const t of list) {
+            const tr = document.createElement('tr');
+            const c = document.createElement('td');
+            const b = document.createElement('button'); b.type = 'button'; b.className = 'al-link'; b.textContent = t.value;
+            b.addEventListener('click', () => applyFilter(topKey, t.value));
+            c.appendChild(b); tr.appendChild(c); td(tr, String(t.count)); tb.appendChild(tr);
+        }
+        document.querySelectorAll('#st-tabs .al-tab').forEach(b => b.classList.toggle('active', b.dataset.k === topKey));
+    }
+    function renderChart() {
+        const svg = $('st-chart'); svg.textContent = '';
+        const NS = 'http://www.w3.org/2000/svg', W = 600, H = 160;
+        svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+        const bs = stats.buckets || []; if (!bs.length) return;
+        const max = Math.max(1, ...bs.map(b => b.requests));
+        const bw = W / bs.length;
+        bs.forEach((b, i) => {
+            const h = (b.requests / max) * (H - 16), e = ((b.client_errors + b.server_errors) / max) * (H - 16);
+            const r = document.createElementNS(NS, 'rect'); r.setAttribute('class', 'r');
+            r.setAttribute('x', i * bw); r.setAttribute('width', Math.max(1, bw - 1)); r.setAttribute('y', H - 16 - h); r.setAttribute('height', h);
+            const t = document.createElementNS(NS, 'title'); t.textContent = new Date(b.t).toLocaleString() + ': ' + b.requests + ' requests'; r.appendChild(t);
+            svg.appendChild(r);
+            if (e > 0) {
+                const x = document.createElementNS(NS, 'rect'); x.setAttribute('class', 'e');
+                x.setAttribute('x', i * bw); x.setAttribute('width', Math.max(1, bw - 1)); x.setAttribute('y', H - 16 - e); x.setAttribute('height', e); svg.appendChild(x);
+            }
+        });
+        const l = document.createElementNS(NS, 'text'); l.setAttribute('x', 2); l.setAttribute('y', H - 3);
+        l.textContent = new Date(bs[0].t).toLocaleString(); svg.appendChild(l);
+    }
+    async function openStats() {
+        try {
+            stats = await api('/system/access-log/stats?' + params().toString());
+            const s = $('st-sum'); s.textContent = '';
+            for (const [k, v] of [['Requests', stats.requests], ['Client errors', stats.client_errors], ['Server errors', stats.server_errors]]) {
+                const d = document.createElement('div'); d.textContent = k + ': '; const b = document.createElement('b'); b.textContent = String(v); d.appendChild(b); s.appendChild(d);
+            }
+            renderChart(); renderTop(); $('dlg-stats').showModal();
+        } catch (e) { $('al-count').textContent = 'Statistics not loaded: ' + e.message; }
+    }
+    document.querySelectorAll('#st-tabs .al-tab').forEach(b => b.addEventListener('click', () => { topKey = b.dataset.k; renderTop(); }));
+    $('btn-apply').addEventListener('click', () => load(false));
+    $('btn-reset').addEventListener('click', () => { for (const id of Object.values(FIELDS)) $(id).value = id === 'f-since' ? '1h' : ''; load(false); });
+    $('btn-stats').addEventListener('click', openStats);
+    $('btn-more').addEventListener('click', () => load(true));
+    $('f-mode').addEventListener('change', () => { $('f-mode').value === 'live' ? (stopLive(), load(false)) : load(false); });
+    $('al-form').addEventListener('keydown', (e) => { if (e.key === 'Enter') load(false); });
+
+    // configuration changes
+    async function loadAudit() {
+        const p = new URLSearchParams();
+        for (const [k, id] of [['since', 'a-since'], ['user', 'a-user'], ['action', 'a-action'], ['entity', 'a-entity'], ['q', 'a-q']]) {
+            const v = $(id).value.trim(); if (v) p.set(k, v);
+        }
+        $('a-csv').href = '/api/system/audit-log/csv?' + p.toString();
+        p.set('limit', 500);
+        try {
+            const j = await api('/system/audit-log?' + p.toString());
+            const tb = $('a-grid').querySelector('tbody'); tb.textContent = '';
+            for (const r of j.rows) {
+                const tr = document.createElement('tr');
+                td(tr, new Date(r.timestamp * 1000).toLocaleString()); td(tr, r.user); td(tr, r.action);
+                td(tr, r.entity_type); td(tr, r.entity_id || ''); td(tr, r.details || '');
+                tb.appendChild(tr);
+            }
+            $('a-count').textContent = j.total + ' matching changes';
+        } catch (e) { $('a-count').textContent = 'Not loaded: ' + e.message; }
+    }
+    $('a-apply').addEventListener('click', loadAudit);
+    function tab(which) {
+        for (const k of ['access', 'audit']) {
+            $('pane-' + k).hidden = k !== which;
+            $('tab-' + k).classList.toggle('active', k === which);
+            $('tab-' + k).setAttribute('aria-selected', k === which ? 'true' : 'false');
+        }
+        if (which === 'audit') { stopLive(); loadAudit(); } else load(false);
+    }
+    $('tab-access').addEventListener('click', () => tab('access'));
+    $('tab-audit').addEventListener('click', () => tab('audit'));
+    load(false);
+})();
+</script>
+{% endblock %}

@@ -23,6 +23,8 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use askama::Template;
+use axum::response::Html;
 use serde_json::json;
 
 fn err(e: anyhow::Error) -> Response {
@@ -176,4 +178,25 @@ async fn audit_csv(
         Ok((rows, _)) => csv_response("configuration-changes.csv", accesslog::audit_csv(&rows)),
         Err(e) => err(e),
     }
+}
+
+#[derive(Template)]
+#[template(path = "access_log.html")]
+struct AccessLogTemplate {
+    page: &'static str,
+}
+
+async fn page(_admin: AdminUser) -> Response {
+    match (AccessLogTemplate { page: "access-log" }).render() {
+        Ok(h) => Html(h).into_response(),
+        Err(e) => {
+            tracing::error!("render access log: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
+        }
+    }
+}
+
+/// The HTML page (admin only; the data comes from the API above).
+pub fn pages() -> Router<AppState> {
+    Router::new().route("/system/access-log", get(page))
 }
