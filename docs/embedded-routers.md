@@ -821,6 +821,26 @@ toward the stock AP, and every hostapd restart here (all stations move at once),
 minutes without network. Nothing sent from this side can clear the other AP's state; run the same firmware family on
 both APs.
 
+### 12.13 Languages and the API description on the router tier (2026-11-26)
+
+`patronus-web` carries the Fluent catalogs (English, German) and the OpenAPI document (`/api/docs`,
+`/api/openapi.json`, docs/API.md, docs/I18N.md) on every tier. Cost **[measured]**: the router-tier multi-call
+`patronus-cli` (CLI + web UI, `aarch64-unknown-linux-musl`, the exact flags and features of
+`stage-patronus.sh`: opt-level z, fat LTO, stripped), built from `origin/main` and from the branch head with the same
+toolchain on an arm64 host:
+
+| | stripped binary | as xz -9e (the squashfs codec) | as zstd -19 |
+|---|---|---|---|
+| before | 16,048,944 B | 5,828,480 B | 6,642,612 B |
+| after | 16,573,288 B | 5,911,244 B | 6,739,904 B |
+| delta | +524,344 B (+3.3 %) | **+82,764 B (+1.4 %, 80.8 KiB)** | +97,292 B |
+
+About 255 KB of the raw delta is the compact OpenAPI document (it compresses about tenfold); the Fluent runtime and
+the two catalogs are the rest. The NAND budget (`nand-budget.sh`) and the NOR budget (`nor-ci.sh`) are checked by CI on
+every change as before; the QEMU gates of both images fetch the document and the reference page from the booted router
+and switch the account to German (`i18n_docs` in `ci/embedded-aarch64/ax1800/qemu-gate.sh` and
+`ci/embedded-mips/slate/qemu-gate.py`).
+
 ### 12.7 Not proven yet
 
 Proven on a real unit (OpenRC, 2026-11-16): the NSS Ethernet ports, install from OpenWrt with `sysupgrade -n`, ath11k
