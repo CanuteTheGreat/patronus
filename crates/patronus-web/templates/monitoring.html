@@ -33,7 +33,7 @@
         <div class="ui-panel-body"><dl class="ui-kv">
             <dt>CPU</dt><dd><div class="ui-usage {{ cpu_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(metrics.cpu_percent) }}%"></i></span><span class="val">{{ "{:.0}"|format(metrics.cpu_percent) }}%</span></div></dd>
             <dt>Memory</dt><dd><div class="ui-usage {{ mem_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(metrics.memory_percent) }}%"></i></span><span class="val">{{ "{:.0}"|format(metrics.memory_percent) }}%</span></div></dd>
-            <dt>Disk (/)</dt><dd><div class="ui-usage {{ disk_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(metrics.disk_percent) }}%"></i></span><span class="val">{{ "{:.0}"|format(metrics.disk_percent) }}%</span></div></dd>
+            <dt>{{ disk_label }}</dt><dd><div class="ui-usage {{ disk_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(metrics.disk_percent) }}%"></i></span><span class="val">{{ "{:.0}"|format(metrics.disk_percent) }}%</span></div></dd>
         </dl>
         <p class="mon-more"><a href="/system#display-card">Warning levels</a></p></div>
     </section>

@@ -469,11 +469,53 @@
         const kept = sessionStorage.getItem('pat.notice');
         if (kept) { sessionStorage.removeItem('pat.notice'); const [k, tn] = JSON.parse(kept); patNotice(k, tn); }
     } catch (_) {}
+    // patAsk(title, fields, okLabel, id): a kit dialog instead of the browser's prompt() boxes (which cannot mask a password
+    // and block the page); resolves to the typed values, or null when cancelled.
+    // fields: [{name, label, value, placeholder, type, min, max, minLength, pattern, hint, required, autocomplete}]
+    function patAsk(title, fields, okLabel, id) {
+        return new Promise(resolve => {
+            const dlg = document.createElement('dialog'); dlg.className = 'ui-dialog pat-ask'; dlg.id = id || 'pat-ask';
+            const form = document.createElement('form'); form.className = 'lan-form';
+            const head = document.createElement('header'); head.id = dlg.id + '-t'; head.textContent = title; dlg.setAttribute('aria-labelledby', head.id);
+            const body = document.createElement('div'); body.className = 'ui-dialog-body';
+            for (const f of fields) {
+                const l = document.createElement('label'); l.appendChild(document.createTextNode(f.label));
+                const i = document.createElement('input'); i.name = f.name; i.type = f.type || 'text';
+                for (const k of ['value', 'placeholder', 'min', 'max', 'minLength', 'pattern', 'autocomplete']) if (f[k] !== undefined) i[k] = f[k];
+                if (f.pattern) i.title = f.hint || '';
+                i.required = !!f.required; l.appendChild(i);
+                if (f.hint) { const h = document.createElement('span'); h.className = 'ui-hint'; h.textContent = f.hint; l.appendChild(h); }
+                body.appendChild(l);
+            }
+            const foot = document.createElement('footer');
+            const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'ui-btn'; cancel.textContent = 'Cancel';
+            const ok = document.createElement('button'); ok.type = 'submit'; ok.className = 'ui-btn primary'; ok.textContent = okLabel || 'OK';
+            foot.append(cancel, ok); form.append(head, body, foot); dlg.appendChild(form); document.body.appendChild(dlg);
+            const opener = document.activeElement;
+            let answer = null;
+            cancel.onclick = () => dlg.close();
+            form.onsubmit = ev => { ev.preventDefault(); answer = {}; for (const f of fields) answer[f.name] = f.type === 'password' ? form.elements[f.name].value : form.elements[f.name].value.trim(); dlg.close(); };
+            dlg.addEventListener('close', () => { dlg.remove(); if (opener && opener.focus) opener.focus(); resolve(answer); });
+            dlg.showModal();
+            const first = form.querySelector('input'); if (first) first.focus();
+        });
+    }
+    // leaving the page aborts its in-flight requests; those rejections are expected, not page errors
+    let patLeaving = false;
+    window.addEventListener('beforeunload', () => { patLeaving = true; });
+    window.addEventListener('pagehide', () => { patLeaving = true; });
+    window.addEventListener('unhandledrejection', e => {
+        if (patLeaving && e.reason && (e.reason.name === 'TypeError' || e.reason.name === 'AbortError')) e.preventDefault();
+    });
     </script>
     <style>
         .ui-toast { display: flex; gap: var(--s-2); align-items: flex-start; justify-content: space-between; color: var(--c-ink); }
         .ui-toast > span { overflow-wrap: anywhere; }
         .pat-toast-x { flex: none; }
+        .pat-ask { width: min(480px, calc(100vw - 24px)); }
+        .pat-ask form { margin: 0; }
+        .pat-ask .ui-dialog-body label { display: flex; flex-direction: column; gap: 2px; margin-bottom: var(--s-3); font-size: var(--fs-sm); }
+        .pat-ask .ui-dialog-body input { width: 100%; }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
@@ -908,10 +950,13 @@
         document.addEventListener('click', later);
         new MutationObserver(later).observe(document.querySelector('.content') || document.body, {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden']});
     })();
-    // the current page's menu item is in view when the menu scrolls (pages under Advanced sat below the fold)
+    // the current page's menu item is in view when the menu scrolls (pages under Advanced sat below the fold), and the
+    // breadcrumb says the page the way the menu does ("Wake-on-LAN", not the route id "Svc-wol")
     (function () {
         const nav = document.querySelector('.sidebar-nav'), a = nav && nav.querySelector('.nav-item.active');
         if (!a) return;
+        const crumb = document.querySelector('.breadcrumbs > span:last-child'), label = a.querySelector('span');
+        if (crumb && label && crumb.previousElementSibling) crumb.textContent = label.textContent.replace(/\s*\(unavailable\)$/, '');
         const top = a.offsetTop - nav.offsetTop, bottom = top + a.offsetHeight;
         if (bottom > nav.scrollTop + nav.clientHeight) nav.scrollTop = bottom - nav.clientHeight + 24;
     })();

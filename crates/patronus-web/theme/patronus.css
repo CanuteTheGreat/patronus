@@ -50,3 +50,5 @@
 :root[data-theme="dark"] { --shadow: rgba(0,0,0,.4); }
 /* Kit v0.2 lays out form-wrapped dialogs and centres them; Patronus only caps the height (long forms scroll). */
 dialog.ui-dialog { max-height: calc(100vh - 32px); }
+/* a kit toolbar is the top edge of the grid under it; with no grid below (an empty list, a form-only toolbar) it is a box of its own */
+.ui-toolbar:not(:has(+ .ui-grid-wrap)) { border-bottom: 1px solid var(--c-border); border-radius: var(--r-md); }

@@ -32,14 +32,17 @@
 {% block content %}
 <div class="page-header">
     <h1 class="page-title">Wi-Fi</h1>
-    <p class="page-subtitle">The radios and networks this {% if ap_mode %}access point{% else %}unit{% endif %} broadcasts, from the settings file it boots with. Saving restarts the radios (clients reconnect within
+    <p class="page-subtitle" id="wifi-subtitle">The radios and networks this {% if ap_mode %}access point{% else %}unit{% endif %} broadcasts, from the settings file it boots with. Saving restarts the radios (clients reconnect within
         about ten seconds); if a radio does not come back with the new settings, the previous ones are restored.</p>
 </div>
 
 <div id="wifi-msg"></div>
+<p class="ui-loading" id="wifi-loading">Loading the Wi-Fi settings…</p>
 <div id="wifi-nobackend" class="card" style="display:none">
-    <p>Wi-Fi on this unit is not managed from this page. On routers that run their access points through device
-        segmentation, the networks are on <a href="/segmentation">Device segmentation</a> (Wi-Fi tab).</p>
+    <div class="ui-empty"><strong>No Wi-Fi radios on this page</strong>
+        This unit does not broadcast Wi-Fi from its own settings file. Routers that run their access points through device
+        segmentation manage the networks there.
+        <p><a class="ui-btn" href="/segmentation#wifi">Open Device segmentation, Wi-Fi tab</a></p></div>
 </div>
 
 <div id="wifi-main" style="display:none">
@@ -429,8 +432,9 @@ function addNet() {
 }
 async function loadWifi() {
     let d;
-    try { d = await api('GET', '/api/wifi'); } catch (e) { msg('Could not read the Wi-Fi settings: ' + e.message, true); return; }
-    if (!d.backend) { document.getElementById('wifi-nobackend').style.display = ''; return; }
+    try { d = await api('GET', '/api/wifi'); } catch (e) { document.getElementById('wifi-loading').hidden = true; msg('Could not read the Wi-Fi settings: ' + e.message, true); return; }
+    document.getElementById('wifi-loading').hidden = true;
+    if (!d.backend) { document.getElementById('wifi-nobackend').style.display = ''; document.getElementById('wifi-subtitle').hidden = true; return; }
     document.getElementById('wifi-main').style.display = '';
     CFG = d.config;
     const f = document.getElementById('wifi-radio-form');

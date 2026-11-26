@@ -69,6 +69,15 @@ def on_dialog(d):
         d.dismiss()
 
 
+def ask(page, values):
+    """Answer the page's own question dialog (svcAsk in svc.html, a kit <dialog>; the page no longer uses prompt())."""
+    page.wait_for_selector("#svc-ask[open]", timeout=10000)
+    for k, v in values.items():
+        page.locator(f"#svc-ask [name={k}]").fill(str(v))
+    page.locator("#svc-ask button[type=submit]").click()
+    page.wait_for_selector("#svc-ask", state="detached", timeout=10000)
+
+
 def set_field(page, name, value):
     el = page.locator(f"#svc-settings-form [name={name}]")
     if el.get_attribute("type") == "checkbox":
@@ -166,6 +175,7 @@ def run(p, kind):
               res.get("wifi_password") == pw and res.get("uri", "").startswith("WIFI:T:WPA;S:") and page.locator("#svc-action-qr").is_visible(), res)
         check(tag + "the QR code image loaded", page.evaluate("() => { const i = document.getElementById('svc-action-qr'); return i.complete && i.naturalWidth > 0; }"))
         page.locator("#svc-action-buttons button", has_text="New voucher").click()
+        ask(page, {"name": "e2e-visitor", "minutes": 60})
         page.wait_for_selector('[data-coll=vouchers] tr[data-id]', timeout=15000)
         row = page.locator('[data-coll=vouchers] tr[data-id]').first
         check(tag + "a voucher was made and is listed without its code", "e2e-visitor" in row.inner_text() and pw not in row.inner_text(), row.inner_text())
@@ -175,6 +185,7 @@ def run(p, kind):
         page.wait_for_function("() => document.querySelectorAll('[data-coll=vouchers] tr[data-id]').length === 0", timeout=15000)
         check(tag + "the voucher was deleted through the page", True)
         page.locator("#svc-action-buttons button", has_text="Open for a while").click()
+        ask(page, {"minutes": 30})
         page.wait_for_function("() => /open_until/.test(document.getElementById('svc-action-result').textContent)", timeout=15000)
         s = api(page, "/api/svc/guest")["json"]["settings"]
         check(tag + "Open for a while: timed access with an end time", s["access"] == "timed" and s["open_until"] > 0, s)
