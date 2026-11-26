@@ -870,7 +870,10 @@ mod tests {
         assert!(h.contains("id=\"uplinks-card\""), "{h}");
         assert!(h.contains("data-uplink=\"WAN1\""), "{h}");
         assert!(h.contains("online, warning: latency"), "{h}");
-        assert!(h.contains("data-uplink=\"WAN2\"") && h.contains("class=\"bad\">down"), "{h}");
+        assert!(
+            h.contains("data-uplink=\"WAN2\"") && h.contains("class=\"bad\">down"),
+            "{h}"
+        );
         assert!(h.contains("latency above its warning level"), "{h}");
         t.uplink_events.clear();
         assert!(!t.render().unwrap().contains("uplink-event"));

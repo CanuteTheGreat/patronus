@@ -1512,18 +1512,27 @@ mod tests {
         assert_eq!(kinds(&e), vec![("gateway_warning_cleared", "WAN")]);
         assert!(e[0].detail.contains("loss"));
         // connections deleted: reported with count and reason
-        let k = m(&[("gwwarn:WAN", ""), ("gwkill:WAN", "1700000000|7|WAN left group LB")]);
+        let k = m(&[
+            ("gwwarn:WAN", ""),
+            ("gwkill:WAN", "1700000000|7|WAN left group LB"),
+        ]);
         let e = diff(&a, &k);
         assert_eq!(kinds(&e), vec![("gateway_states_killed", "WAN")]);
         assert!(e[0].detail.contains("7 connection(s)") && e[0].detail.contains("left group LB"));
         // a record already there when the watcher started is history
         assert!(diff(&BTreeMap::new(), &k).is_empty());
         // the state vector carries both
-        let v = state_vector(&serde_json::json!({"gateways": [{"name": "WAN", "state": "online",
-            "warning": "loss", "killed": {"at": 5, "count": 2, "why": "a|b"}}]}));
+        let v = state_vector(
+            &serde_json::json!({"gateways": [{"name": "WAN", "state": "online",
+            "warning": "loss", "killed": {"at": 5, "count": 2, "why": "a|b"}}]}),
+        );
         assert_eq!(v["gwwarn:WAN"], "loss");
         assert_eq!(v["gwkill:WAN"], "5|2|a/b");
-        for k in ["gateway_warning", "gateway_warning_cleared", "gateway_states_killed"] {
+        for k in [
+            "gateway_warning",
+            "gateway_warning_cleared",
+            "gateway_states_killed",
+        ] {
             assert!(EVENT_KINDS.contains(&k));
         }
     }

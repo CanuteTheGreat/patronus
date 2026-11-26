@@ -814,7 +814,8 @@ pub fn render_unbound(
     }
     // unbound refuses to forward to 127.0.0.0/8 / ::1 unless told otherwise
     // (a local DNS server on another port is a common domain override)
-    if domains.iter().any(|d| d.server.is_loopback()) || s.forward_to().iter().any(|u| u.is_loopback())
+    if domains.iter().any(|d| d.server.is_loopback())
+        || s.forward_to().iter().any(|u| u.is_loopback())
     {
         c.push_str("    do-not-query-localhost: no\n");
     }
