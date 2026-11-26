@@ -16,6 +16,9 @@
     <p class="page-subtitle">{{ blurb }}</p>
 </div>
 
+{% if slug == "ids" %}
+<p class="text-sm"><a id="ids-alerts-link" href="/svc/ids/alerts">Alert browser: search, top talkers, one-click suppress</a></p>
+{% endif %}
 <div id="svc-error" class="alert-error" style="display:none"></div>
 
 <div class="card" id="svc-settings-card" style="display:none">
@@ -109,7 +112,13 @@
             const tr = document.createElement('tr');
             const th = document.createElement('th'); th.textContent = k.replace(/_/g, ' '); tr.appendChild(th);
             const td = document.createElement('td');
-            if (Array.isArray(v) && v.every(x => typeof x === 'string')) {
+            if (SLUG === 'ids' && k === 'rule_sets' && Array.isArray(v)) {
+                td.appendChild(idsRuleSetTable(v));
+            } else if (SLUG === 'ids' && k === 'alerts' && Array.isArray(v)) {
+                td.appendChild(idsAlertTable(v));
+            } else if (SLUG === 'ids' && k === 'last_rule_update') {
+                td.textContent = v ? new Date(v * 1000).toLocaleString() : 'never';
+            } else if (Array.isArray(v) && v.every(x => typeof x === 'string')) {
                 if (v.length === 0) td.textContent = '-';
                 else { const pre = document.createElement('pre'); pre.className = 'svc-pre'; pre.textContent = v.join('\n'); td.appendChild(pre); }
             } else if (v !== null && typeof v === 'object') {
@@ -118,6 +127,25 @@
             tr.appendChild(td); t.appendChild(tr);
         }
         box.appendChild(t);
+    }
+    function idsTable(head, rows) {
+        const t = document.createElement('table'); t.className = 'lan';
+        const hr = document.createElement('tr');
+        for (const h of head) { const th = document.createElement('th'); th.textContent = h; hr.appendChild(th); }
+        t.appendChild(hr);
+        for (const r of rows) { const tr = document.createElement('tr'); for (const c of r) { const td = document.createElement('td'); td.textContent = c; tr.appendChild(td); } t.appendChild(tr); }
+        const w = document.createElement('div'); w.style.overflowX = 'auto'; w.appendChild(t); return w;
+    }
+    function idsWhen(t) { return t ? new Date(t * 1000).toLocaleString() : '-'; }
+    function idsRuleSetTable(v) {
+        if (!v.length) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'No rule sets configured.'; return p; }
+        return idsTable(['Rule set', 'In use', 'State', 'Rules', 'Last updated', 'Licence', 'Detail'],
+            v.map(s => [s.name + ' (' + s.key + ')', s.enabled ? 'yes' : 'no', s.status, s.rules || '-', idsWhen(s.updated_at), s.licence || '-', s.message || '']));
+    }
+    function idsAlertTable(v) {
+        if (!v.length) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'No alerts yet.'; return p; }
+        return idsTable(['Time', 'Rule', 'From', 'To', 'Result'],
+            v.slice().reverse().map(a => [a.time, a.signature, a.src, a.dst, a.action]));
     }
     async function svcSaveSettings(ev) {
         ev.preventDefault();

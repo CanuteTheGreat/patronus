@@ -104,6 +104,13 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "traffic_daily",
     "system_events",
     "firewall_log",
+    // IDS/IPS (lane j): the last download of each rule set, the alert history (retention by
+    // `ids.alert_retention_days` / `ids.alert_max_rows`), the eve.json read position and the
+    // "update now" request: measured or fetched data, never part of a backup or a rollback
+    "ids_source_state",
+    "ids_alerts",
+    "ids_alert_pos",
+    "ids_update_request",
 ];
 
 /// Revisions kept by [`ConfigStore::snapshot`] (older ones are pruned).

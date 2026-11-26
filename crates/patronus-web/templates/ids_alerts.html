@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+
+{% block title %}Intrusion alerts - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    .ids-scroll { overflow-x: auto; }
+    .ids-top { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+    .ids-act { white-space: nowrap; }
+    .ids-pager { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+    .ids-blocked { color: var(--bad-fg); font-weight: 600; }
+    .ids-sig { max-width: 36ch; overflow-wrap: anywhere; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Intrusion alerts</h1>
+    <p class="page-subtitle">What the intrusion detection engine found. Filter by time, address or rule, see who triggers most, and silence a noisy rule with one click. <a href="/svc/ids">Settings, rule sets and policy</a></p>
+</div>
+
+<div id="ids-error" class="alert-error" style="display:none" role="alert"></div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Filter</h2></div>
+    <form class="lan-form" id="ids-filter" onsubmit="return idsSearch(event)">
+        <label>Period
+            <select name="window" id="ids-window">
+                <option value="1h">last hour</option>
+                <option value="24h" selected>last 24 hours</option>
+                <option value="7d">last 7 days</option>
+                <option value="30d">last 30 days</option>
+                <option value="">any time</option>
+                <option value="custom">custom range...</option>
+            </select>
+        </label>
+        <label class="ids-custom" style="display:none">From<input type="datetime-local" name="from"></label>
+        <label class="ids-custom" style="display:none">To<input type="datetime-local" name="to"></label>
+        <label>Source<input name="src" placeholder="address or 10.0.0.0/24" autocomplete="off"></label>
+        <label>Destination<input name="dst" placeholder="address or prefix" autocomplete="off"></label>
+        <label>Rule SID<input name="sid" inputmode="numeric" placeholder="2100498" autocomplete="off"></label>
+        <label>Text<input name="q" placeholder="in the rule message" autocomplete="off"></label>
+        <label>Action
+            <select name="action"><option value="">all</option><option value="allowed">alert only</option><option value="blocked">blocked</option></select>
+        </label>
+        <button class="btn btn-primary btn-sm" type="submit">Search</button>
+    </form>
+</div>
+
+<div class="ids-top">
+    <div class="card"><div class="card-header"><h2 class="card-title">Top rules</h2></div><div id="top-sid"><p class="empty">Loading...</p></div></div>
+    <div class="card"><div class="card-header"><h2 class="card-title">Top sources</h2></div><div id="top-src"><p class="empty">Loading...</p></div></div>
+    <div class="card"><div class="card-header"><h2 class="card-title">Top destinations</h2></div><div id="top-dst"><p class="empty">Loading...</p></div></div>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Alerts <span id="ids-count" class="text-muted"></span></h2></div>
+    <div class="ids-scroll">
+        <table class="lan" id="ids-table">
+            <thead><tr><th>Time</th><th>Rule</th><th>Source</th><th>Destination</th><th>Proto</th><th>Result</th><th></th></tr></thead>
+            <tbody id="ids-rows"><tr><td colspan="7" class="empty">Loading...</td></tr></tbody>
+        </table>
+    </div>
+    <div class="ids-pager">
+        <button class="btn btn-sm" id="ids-prev" type="button">Newer</button>
+        <button class="btn btn-sm" id="ids-next" type="button">Older</button>
+        <span id="ids-page" class="text-muted"></span>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const CAN_MODIFY = {% if can_modify %}true{% else %}false{% endif %};
+    const PAGE = 50;
+    let offset = 0;
+
+    function showError(msg) {
+        const el = document.getElementById('ids-error');
+        el.textContent = msg; el.style.display = msg ? '' : 'none';
+    }
+    async function jget(url) {
+        const r = await fetch(url, {credentials: 'same-origin'});
+        let j = {}; try { j = await r.json(); } catch (_) {}
+        if (!r.ok) { showError('Could not load: ' + (j.error || r.status)); return null; }
+        showError('');
+        return j;
+    }
+    function params() {
+        const f = document.getElementById('ids-filter');
+        const p = new URLSearchParams();
+        const w = f.elements.window.value;
+        if (w && w !== 'custom') p.set('window', w);
+        for (const k of ['src', 'dst', 'sid', 'q', 'action']) { const v = f.elements[k].value.trim(); if (v) p.set(k, v); }
+        if (w === 'custom') { for (const k of ['from', 'to']) { const v = f.elements[k].value; if (v) p.set(k, v); } }
+        return p;
+    }
+    function fmtTime(t) { return new Date(t * 1000).toLocaleString(); }
+    function cell(tr, text, cls) { const td = document.createElement('td'); td.textContent = text; if (cls) td.className = cls; tr.appendChild(td); return td; }
+    function empty(el, text) { el.textContent = ''; const p = document.createElement('p'); p.className = 'empty'; p.textContent = text; el.appendChild(p); }
+
+    function renderTop(boxId, rows, mode) {
+        const box = document.getElementById(boxId);
+        if (!rows.length) { empty(box, 'Nothing in this period.'); return; }
+        box.textContent = '';
+        const t = document.createElement('table'); t.className = 'lan';
+        for (const r of rows) {
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            const a = document.createElement('a'); a.href = '#'; a.textContent = r.key + (r.label ? ' ' + r.label : '');
+            a.onclick = (ev) => { ev.preventDefault(); const f = document.getElementById('ids-filter'); f.elements[mode].value = r.key; offset = 0; load(); };
+            td.appendChild(a); tr.appendChild(td);
+            cell(tr, String(r.count)); t.appendChild(tr);
+        }
+        box.appendChild(t);
+    }
+
+    async function suppress(id, scope, kind) {
+        const text = kind === 'suppress'
+            ? (scope === 'rule' ? 'Stop alerting on this rule for everyone?' : 'Stop alerting on this rule for this ' + scope + '?')
+            : 'Alert at most once per hour for this rule and ' + scope + '?';
+        if (!confirm(text)) return;
+        const r = await fetch('/api/svc/ids/alerts/' + id + '/suppress', {method: 'POST', credentials: 'same-origin',
+            headers: {'content-type': 'application/json'}, body: JSON.stringify({scope, kind, seconds: 3600, count: 1})});
+        let j = {}; try { j = await r.json(); } catch (_) {}
+        if (!r.ok) { showError('Not applied: ' + (j.error || r.status)); return; }
+        showError('');
+        const note = document.getElementById('ids-page'); note.textContent = 'Entry added (see Suppress and threshold in the settings).';
+    }
+
+    function actionButton(label, fn) {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'btn btn-sm'; b.textContent = label; b.style.marginRight = '6px'; b.onclick = fn; return b;
+    }
+
+    async function load() {
+        const p = params();
+        const q = new URLSearchParams(p); q.set('limit', PAGE); q.set('offset', offset);
+        const d = await jget('/api/svc/ids/alerts?' + q);
+        if (!d) return;
+        const body = document.getElementById('ids-rows'); body.textContent = '';
+        document.getElementById('ids-count').textContent = '(' + d.total + ')';
+        if (!d.alerts.length) {
+            const tr = document.createElement('tr'); const td = cell(tr, 'No alerts match.', 'empty'); td.colSpan = 7; body.appendChild(tr);
+        }
+        for (const a of d.alerts) {
+            const tr = document.createElement('tr'); tr.dataset.id = a.id;
+            cell(tr, fmtTime(a.time));
+            cell(tr, a.sid + ' ' + a.signature, 'ids-sig');
+            cell(tr, a.src_ip + (a.src_port ? ':' + a.src_port : ''), 'mono');
+            cell(tr, a.dst_ip + (a.dst_port ? ':' + a.dst_port : ''), 'mono');
+            cell(tr, a.proto);
+            cell(tr, a.action === 'blocked' ? 'blocked' : 'alert only', a.action === 'blocked' ? 'ids-blocked' : '');
+            const td = document.createElement('td'); td.className = 'ids-act';
+            if (CAN_MODIFY && a.sid) {
+                td.appendChild(actionButton('Suppress rule', () => suppress(a.id, 'rule', 'suppress')));
+                td.appendChild(actionButton('Suppress this source', () => suppress(a.id, 'source', 'suppress')));
+                td.appendChild(actionButton('Limit to 1/hour', () => suppress(a.id, 'source', 'limit')));
+            }
+            tr.appendChild(td); body.appendChild(tr);
+        }
+        document.getElementById('ids-prev').disabled = offset === 0;
+        document.getElementById('ids-next').disabled = offset + PAGE >= d.total;
+        document.getElementById('ids-page').textContent = d.total ? (offset + 1) + '-' + Math.min(offset + PAGE, d.total) + ' of ' + d.total : '';
+        for (const [by, id, mode] of [['sid', 'top-sid', 'sid'], ['src', 'top-src', 'src'], ['dst', 'top-dst', 'dst']]) {
+            const t = await jget('/api/svc/ids/alerts/top?by=' + by + '&limit=8&' + p);
+            if (t) renderTop(id, t.top, mode);
+        }
+    }
+    function idsSearch(ev) { ev.preventDefault(); offset = 0; load(); return false; }
+    document.addEventListener('DOMContentLoaded', () => {
+        const f = document.getElementById('ids-filter');
+        f.elements.window.onchange = () => { for (const el of document.querySelectorAll('.ids-custom')) el.style.display = f.elements.window.value === 'custom' ? '' : 'none'; };
+        document.getElementById('ids-prev').onclick = () => { offset = Math.max(0, offset - PAGE); load(); };
+        document.getElementById('ids-next').onclick = () => { offset += PAGE; load(); };
+        load();
+    });
+</script>
+{% endblock %}
