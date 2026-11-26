@@ -2,9 +2,11 @@
 //!
 //! All API endpoints return JSON responses.
 
+pub mod activity;
 pub mod apikeys;
 pub mod authservers;
 pub mod backup_targets;
+pub mod dashboard;
 pub mod device;
 pub mod firewall;
 pub mod groups;

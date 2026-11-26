@@ -46,6 +46,7 @@ pub fn build_router(
         .route("/monitoring", get(pages::monitoring))
         .route("/system", get(pages::system))
         .route("/diagnostics", get(pages::diagnostics))
+        .route("/activity", get(api::activity::page))
         .merge(api::lan::pages())
         .merge(api::ha::pages())
         .merge(api::qos::pages())
@@ -572,6 +573,8 @@ fn api_routes() -> Router<AppState> {
         .merge(api::wifi::router())
         .merge(api::wifi_uplink::router())
         .merge(api::device::router())
+        .merge(api::activity::router())
+        .merge(api::dashboard::router())
 }
 
 #[cfg(test)]

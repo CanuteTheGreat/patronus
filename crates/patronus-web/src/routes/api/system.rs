@@ -1179,18 +1179,37 @@ async fn put_stats_settings(
 /// `{"tool":"ping","target":"192.0.2.1","count":3,"family":"auto","interface":""}`,
 /// `{"tool":"traceroute","target":"example.com","max_hops":15}`,
 /// `{"tool":"dns","name":"example.com","type":"AAAA","server":""}`,
+/// `{"tool":"tcp","host":"example.com","port":443,"interface":"","source":"","family":"auto","timeout":3}`
+/// (TCP connect test: open / closed / filtered, resolved address, latency),
 /// `{"tool":"neighbors"|"routes"|"sockets"}`. Every field is validated
 /// (patronus_network::diag); nothing reaches a shell.
 async fn diag(
     State(state): State<AppState>,
     _admin: AdminUser,
-    Json(req): Json<serde_json::Value>,
+    Json(mut req): Json<serde_json::Value>,
 ) -> Response {
+    // The port test's timeout and rate limit are typed settings (`diag.*`);
+    // the limit always comes from the setting, the timeout only when the
+    // request names none.
+    if req.get("tool").and_then(|t| t.as_str()) == Some("tcp") {
+        let cfg = patronus_config::dashboard::load(&state.config_store).await;
+        if let Some(o) = req.as_object_mut() {
+            let named = o
+                .get("timeout")
+                .is_some_and(|t| !t.is_null() && t.as_str() != Some(""));
+            if !named {
+                o.insert("timeout".into(), cfg.tcp_timeout_secs.into());
+            }
+            o.insert("rate_limit".into(), cfg.tcp_tests_per_minute.into());
+        }
+    }
     match state.system.system_op("diag", req).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => {
             let m = e.to_string();
-            let code = if m.contains("Invalid") {
+            let code = if m.contains("too many port tests") {
+                StatusCode::TOO_MANY_REQUESTS
+            } else if m.contains("Invalid") {
                 StatusCode::BAD_REQUEST
             } else if m.contains("not installed") {
                 StatusCode::NOT_IMPLEMENTED

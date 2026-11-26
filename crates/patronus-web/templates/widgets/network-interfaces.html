@@ -1,0 +1,22 @@
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Network interfaces</h2></div>
+    {% if interfaces.is_empty() %}
+    <p class="empty">No network interfaces found.</p>
+    {% else %}
+    <table class="lan">
+        <thead><tr><th>Interface</th><th>Status</th><th>IP addresses</th><th>MAC</th><th>RX bytes</th><th>TX bytes</th></tr></thead>
+        <tbody>
+        {% for iface in interfaces %}
+        <tr>
+            <td><strong>{{ iface.name }}</strong></td>
+            <td>{% if iface.enabled %}<span class="ok">{{ iface.state }}</span>{% else %}<span class="text-muted">{{ iface.state }}</span>{% endif %}</td>
+            <td>{{ iface.ip_display }}</td>
+            <td class="mono">{{ iface.mac_display }}</td>
+            <td>{{ iface.rx_bytes }}</td>
+            <td>{{ iface.tx_bytes }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
