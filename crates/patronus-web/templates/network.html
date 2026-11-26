@@ -23,7 +23,7 @@
     <h1 class="page-title">Network Services</h1>
     <p class="page-subtitle">Manage interfaces and routing (DHCP, DNS and NTP have their own pages)</p>
     <div class="page-actions">
-        <button class="btn btn-primary btn-sm" onclick="showAddInterfaceModal()">
+        <button class="ui-btn primary sm" onclick="showAddInterfaceModal()">
             Add Interface
         </button>
     </div>
@@ -76,7 +76,7 @@
         </div>
 
         <div class="table-container">
-            <table class="lan" id="interfaces-table">
+            <table class="lan ui-grid" id="interfaces-table">
                 <thead>
                     <tr>
                         <th>Interface</th>
@@ -137,7 +137,7 @@
         {% endif %}
 
         <div class="table-container">
-            <table class="lan" id="routing-table">
+            <table class="lan ui-grid" id="routing-table">
                 <thead>
                     <tr>
                         <th>Destination</th>

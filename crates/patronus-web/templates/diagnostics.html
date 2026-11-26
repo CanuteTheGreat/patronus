@@ -4,6 +4,13 @@
 
 {% block extra_head %}
 {% include "lan_head.html" %}
+<style>
+    .diag-out { max-height: 24em; margin: var(--s-2) 0 0; padding: var(--s-2) var(--s-3); white-space: pre-wrap; }
+    .diag-out:empty { display: none; }
+    #routes-out, #sockets-out { white-space: pre; }
+    .diag-status { min-height: 1.4em; }
+    #neighbors-card .ui-toolbar { margin: var(--s-2) 0; }
+</style>
 {% endblock %}
 
 {% block content %}
@@ -14,15 +21,15 @@
 </div>
 
 {% if !is_admin %}
-<div class="alert-error">Diagnostics need an administrator account.</div>
+<div class="ui-banner warn">Diagnostics need an administrator account.</div>
 {% else %}
 <div class="card" id="speedtest-card">
     <div class="card-header"><h2 class="card-title">Internet speed test</h2></div>
     <p class="text-sm">Latency, download and upload measured from the router to a test server
         (about 25 MB down and 10 MB up by default; on a metered connection, keep the schedule off).</p>
-    <button class="btn btn-primary btn-sm" id="st-run" type="button" onclick="runSpeedtest()">Run speed test</button>
-    <span class="text-sm" id="st-status"></span>
-    <table class="lan" id="st-table"><thead><tr><th>When</th><th>Download</th><th>Upload</th><th>Latency</th><th>Server</th><th>Result</th></tr></thead><tbody></tbody></table>
+    <button class="ui-btn primary sm" id="st-run" type="button" onclick="runSpeedtest()">Run speed test</button>
+    <span class="text-sm diag-status" id="st-status" role="status" aria-live="polite"></span>
+    <div class="ui-grid-wrap"><table class="lan ui-grid" id="st-table"><thead><tr><th>When</th><th>Download</th><th>Upload</th><th>Latency</th><th>Server</th><th>Result</th></tr></thead><tbody></tbody></table></div>
     <details><summary class="text-sm">Settings</summary>
     <form class="lan-form" id="st-form" onsubmit="return saveSpeedtest(event)">
         <label>Download URL ({bytes} = size) <input name="down_url" maxlength="300"></label>
@@ -30,7 +37,7 @@
         <label>Download bytes <input name="bytes_down" type="number" min="100000" max="1000000000"></label>
         <label>Upload bytes <input name="bytes_up" type="number" min="100000" max="1000000000"></label>
         <label>Run every (hours, 0 = only on demand) <input name="interval_hours" type="number" min="0" max="168"></label>
-        <button class="btn btn-secondary btn-sm" type="submit">Save</button>
+        <button class="ui-btn sm" type="submit">Save</button>
     </form>
     </details>
 </div>
@@ -43,10 +50,10 @@
         <label>IP version <select name="family"><option value="auto">automatic</option><option value="4">IPv4</option><option value="6">IPv6</option></select></label>
         <label>Source interface <input name="interface" placeholder="(routing decides)" maxlength="15"></label>
         <label>Payload bytes <input name="size" type="number" min="1" max="1472" value="56"></label>
-        <button class="btn btn-primary btn-sm" type="submit">Ping</button>
+        <button class="ui-btn primary sm" type="submit">Ping</button>
     </form>
-    <p class="text-sm" id="ping-status"></p>
-    <pre class="mono text-sm" id="ping-out" style="max-height:20em;overflow:auto;white-space:pre-wrap"></pre>
+    <p class="text-sm diag-status" id="ping-status" role="status" aria-live="polite"></p>
+    <pre class="ui-log diag-out" id="ping-out" tabindex="0" aria-label="Ping output"></pre>
 </div>
 
 <div class="card" id="traceroute-card">
@@ -56,10 +63,10 @@
         <label>Max hops <input name="max_hops" type="number" min="1" max="30" value="15"></label>
         <label>IP version <select name="family"><option value="auto">automatic</option><option value="4">IPv4</option><option value="6">IPv6</option></select></label>
         <label>Source interface <input name="interface" placeholder="(routing decides)" maxlength="15"></label>
-        <button class="btn btn-primary btn-sm" type="submit">Trace</button>
+        <button class="ui-btn primary sm" type="submit">Trace</button>
     </form>
-    <p class="text-sm" id="traceroute-status"></p>
-    <pre class="mono text-sm" id="traceroute-out" style="max-height:20em;overflow:auto;white-space:pre-wrap"></pre>
+    <p class="text-sm diag-status" id="traceroute-status" role="status" aria-live="polite"></p>
+    <pre class="ui-log diag-out" id="traceroute-out" tabindex="0" aria-label="Traceroute output"></pre>
 </div>
 
 <div class="card" id="dns-card">
@@ -70,29 +77,30 @@
             <option>A</option><option>AAAA</option><option>CNAME</option><option>MX</option><option>TXT</option>
             <option>NS</option><option>SOA</option><option>SRV</option><option>CAA</option><option>PTR</option></select></label>
         <label>Server <input name="server" placeholder="(the router's resolver)"></label>
-        <button class="btn btn-primary btn-sm" type="submit">Look up</button>
+        <button class="ui-btn primary sm" type="submit">Look up</button>
     </form>
-    <p class="text-sm" id="dns-status"></p>
-    <table class="table" id="dns-table" style="display:none"><thead><tr><th>Name</th><th>Type</th><th>TTL</th><th>Data</th></tr></thead><tbody></tbody></table>
+    <p class="text-sm diag-status" id="dns-status" role="status" aria-live="polite"></p>
+    <div class="ui-grid-wrap"><table class="ui-grid" id="dns-table" style="display:none"><thead><tr><th>Name</th><th>Type</th><th class="num">TTL</th><th>Data</th></tr></thead><tbody></tbody></table></div>
 </div>
 
 <div class="card" id="neighbors-card">
-    <div class="card-header"><h2 class="card-title">ARP / NDP table</h2>
-        <button class="btn btn-sm" onclick="loadTable('neighbors')">Refresh</button></div>
-    <table class="table" id="neighbors-table"><thead><tr><th>Address</th><th>MAC</th><th>Interface</th><th>State</th></tr></thead><tbody><tr><td colspan="4" class="text-muted">Loading...</td></tr></tbody></table>
+    <div class="card-header"><h2 class="card-title">ARP / NDP table <span class="ui-badge" id="neighbors-count" hidden></span></h2>
+        <button class="ui-btn sm" type="button" onclick="loadTable('neighbors')">Refresh</button></div>
+    <div class="ui-toolbar"><div><input class="ui-input" type="search" data-ui-filter="neighbors" placeholder="Filter by address, MAC or interface" aria-label="Filter neighbours"></div></div>
+    <div class="ui-grid-wrap"><table class="ui-grid" id="neighbors-table" data-ui-grid="neighbors"><thead><tr><th data-sort>Address</th><th data-sort>MAC</th><th data-sort>Interface</th><th data-sort>State</th></tr></thead><tbody><tr><td colspan="4" class="text-muted">Loading...</td></tr></tbody></table></div>
 </div>
 
 <div class="card" id="routes-card">
     <div class="card-header"><h2 class="card-title">Routing tables</h2>
-        <button class="btn btn-sm" onclick="loadTable('routes')">Refresh</button></div>
+        <button class="ui-btn sm" type="button" onclick="loadTable('routes')">Refresh</button></div>
     <p class="text-sm text-muted">All tables except the kernel's local table, then the policy rules.</p>
-    <pre class="mono text-sm" id="routes-out" style="max-height:24em;overflow:auto;white-space:pre"></pre>
+    <pre class="ui-log diag-out" id="routes-out" tabindex="0" aria-label="Routing tables"></pre>
 </div>
 
 <div class="card" id="sockets-card">
     <div class="card-header"><h2 class="card-title">Listening sockets</h2>
-        <button class="btn btn-sm" onclick="loadTable('sockets')">Refresh</button></div>
-    <pre class="mono text-sm" id="sockets-out" style="max-height:24em;overflow:auto;white-space:pre"></pre>
+        <button class="ui-btn sm" type="button" onclick="loadTable('sockets')">Refresh</button></div>
+    <pre class="ui-log diag-out" id="sockets-out" tabindex="0" aria-label="Listening sockets"></pre>
 </div>
 {% endif %}
 {% endblock %}
@@ -125,7 +133,7 @@
                 tb.innerHTML = '';
                 for (const a of j.answers.concat(j.authority)) {
                     const tr = document.createElement('tr');
-                    for (const k of ['name', 'type', 'ttl', 'data']) tr.appendChild(td(String(a[k])));
+                    for (const k of ['name', 'type', 'ttl', 'data']) { const c = td(String(a[k])); if (k === 'ttl') c.className = 'num'; tr.appendChild(c); }
                     tb.appendChild(tr);
                 }
                 t.style.display = (j.answers.length + j.authority.length) ? '' : 'none';
@@ -144,11 +152,18 @@
                 const tb = el('neighbors-table').querySelector('tbody');
                 tb.innerHTML = '';
                 if (!j.neighbors.length) { const tr = document.createElement('tr'); const c = td('No neighbours.'); c.colSpan = 4; tr.appendChild(c); tb.appendChild(tr); }
+                // neighbour state as a kit badge: reachable = ok, stale/delay/probe = warn (being re-checked), failed = crit
+                const tone = st => /REACHABLE|PERMANENT|NOARP/.test(st) ? 'ok' : /FAILED|INCOMPLETE/.test(st) ? 'crit' : /STALE|DELAY|PROBE/.test(st) ? 'warn' : '';
                 for (const n of j.neighbors) {
                     const tr = document.createElement('tr');
-                    for (const v of [n.address + (n.router ? ' (router)' : ''), n.mac || '-', n.device, n.state]) tr.appendChild(td(v));
+                    for (const v of [n.address + (n.router ? ' (router)' : ''), n.mac || '-', n.device]) tr.appendChild(td(v));
+                    const sc = document.createElement('td'), b = document.createElement('span'), t = tone(String(n.state || '').toUpperCase());
+                    b.className = 'ui-badge ' + t; b.textContent = String(n.state || '').toLowerCase(); sc.appendChild(b); tr.appendChild(sc);
+                    tr.cells[1].classList.add('mono');
                     tb.appendChild(tr);
                 }
+                const nc = el('neighbors-count'); nc.hidden = !j.neighbors.length; nc.textContent = String(j.neighbors.length);
+                const q = document.querySelector('[data-ui-filter="neighbors"]'); if (q && q.value) q.dispatchEvent(new Event('input'));
             } else if (tool === 'routes') {
                 el('routes-out').textContent = ['# IPv4'].concat(j.ipv4, ['', '# IPv6'], j.ipv6, ['', '# IPv4 rules'], j.rules4, ['', '# IPv6 rules'], j.rules6).join('\n');
             } else {

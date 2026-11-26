@@ -17,7 +17,7 @@
 
 <div class="card" id="qos-card">
     <div class="card-header"><h2 class="card-title">Shapers</h2></div>
-    <table class="lan" id="qos-table">
+    <table class="lan ui-grid" id="qos-table">
         <thead><tr><th>Interface</th><th>Mode</th><th>Rate</th><th>Enabled</th><th>In the kernel</th><th></th></tr></thead>
         <tbody></tbody>
     </table>
@@ -28,7 +28,7 @@
         <label>Mode <select name="mode"><option value="cake">CAKE</option><option value="fq_codel">fq_codel</option><option value="limit">rate limit</option></select></label>
         <label>Rate (kbit/s; not for fq_codel) <input name="rate_kbit" type="number" min="64" placeholder="50000"></label>
         <label>Description <input name="description"></label>
-        <button class="btn btn-primary btn-sm" type="submit">Add shaper</button>
+        <button class="ui-btn primary sm" type="submit">Add shaper</button>
     </form>
     {% endif %}
 </div>
@@ -60,7 +60,7 @@
                 const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
             }
             const td = document.createElement('td'); const b = document.createElement('button');
-            b.className = 'btn btn-sm btn-danger'; b.textContent = 'Delete';
+            b.className = 'ui-btn danger sm'; b.textContent = 'Delete';
             b.onclick = async () => { if (confirm('Remove the shaper on ' + s.interface + '?') && await api2('DELETE', '/api/qos/' + s.id)) loadQos(); };
             td.appendChild(b); tr.appendChild(td); tb.appendChild(tr);
         }

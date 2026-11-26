@@ -43,7 +43,7 @@
 <div class="card" id="not-available" style="display:none">
     <div class="card-header"><h2 class="card-title">Not available on this device</h2></div>
     <p class="text-sm" id="not-available-intro"></p>
-    <table class="lan"><thead><tr><th>Feature</th><th>Why</th></tr></thead><tbody id="not-available-list"></tbody></table>
+    <table class="lan ui-grid"><thead><tr><th>Feature</th><th>Why</th></tr></thead><tbody id="not-available-list"></tbody></table>
 </div>
 <script>
 // Menu entries this build or role leaves out are listed here with the reason, instead of silently missing.
@@ -70,15 +70,15 @@ fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() :
         checked first (board, signature data, checksums, flash sizes); installing keeps every setting and restarts the
         device (about two minutes offline).</p>
     <input type="file" id="fw-file" accept=".tar">
-    <button class="btn btn-secondary" type="button" id="fw-upload" onclick="fwUpload()">Upload and check</button>
-    <button class="btn btn-primary" type="button" id="fw-install" style="display:none" onclick="fwInstall()">Install and restart</button>
-    <button class="btn btn-secondary" type="button" id="fw-discard" style="display:none" onclick="fwDiscard()">Discard</button>
+    <button class="ui-btn" type="button" id="fw-upload" onclick="fwUpload()">Upload and check</button>
+    <button class="ui-btn primary" type="button" id="fw-install" style="display:none" onclick="fwInstall()">Install and restart</button>
+    <button class="ui-btn" type="button" id="fw-discard" style="display:none" onclick="fwDiscard()">Discard</button>
     <h3 class="text-sm" style="margin-top:14px">Online update check</h3>
     <form class="lan-form" onsubmit="return false" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
         <label>Update feed <input id="fw-feed" size="40" placeholder="https://..."></label>
-        <button class="btn btn-secondary" type="button" onclick="fwFeedSave()">Save feed</button>
-        <button class="btn btn-secondary" type="button" id="fw-check" onclick="fwFeedCheck()">Check for updates</button>
-        <button class="btn btn-secondary" type="button" id="fw-fetch" style="display:none" onclick="fwFeedDownload()">Download and check</button>
+        <button class="ui-btn" type="button" onclick="fwFeedSave()">Save feed</button>
+        <button class="ui-btn" type="button" id="fw-check" onclick="fwFeedCheck()">Check for updates</button>
+        <button class="ui-btn" type="button" id="fw-fetch" style="display:none" onclick="fwFeedDownload()">Download and check</button>
     </form>
     <p class="text-sm">The feed's release list must carry a valid signature of the Errant Solutions release key
         (<span class="mono">5439 3549 39B9 C055 2A68  E9BB E323 A6A3 AC0A 6506</span>); anything else is refused. Checking never
@@ -101,9 +101,9 @@ fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() :
             <label>Network check pings <input id="bg-ping" size="14" placeholder="gateway"></label>
             <label>Wi-Fi check <select id="bg-hostapd"><option value="auto">when Wi-Fi is on</option><option value="require">always</option><option value="off">off</option></select></label>
             <label><input type="checkbox" id="bg-wdt"> Hardware watchdog during the trial</label>
-            <button class="btn btn-secondary" type="button" onclick="bgSave()">Save rollback settings</button>
-            <button class="btn btn-secondary" type="button" id="bg-confirm" style="display:none" onclick="bgConfirm()">Confirm this image now</button>
-            <button class="btn btn-secondary" type="button" id="bg-rollback" style="display:none" onclick="bgRollback()">Go back to the previous image</button>
+            <button class="ui-btn" type="button" onclick="bgSave()">Save rollback settings</button>
+            <button class="ui-btn" type="button" id="bg-confirm" style="display:none" onclick="bgConfirm()">Confirm this image now</button>
+            <button class="ui-btn" type="button" id="bg-rollback" style="display:none" onclick="bgRollback()">Go back to the previous image</button>
         </form>
         {% endif %}
     </div>
@@ -218,7 +218,7 @@ async function fwFeedDownload() {
 
 <div class="card">
     <div class="card-header"><h2 class="card-title">General</h2></div>
-    <table class="lan" id="system-facts">
+    <table class="lan ui-grid" id="system-facts">
         <tr><td>Hostname</td><td>{{ config.hostname }}</td></tr>
         <tr><td>DNS domain</td><td>{% if config.domain.is_empty() %}<span class="text-muted">none set</span>{% else %}{{ config.domain }}{% endif %}</td></tr>
         <tr><td>Time zone</td><td>{{ config.timezone }}</td></tr>
@@ -232,7 +232,7 @@ async function fwFeedDownload() {
         <label>Host name <input name="hostname" value="{{ config.hostname }}" required pattern="[A-Za-z0-9\-]+" maxlength="63"></label>
         <label>DNS domain <input name="domain" value="{{ config.domain }}" data-keep-empty="1" placeholder="none"></label>
         <label>Time zone <input name="timezone" value="{% if !config.timezone.contains(' ') %}{{ config.timezone }}{% endif %}" placeholder="Europe/Berlin or UTC"></label>
-        <button class="btn btn-sm btn-primary" id="save-general" type="submit">Save</button>
+        <button class="ui-btn primary sm" id="save-general" type="submit">Save</button>
     </form>
     {% endif %}
     <p class="text-sm text-muted">Saved here, these are written to /etc/hostname (and /etc/conf.d/hostname on OpenRC),
@@ -254,9 +254,9 @@ async function fwFeedDownload() {
         <label>Listen addresses <input name="listen" value="{{ web_listen }}" data-keep-empty="1" placeholder="0.0.0.0"></label>
         <label>TLS certificate file <input name="tls_cert" value="{{ web_cert }}" data-keep-empty="1" placeholder="/etc/patronus/tls/cert.pem"></label>
         <label>TLS key file <input name="tls_key" value="{{ web_key }}" data-keep-empty="1" placeholder="/etc/patronus/tls/key.pem"></label>
-        <button class="btn btn-sm btn-primary" id="save-web" type="submit">Save</button>
-        <button class="btn btn-sm" id="reset-web" type="button" onclick="resetWeb()">Back to defaults</button>
-        <button class="btn btn-sm" id="restart-web" type="button" onclick="restartWeb()">Restart web UI now</button>
+        <button class="ui-btn primary sm" id="save-web" type="submit">Save</button>
+        <button class="ui-btn sm" id="reset-web" type="button" onclick="resetWeb()">Back to defaults</button>
+        <button class="ui-btn sm" id="restart-web" type="button" onclick="restartWeb()">Restart web UI now</button>
     </form>
     <script>
     async function webPut(body) {
@@ -280,7 +280,7 @@ async function fwFeedDownload() {
     }
     </script>
     {% else %}
-    <table class="lan"><tr><td>HTTPS port</td><td>{{ web_https_port }}</td></tr>
+    <table class="lan ui-grid"><tr><td>HTTPS port</td><td>{{ web_https_port }}</td></tr>
         <tr><td>HTTP redirect port</td><td>{{ web_redirect_port }}</td></tr>
         <tr><td>Extra HTTPS ports</td><td>{{ web_extra_ports }}</td></tr></table>
     {% endif %}
@@ -363,7 +363,7 @@ async function fwFeedDownload() {
             <textarea name="principals" rows="3" cols="70" data-keep-empty="1">{{ ssh_principals }}</textarea></label>
         <label>Host certificate (one line)<br>
             <textarea name="host_certificate" rows="2" cols="70" data-keep-empty="1">{{ ssh_cert }}</textarea></label>
-        <button class="btn btn-sm btn-primary" id="save-ssh" type="submit">Save</button>
+        <button class="ui-btn primary sm" id="save-ssh" type="submit">Save</button>
     </form>
     <script>
     function submitSsh(ev) {
@@ -384,7 +384,7 @@ async function fwFeedDownload() {
     }
     </script>
     {% else %}
-    <table class="lan"><tr><td>Port</td><td>{{ ssh_port }}</td></tr>
+    <table class="lan ui-grid"><tr><td>Port</td><td>{{ ssh_port }}</td></tr>
         <tr><td>Listen</td><td>{% if ssh_listen.is_empty() %}all addresses{% else %}{{ ssh_listen }}{% endif %}</td></tr></table>
     {% endif %}
 </div>
@@ -396,7 +396,7 @@ async function fwFeedDownload() {
     {% if users.is_empty() %}
     <p class="empty">No accounts.</p>
     {% else %}
-    <table class="lan" id="users">
+    <table class="lan ui-grid" id="users">
         <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Two-factor</th><th>Created</th><th>Last login</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for user in users %}
@@ -411,11 +411,11 @@ async function fwFeedDownload() {
                 <select aria-label="Change role of {{ user.username }}" onchange="if (this.value) call('PUT', '/api/system/users/{{ user.id }}', {role: this.value})">
                     <option value="">role...</option><option value="admin">admin</option><option value="operator">operator</option><option value="readonly">read-only</option>
                 </select>
-                {% if user.is_active %}<button class="btn btn-sm btn-secondary" onclick="call('PUT', '/api/system/users/{{ user.id }}', {enabled: false})">Disable</button>
-                {% else %}<button class="btn btn-sm btn-success" onclick="call('PUT', '/api/system/users/{{ user.id }}', {enabled: true})">Enable</button>{% endif %}
-                {% if user.id != me_id %}<button class="btn btn-sm btn-secondary" onclick="setPassword({{ user.id }}, '{{ user.username }}')">Set password</button>{% endif %}
-                {% if user.two_factor && user.id != me_id %}<button class="btn btn-sm btn-secondary" onclick="if (confirm('Turn two-factor login off for {{ user.username }}?')) call('POST', '/api/system/users/{{ user.id }}/2fa/reset')">Reset 2FA</button>{% endif %}
-                {% if user.id != me_id %}<button class="btn btn-sm btn-danger" onclick="del('/api/system/users/{{ user.id }}', 'Delete account {{ user.username }}?')">Delete</button>{% endif %}
+                {% if user.is_active %}<button class="ui-btn sm" onclick="call('PUT', '/api/system/users/{{ user.id }}', {enabled: false})">Disable</button>
+                {% else %}<button class="ui-btn sm btn-success" onclick="call('PUT', '/api/system/users/{{ user.id }}', {enabled: true})">Enable</button>{% endif %}
+                {% if user.id != me_id %}<button class="ui-btn sm" onclick="setPassword({{ user.id }}, '{{ user.username }}')">Set password</button>{% endif %}
+                {% if user.two_factor && user.id != me_id %}<button class="ui-btn sm" onclick="if (confirm('Turn two-factor login off for {{ user.username }}?')) call('POST', '/api/system/users/{{ user.id }}/2fa/reset')">Reset 2FA</button>{% endif %}
+                {% if user.id != me_id %}<button class="ui-btn danger sm" onclick="del('/api/system/users/{{ user.id }}', 'Delete account {{ user.username }}?')">Delete</button>{% endif %}
             {% endif %}</td>
         </tr>
         {% endfor %}
@@ -427,7 +427,7 @@ async function fwFeedDownload() {
         <label>Username <input name="username" required></label>
         <label>Password (12+ characters) <input name="password" type="password" autocomplete="new-password" required></label>
         <label>Role <select name="role"><option value="readonly">read-only</option><option value="operator">operator</option><option value="admin">admin</option></select></label>
-        <button class="btn btn-primary btn-sm" type="submit">Add account</button>
+        <button class="ui-btn primary sm" type="submit">Add account</button>
     </form>
     {% endif %}
 </div>
@@ -437,17 +437,17 @@ async function fwFeedDownload() {
     <p class="text-sm text-muted">A group grants read or write on areas of the product. A non-admin account in a group gets exactly
         the group's privileges (instead of its role); admins always have everything. Enforced on every page and API call.</p>
     <p class="empty" id="groups-empty">No groups yet.</p>
-    <table class="lan" id="groups-table"><thead><tr><th>Group</th><th>Privileges</th><th>Members</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+    <table class="lan ui-grid" id="groups-table"><thead><tr><th>Group</th><th>Privileges</th><th>Members</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
     <form class="lan-form" id="group-form" onsubmit="return saveGroup(event)" data-dialog="Add group">
         <label>Name <input name="name" required></label>
         <label>Description <input name="description"></label>
         <div id="group-areas"></div>
-        <button class="btn btn-primary btn-sm" type="submit">Add group</button>
+        <button class="ui-btn primary sm" type="submit">Add group</button>
     </form>
     <form class="lan-form" id="member-form" onsubmit="return setMember(event)">
         <label>Account <select name="user" id="member-user"></select></label>
         <label>Group <select name="group" id="member-group"></select></label>
-        <button class="btn btn-secondary btn-sm" type="submit">Set group</button>
+        <button class="ui-btn sm" type="submit">Set group</button>
     </form>
 </div>
 
@@ -456,7 +456,7 @@ async function fwFeedDownload() {
     <p class="text-sm text-muted">Upload the configuration automatically to a WebDAV/HTTPS server (PUT), SFTP or FTPS. With a passphrase the
         file is encrypted (AES-256-GCM, Argon2id key) before it leaves this box; restore an encrypted file by uploading it with the passphrase.</p>
     <p class="empty" id="backup-targets-empty">No remote targets.</p>
-    <table class="lan" id="backup-targets-table"><thead><tr><th>Name</th><th>URL</th><th>Every</th><th>Encrypted</th><th>Last run</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+    <table class="lan ui-grid" id="backup-targets-table"><thead><tr><th>Name</th><th>URL</th><th>Every</th><th>Encrypted</th><th>Last run</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
     <form class="lan-form" id="backup-target-form" onsubmit="return addBackupTarget(event)" data-dialog="Add target">
         <label>Name <input name="name" required></label>
         <label>URL <input name="url" placeholder="https://dav.example.net/patronus" required></label>
@@ -464,7 +464,7 @@ async function fwFeedDownload() {
         <label>Password <input name="password" type="password" autocomplete="new-password"></label>
         <label>Encryption passphrase (blank = plain) <input name="passphrase" type="password" autocomplete="new-password"></label>
         <label>Every (hours, 0 = manual) <input name="interval_hours" type="number" min="0" value="24"></label>
-        <button class="btn btn-primary btn-sm" type="submit">Add target</button>
+        <button class="ui-btn primary sm" type="submit">Add target</button>
     </form>
 </div>
 
@@ -474,7 +474,7 @@ async function fwFeedDownload() {
         <span class="mono">Authorization: Bearer pat_...</span> or <span class="mono">X-API-Key: pat_...</span>.
         A <b>read-only</b> key can only read; an <b>operator</b> key can also change configuration. Keys never manage
         accounts, backups or other keys. The token is shown once; only a digest is stored.</p>
-    <table class="lan" id="api-keys-table">
+    <table class="lan ui-grid" id="api-keys-table">
         <thead><tr><th>Name</th><th>Token</th><th>Scope</th><th>Created</th><th>Expires</th><th>Last used</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody></tbody>
     </table>
@@ -484,7 +484,7 @@ async function fwFeedDownload() {
         <label>Name <input name="name" required></label>
         <label>Scope <select name="scope"><option value="readonly">read-only</option><option value="operator">operator</option></select></label>
         <label>Expires in days (empty = never) <input name="expires_in_days" type="number" min="1" max="3650"></label>
-        <button class="btn btn-primary btn-sm" type="submit">Create key</button>
+        <button class="ui-btn primary sm" type="submit">Create key</button>
     </form>
     <div id="api-key-new" style="display:none">
         <p><b>New token</b> (copy it now, it is not shown again):</p>
@@ -498,7 +498,7 @@ async function fwFeedDownload() {
     <form class="lan-form" id="password-form" onsubmit="return submitJson(event, 'POST', '/api/auth/password')">
         <label>Current password <input name="current_password" type="password" autocomplete="current-password" required></label>
         <label>New password (12+ characters) <input name="new_password" type="password" autocomplete="new-password" required></label>
-        <button class="btn btn-primary btn-sm" type="submit">Change password</button>
+        <button class="ui-btn primary sm" type="submit">Change password</button>
     </form>
     <h3 class="text-sm">Two-factor login (TOTP)</h3>
     {% if !totp_available %}
@@ -509,14 +509,14 @@ async function fwFeedDownload() {
     <form class="lan-form" id="totp-disable-form" onsubmit="return submitJson(event, 'POST', '/api/auth/2fa/disable')">
         <label>Password <input name="password" type="password" required></label>
         <label>Current code <input name="code" required></label>
-        <button class="btn btn-danger btn-sm" type="submit">Turn two-factor login off</button>
+        <button class="ui-btn danger sm" type="submit">Turn two-factor login off</button>
     </form>
     {% else %}
     <p class="text-sm">Off. Scan a QR code with an authenticator app (Aegis, FreeOTP, Google Authenticator, ...),
         confirm with a code, and keep the recovery codes somewhere safe.</p>
     <form class="lan-form" id="totp-setup-form" onsubmit="return totpSetup(event)">
         <label>Password <input name="password" type="password" required></label>
-        <button class="btn btn-primary btn-sm" type="submit">Set up two-factor login</button>
+        <button class="ui-btn primary sm" type="submit">Set up two-factor login</button>
     </form>
     <div id="totp-enrol" style="display:none">
         <div id="totp-qr" role="img" aria-label="QR code for your authenticator app" style="width:256px;background:#fff;padding:8px"></div>
@@ -524,16 +524,16 @@ async function fwFeedDownload() {
         <p class="text-sm">Or enter this secret by hand: <span class="mono" id="totp-secret"></span></p>
         <form class="lan-form" id="totp-enable-form" onsubmit="return totpEnable(event)">
             <label>Code from the app <input name="code" required autocomplete="one-time-code"></label>
-            <button class="btn btn-primary btn-sm" type="submit">Turn on</button>
+            <button class="ui-btn primary sm" type="submit">Turn on</button>
         </form>
     </div>
     <div id="totp-recovery" style="display:none">
         <p><b>Recovery codes</b> (each works once instead of a code; they are not shown again):</p>
         <pre class="mono" id="totp-recovery-codes"></pre>
-        <button class="btn btn-secondary btn-sm" type="button" id="totp-recovery-copy" onclick="totpRecoveryCopy()">Copy</button>
-        <button class="btn btn-secondary btn-sm" type="button" id="totp-recovery-download" onclick="totpRecoveryDownload()">Download (.txt)</button>
-        <button class="btn btn-secondary btn-sm" type="button" id="totp-recovery-print" onclick="totpRecoveryPrint()">Print</button>
-        <button class="btn btn-primary btn-sm" type="button" onclick="location.reload()">Done</button>
+        <button class="ui-btn sm" type="button" id="totp-recovery-copy" onclick="totpRecoveryCopy()">Copy</button>
+        <button class="ui-btn sm" type="button" id="totp-recovery-download" onclick="totpRecoveryDownload()">Download (.txt)</button>
+        <button class="ui-btn sm" type="button" id="totp-recovery-print" onclick="totpRecoveryPrint()">Print</button>
+        <button class="ui-btn primary sm" type="button" onclick="location.reload()">Done</button>
     </div>
     {% endif %}
 </div>
@@ -541,7 +541,7 @@ async function fwFeedDownload() {
 <div class="card">
     <div class="card-header">
         <h2 class="card-title">Configuration backups</h2>
-        {% if is_admin %}<button class="btn btn-sm btn-primary" id="create-backup" onclick="call('POST', '/api/system/backups')">Create backup now</button>{% endif %}
+        {% if is_admin %}<button class="ui-btn primary sm" id="create-backup" onclick="call('POST', '/api/system/backups')">Create backup now</button>{% endif %}
     </div>
     <p class="text-sm">A backup is a full export of the configuration store (accounts, firewall, interfaces, routing,
         LAN services, VPN keys), written to <span class="mono">{{ backup_dir }}</span>. Restoring one replaces the
@@ -550,17 +550,17 @@ async function fwFeedDownload() {
     {% if is_admin %}
     <form class="lan-form" id="restore-upload-form" onsubmit="return restoreUpload(event)">
         <label>Restore from a file <input type="file" name="file" accept=".json,application/json" required></label>
-        <button class="btn btn-sm btn-danger" type="submit">Upload and restore</button>
+        <button class="ui-btn danger sm" type="submit">Upload and restore</button>
     </form>
     {% else %}
     <p class="text-sm text-muted">Backups contain password hashes and VPN keys: only admins can create, download or restore them.</p>
     {% endif %}
     {% if !backups_error.is_empty() %}
-    <div class="alert-error">Backups unavailable: {{ backups_error }}</div>
+    <div class="ui-banner crit" role="alert">Backups unavailable: {{ backups_error }}</div>
     {% else if backups.is_empty() %}
     <p class="empty">No backups yet.</p>
     {% else %}
-    <table class="lan" id="backups">
+    <table class="lan ui-grid" id="backups">
         <thead><tr><th>File</th><th>Created</th><th>Size</th><th>Contents</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for backup in backups %}
@@ -570,9 +570,9 @@ async function fwFeedDownload() {
             <td>{{ backup.size }}</td>
             <td>{% if backup.is_valid %}<span class="ok">valid export</span>{% else %}<span class="bad">not a valid export</span>{% endif %}</td>
             <td>{% if is_admin %}
-                <a class="btn btn-sm btn-secondary" href="/api/system/backups/{{ backup.id }}">Download</a>
-                {% if backup.is_valid %}<button class="btn btn-sm btn-danger" onclick="restoreStored('{{ backup.id }}')">Restore</button>{% endif %}
-                <button class="btn btn-sm btn-danger" onclick="del('/api/system/backups/{{ backup.id }}', 'Delete {{ backup.name }}?')">Delete</button>
+                <a class="ui-btn sm" href="/api/system/backups/{{ backup.id }}">Download</a>
+                {% if backup.is_valid %}<button class="ui-btn danger sm" onclick="restoreStored('{{ backup.id }}')">Restore</button>{% endif %}
+                <button class="ui-btn danger sm" onclick="del('/api/system/backups/{{ backup.id }}', 'Delete {{ backup.name }}?')">Delete</button>
             {% endif %}</td>
         </tr>
         {% endfor %}
@@ -589,7 +589,7 @@ async function fwFeedDownload() {
         <span class="mono">patronus config revisions</span> and <span class="mono">patronus config rollback &lt;id&gt;</span>.</p>
     <p class="empty" id="history-empty" style="display:none">No revisions yet.</p>
     <pre class="mono" id="history-diff" style="display:none;white-space:pre-wrap;max-height:24em;overflow:auto"></pre>
-    <table class="lan" id="history-table" style="display:none"><thead><tr><th>#</th><th>When</th><th>Who</th><th>Change</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+    <table class="lan ui-grid" id="history-table" style="display:none"><thead><tr><th>#</th><th>When</th><th>Who</th><th>Change</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
 </div>
 
 <div class="card">
@@ -597,7 +597,7 @@ async function fwFeedDownload() {
     {% if services.is_empty() %}
     <p class="empty">None of the services Patronus manages are installed on this system (or the init system is not systemd/OpenRC).</p>
     {% else %}
-    <table class="lan" id="services">
+    <table class="lan ui-grid" id="services">
         <thead><tr><th>Service</th><th>Purpose</th><th>Status</th><th>Running for</th><th>Memory</th><th>Starts at boot</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for service in services %}
@@ -611,12 +611,12 @@ async function fwFeedDownload() {
             <td>
                 {% if can_modify %}
                 {% if service.is_running %}
-                <button class="btn btn-sm btn-secondary" onclick="if (confirm('Restart {{ service.name }}?')) call('POST', '/api/system/services/{{ service.name }}/restart')">Restart</button>
-                {% if !service.name.starts_with("patronus-") %}<button class="btn btn-sm btn-danger" onclick="if (confirm('Stop {{ service.name }}?')) call('POST', '/api/system/services/{{ service.name }}/stop')">Stop</button>{% endif %}
+                <button class="ui-btn sm" onclick="if (confirm('Restart {{ service.name }}?')) call('POST', '/api/system/services/{{ service.name }}/restart')">Restart</button>
+                {% if !service.name.starts_with("patronus-") %}<button class="ui-btn danger sm" onclick="if (confirm('Stop {{ service.name }}?')) call('POST', '/api/system/services/{{ service.name }}/stop')">Stop</button>{% endif %}
                 {% else if service.name.starts_with("patronus-") %}
-                <button class="btn btn-sm btn-success" onclick="call('POST', '/api/system/services/{{ service.name }}/restart')">Start</button>
+                <button class="ui-btn sm btn-success" onclick="call('POST', '/api/system/services/{{ service.name }}/restart')">Start</button>
                 {% else %}
-                <button class="btn btn-sm btn-success" onclick="call('POST', '/api/system/services/{{ service.name }}/start')">Start</button>
+                <button class="ui-btn sm btn-success" onclick="call('POST', '/api/system/services/{{ service.name }}/start')">Start</button>
                 {% endif %}
                 {% endif %}
             </td>
@@ -639,12 +639,12 @@ async function fwFeedDownload() {
     <p id="updates-state" class="text-sm"></p>
     {% if is_admin %}
     <p>
-        <button class="btn btn-sm btn-secondary" id="update-check" onclick="updateJob('check', {sync: true})">Check for updates</button>
-        <button class="btn btn-sm btn-primary" id="update-patronus" onclick="if (confirm('Update the Patronus package now?')) updateJob('apply', {scope: 'patronus'})">Update Patronus</button>
-        <button class="btn btn-sm btn-danger" id="update-world" onclick="if (confirm('Update ALL packages (@world)? This can take hours.')) updateJob('apply', {scope: 'world'})">Update everything</button>
+        <button class="ui-btn sm" id="update-check" onclick="updateJob('check', {sync: true})">Check for updates</button>
+        <button class="ui-btn primary sm" id="update-patronus" onclick="if (confirm('Update the Patronus package now?')) updateJob('apply', {scope: 'patronus'})">Update Patronus</button>
+        <button class="ui-btn danger sm" id="update-world" onclick="if (confirm('Update ALL packages (@world)? This can take hours.')) updateJob('apply', {scope: 'world'})">Update everything</button>
     </p>
     {% endif %}
-    <table class="lan" id="updates-table" style="display:none">
+    <table class="lan ui-grid" id="updates-table" style="display:none">
         <thead><tr><th>Package</th><th>Installed</th><th>Available</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody></tbody>
     </table>
@@ -659,7 +659,7 @@ async function fwFeedDownload() {
         password-less account with the server's default role (never admin: promote it above); disable or delete it
         like any other. Local accounts never fall back to RADIUS, and there is no two-factor step for RADIUS logins
         (use the RADIUS server's own). User names are 1-32 letters, digits, '.', '_' or '-'.</p>
-    <table class="lan" id="auth-servers-table">
+    <table class="lan ui-grid" id="auth-servers-table">
         <thead><tr><th>Name</th><th>Server</th><th>Default role</th><th>Timeout</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody></tbody>
     </table>
@@ -670,7 +670,7 @@ async function fwFeedDownload() {
         <label>Port <input name="port" type="number" value="1812"></label>
         <label>Shared secret <input name="secret" type="password" autocomplete="new-password" required></label>
         <label>Default role <select name="default_role"><option value="readonly">read-only</option><option value="operator">operator</option></select></label>
-        <button class="btn btn-primary btn-sm" type="submit">Add RADIUS server</button>
+        <button class="ui-btn primary sm" type="submit">Add RADIUS server</button>
     </form>
 </div>
 
@@ -680,9 +680,9 @@ async function fwFeedDownload() {
 <div class="card" id="power-card">
     <div class="card-header"><h2 class="card-title">Power</h2></div>
     <p class="text-sm">Reboot or power off this firewall. The configuration is re-applied from the store at boot.</p>
-    <button class="btn btn-sm btn-danger" id="factory-reset-btn" onclick="factoryReset()">Factory reset</button>
-    <button class="btn btn-sm btn-danger" id="reboot-btn" onclick="if (confirm('Reboot this firewall now? Traffic through it stops for a minute or two.')) powerOp('reboot')">Reboot</button>
-    <button class="btn btn-sm btn-danger" id="shutdown-btn" onclick="if (confirm('Power off this firewall? You will need physical access to start it again.')) powerOp('shutdown')">Shut down</button>
+    <button class="ui-btn danger sm" id="factory-reset-btn" onclick="factoryReset()">Factory reset</button>
+    <button class="ui-btn danger sm" id="reboot-btn" onclick="if (confirm('Reboot this firewall now? Traffic through it stops for a minute or two.')) powerOp('reboot')">Reboot</button>
+    <button class="ui-btn danger sm" id="shutdown-btn" onclick="if (confirm('Power off this firewall? You will need physical access to start it again.')) powerOp('shutdown')">Shut down</button>
 </div>
 {% endif %}
 
@@ -705,7 +705,7 @@ async function fwFeedDownload() {
         <label>Port <input name="port" type="number" min="1" max="65535"></label>
         <label>Packets <input name="count" type="number" min="1" max="500" value="50"></label>
         <label>Seconds <input name="seconds" type="number" min="1" max="30" value="10"></label>
-        <button class="btn btn-primary btn-sm" id="capture-btn" type="submit">Capture</button>
+        <button class="ui-btn primary sm" id="capture-btn" type="submit">Capture</button>
     </form>
     <p class="text-sm" id="capture-status"></p>
     <pre class="mono text-sm" id="capture-out" style="max-height:24em;overflow:auto;white-space:pre-wrap"></pre>
@@ -720,11 +720,11 @@ async function fwFeedDownload() {
         <span class="mono">X-Patronus-Signature: sha256=...</span> when a secret is set). Collectors can also read
         <span class="mono">GET /api/events?after=&lt;id&gt;</span>, <span class="mono">GET /api/status/summary</span> and
         <span class="mono">GET /metrics</span> with an API key.</p>
-    <table class="lan" id="events-table"><thead><tr><th>Time</th><th>Event</th><th>About</th><th>Detail</th></tr></thead><tbody></tbody></table>
+    <table class="lan ui-grid" id="events-table"><thead><tr><th>Time</th><th>Event</th><th>About</th><th>Detail</th></tr></thead><tbody></tbody></table>
     <p class="empty" id="events-empty" style="display:none">No events yet.</p>
     {% if is_admin %}
     <h3 class="text-sm">Notification channels</h3>
-    <table class="lan" id="hooks-table"><thead><tr><th>Name</th><th>Type</th><th>Destination</th><th>Events</th><th>Last delivery</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+    <table class="lan ui-grid" id="hooks-table"><thead><tr><th>Name</th><th>Type</th><th>Destination</th><th>Events</th><th>Last delivery</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
     <form class="lan-form" id="hook-form" onsubmit="return createHook(event)" data-dialog="Add channel">
         <label>Name <input name="name" required></label>
         <label>Type <select name="channel" onchange="hookFields(this.form)">
@@ -738,7 +738,7 @@ async function fwFeedDownload() {
         <label><span id="hook-secret-label">Secret (optional)</span> <input name="secret" type="password" autocomplete="new-password"></label>
         <label>Events (comma separated, empty = all) <input name="kinds" placeholder="gateway_down, tunnel_down"></label>
         <label>Minimum severity <select name="min_severity"><option>info</option><option>warning</option><option>critical</option></select></label>
-        <button class="btn btn-primary btn-sm" type="submit">Add channel</button>
+        <button class="ui-btn primary sm" type="submit">Add channel</button>
     </form>
     {% endif %}
 </div>
@@ -788,7 +788,7 @@ async function fwFeedDownload() {
     }
     async function powerOp(what) {
         const j = await post('/api/system/' + what, {});
-        if (j) document.body.insertAdjacentHTML('afterbegin', '<div class="alert-error" style="margin:1em">The firewall is going down for ' + what + ' in a few seconds.</div>');
+        if (j) document.body.insertAdjacentHTML('afterbegin', '<div class="ui-banner crit" role="alert" style="margin:1em">The firewall is going down for ' + what + ' in a few seconds.</div>');
     }
     async function loadEvents() {
         const ev = await getJson('/api/events?limit=50');
@@ -805,11 +805,11 @@ async function fwFeedDownload() {
             cell(tr, h.name); cell(tr, h.channel); cell(tr, dest); cell(tr, (h.kinds || 'all') + (h.min_severity !== 'info' ? ' (' + h.min_severity + '+)' : ''));
             cell(tr, h.last_attempt_at ? fmtTs(h.last_attempt_at) + ': ' + h.last_result : 'never');
             const td = document.createElement('td');
-            const t = document.createElement('button'); t.className = 'btn btn-sm'; t.textContent = 'Send test';
+            const t = document.createElement('button'); t.className = 'ui-btn sm'; t.textContent = 'Send test';
             t.onclick = async () => { t.disabled = true; const r = await post('/api/system/hooks/' + h.id + '/test', {}); t.disabled = false; if (r) patNotice('Test sent: ' + r.result, 'ok'); loadEvents(); };
             td.appendChild(t);
             const b = document.createElement('button');
-            b.className = 'btn btn-sm btn-danger'; b.textContent = 'Delete';
+            b.className = 'ui-btn danger sm'; b.textContent = 'Delete';
             b.onclick = async () => { if (!confirm('Delete webhook ' + h.name + '?')) return;
                 const d = await fetch('/api/system/hooks/' + h.id, {method: 'DELETE', credentials: 'same-origin'}); if (d.ok) loadEvents(); };
             td.appendChild(b); tr.appendChild(td); hb.appendChild(tr); }
@@ -851,7 +851,7 @@ async function fwFeedDownload() {
             const tr = document.createElement('tr'); tr.dataset.server = s.name;
             cell(tr, s.name); cell(tr, s.host + ':' + s.port); cell(tr, s.default_role === 'readonly' ? 'read-only' : s.default_role); cell(tr, s.timeout_secs + ' s');
             const td = document.createElement('td'); const b = document.createElement('button');
-            b.className = 'btn btn-sm btn-danger'; b.textContent = 'Delete';
+            b.className = 'ui-btn danger sm'; b.textContent = 'Delete';
             b.onclick = async () => { if (!confirm('Delete RADIUS server ' + s.name + '?')) return;
                 const d = await fetch('/api/system/auth-servers/' + s.id, {method: 'DELETE', credentials: 'same-origin'}); if (d.ok) loadAuthServers(); };
             td.appendChild(b); tr.appendChild(td); tb.appendChild(tr);
@@ -887,7 +887,7 @@ async function fwFeedDownload() {
             }
             const td = document.createElement('td');
             const b = document.createElement('button');
-            b.className = 'btn btn-sm btn-danger'; b.textContent = 'Revoke';
+            b.className = 'ui-btn danger sm'; b.textContent = 'Revoke';
             b.onclick = async () => {
                 if (!confirm('Revoke API key ' + k.name + '? Anything using it stops working.')) return;
                 const d = await fetch('/api/system/api-keys/' + k.id, {method: 'DELETE', credentials: 'same-origin'});
@@ -929,7 +929,7 @@ async function fwFeedDownload() {
             cell(tr, Object.entries(g.privileges).map(([a, l]) => a + ':' + l).join(', ') || 'none');
             cell(tr, g.members.join(', '));
             const act = document.createElement('td');
-            const b = document.createElement('button'); b.className = 'btn btn-sm btn-danger'; b.textContent = 'Delete';
+            const b = document.createElement('button'); b.className = 'ui-btn danger sm'; b.textContent = 'Delete';
             b.onclick = async () => { if (!confirm('Delete group ' + g.name + '?')) return;
                 const x = await fetch('/api/system/groups/' + g.id, {method: 'DELETE', credentials: 'same-origin'});
                 if (x.ok) loadGroups(); else patNotice('Not deleted: ' + x.status, 'crit'); };
@@ -981,9 +981,9 @@ async function fwFeedDownload() {
             cell(tr, t.encrypted ? 'yes' : 'no');
             cell(tr, t.last_run ? fmtTs(t.last_run) + ' - ' + (t.last_status || '') : 'never');
             const td = document.createElement('td');
-            const run = document.createElement('button'); run.className = 'btn btn-sm btn-secondary'; run.textContent = 'Back up now';
+            const run = document.createElement('button'); run.className = 'ui-btn sm'; run.textContent = 'Back up now';
             run.onclick = async () => { const j = await post('/api/system/backup-targets/' + t.id + '/run', {}); loadBackupTargets(); };
-            const del = document.createElement('button'); del.className = 'btn btn-sm btn-danger'; del.textContent = 'Delete';
+            const del = document.createElement('button'); del.className = 'ui-btn danger sm'; del.textContent = 'Delete';
             del.onclick = async () => { if (!confirm('Delete target ' + t.name + '?')) return;
                 const x = await fetch('/api/system/backup-targets/' + t.id, {method: 'DELETE', credentials: 'same-origin'});
                 if (x.ok) loadBackupTargets(); };
@@ -1096,11 +1096,11 @@ async function fwFeedDownload() {
             const act = document.createElement('td');
             if (isAdmin) {
                 const d = document.createElement('button');
-                d.className = 'btn btn-sm'; d.textContent = 'Compare'; d.dataset.diff = h.id;
+                d.className = 'ui-btn sm'; d.textContent = 'Compare'; d.dataset.diff = h.id;
                 d.onclick = () => showRevisionDiff(h.id);
                 act.appendChild(d); act.appendChild(document.createTextNode(' '));
                 const b = document.createElement('button');
-                b.className = 'btn btn-sm btn-danger'; b.textContent = 'Restore'; b.dataset.revision = h.id;
+                b.className = 'ui-btn danger sm'; b.textContent = 'Restore'; b.dataset.revision = h.id;
                 b.onclick = () => restoreRevision(h.id);
                 act.appendChild(b);
             }
