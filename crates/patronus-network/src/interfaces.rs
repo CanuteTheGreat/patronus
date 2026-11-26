@@ -714,6 +714,7 @@ impl<'a> Planner<'a> {
                         prefix,
                         self.inp.paths,
                         &i.pd_downstream,
+                        i.dhcp6_pd_len,
                         i.dhcp6_duid.as_deref(),
                         i.dhcp6_iaid,
                     ) {

@@ -78,7 +78,7 @@ for i in 1 2 3; do apt-get update -qq && break; [ "\$i" = 3 ] && exit 1; sleep 1
 apt-get install -y -qq nftables iproute2 curl python3 dnsmasq-base conntrack sqlite3 iputils-ping tcpdump traceroute openssh-server openssh-client >/dev/null
 # lane J feature scenarios: rsyslog (syslog), softflowd (NetFlow), igmpproxy, avahi-daemon (mDNS), tayga + unbound
 # (NAT64/DNS64), xl2tpd + ppp (L2TP), suricata (IDS/IPS), frr (BGP/OSPF)
-apt-get install -y -qq --no-install-recommends rsyslog softflowd igmpproxy tayga unbound xl2tpd ppp suricata frr avahi-daemon >/dev/null
+apt-get install -y -qq --no-install-recommends rsyslog softflowd igmpproxy tayga unbound xl2tpd ppp pppoe suricata frr avahi-daemon >/dev/null
 # lane N LDAP login: OpenLDAP (preseeded so the postinst needs no questions); installed here
 # because scenarios that ran before it leave the container without working DNS
 apt-get install -y -qq debconf-utils >/dev/null
