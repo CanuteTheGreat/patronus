@@ -143,6 +143,7 @@ off until switched on, and costs:
 
 | Image | What it costs |
 |---|---|
+| AX1800 access point, release build (aarch64 musl, the CI recipe) | binary 16,048,944 -> 16,311,328 bytes (+262,384, +1.6 %); xz-compressed 5,823,408 -> 5,891,964 (+68,556) |
 | Slate, release build (mips musl, size-optimised, the CI recipe) | binary 15,189,872 -> 15,321,084 bytes (+131,212, +0.9 %); xz-compressed 4,110,180 -> 4,148,504 (+38,324) |
 | any router image, guard on | measured by the QEMU gates as `GATEMETRIC guard_applyd_rss_*` (applyd resident memory before and with a ban) |
 
