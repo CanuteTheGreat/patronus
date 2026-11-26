@@ -125,11 +125,11 @@ def define(args):
         m.phase("0. OPT interface: roles set the way the console menu sets them (patronus.toml + interfaces assign --from-bootstrap)")
         fw.succeed(f"sed -i '/^opt_interfaces *=/d; s/^lan_interface *=.*/&\\nopt_interfaces = [\"{opt}\"]/' /etc/patronus/patronus.toml")
         out = fw.succeed("patronus interfaces assign --from-bootstrap", timeout=120)
-        roles = fw.succeed("patronus interfaces roles")
+        roles = _roles(fw)
         m.check("opt1-role-assigned", f"OPT1   {opt}" in roles and f"WAN    {wan}" in roles, roles.strip() + " | " + out.strip())
         bad = fw.execute("patronus interfaces assign --wan nosuch0 2>&1")
         m.check("assign-refuses-a-port-that-does-not-exist", bad[0] != 0 and "does not exist" in bad[1], bad[1].strip()[-200:])
-        m.check("refused-assign-changed-nothing", fw.succeed("patronus interfaces roles") == roles, "roles unchanged")
+        m.check("refused-assign-changed-nothing", _roles(fw) == roles, "roles unchanged")
 
         m.phase("1. CLI plan: printed, nothing written")
         before = fw.succeed("patronus config export | sha256sum").split()[0]
@@ -185,6 +185,11 @@ def _kernel_state(m, fw, lan, opt, when):
     m.check(f"imported-rules-loaded-{when}", "LAN web out" in nft and "IoT not to LAN" in nft, "rule comments")
     m.check(f"port-forward-loaded-{when}", f"dnat" in nft and f"{FWD_TARGET}:{FWD_LOCAL}" in nft and f"dport {FWD_PORT}" in nft,
             "\n".join(l for l in nft.splitlines() if "dnat" in l)[:300])
+
+
+def _roles(fw):
+    """the role lines of `patronus interfaces roles` (WAN / LAN / OPTn)"""
+    return "\n".join(ln.strip() for ln in fw.succeed("patronus interfaces roles 2>/dev/null").splitlines() if ln[:3] in ("WAN", "LAN", "OPT"))
 
 
 def _write_tmp(text, suffix):
