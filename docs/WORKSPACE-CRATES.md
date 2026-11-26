@@ -21,7 +21,6 @@ claimed anywhere.
 - `patronus-firewall`
 - `patronus-geodns`
 - `patronus-gitops`
-- `patronus-monitoring`
 - `patronus-mpls`
 - `patronus-network`
 - `patronus-saas`
@@ -48,6 +47,7 @@ their own CI jobs. The rest are experiments and models.
 - `patronus-installer`
 - `patronus-ml`
 - `patronus-mlops`
+- `patronus-monitoring`
 - `patronus-multicloud`
 - `patronus-multitenancy`
 - `patronus-network-functions`
