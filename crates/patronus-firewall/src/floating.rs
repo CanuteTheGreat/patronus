@@ -21,6 +21,7 @@ pub use crate::applier::Roles;
 /// A stored interface group.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct IfGroup {
+    #[serde(default)]
     pub name: String,
     /// Device names or `@role` tokens.
     pub members: Vec<String>,
@@ -31,6 +32,8 @@ pub struct IfGroup {
 /// A stored limiter.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Limiter {
+    /// Taken from the URL on `PUT /limiters/:name`.
+    #[serde(default)]
     pub name: String,
     pub rate_kbit: u32,
     #[serde(default = "default_burst")]

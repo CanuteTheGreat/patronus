@@ -354,6 +354,31 @@ def fw_fail_closed():
     need(nft_input() == before, "the kernel's rules changed after a refused rule")
 
 
+def fw_floating():
+    """Floating rules (lane B): a floating rule on two interfaces renders and loads in this small kernel; a limit this
+    kernel cannot do (no connection counting in the Slate build) is refused with the reason, never half-applied."""
+    caps = jget("/api/firewall/capabilities"); need(all(k in caps for k in ("connlimit", "limit", "dynset")), f"capabilities: {caps}")
+    fl = {"name": "slate-gate floating", "enabled": True, "chain": "forward", "action": "drop", "protocol": "tcp", "port": "9777", "interface": "any",
+          "source": "any", "destination": "any", "description": "gate floating rule", "floating": True, "quick": True, "direction": "in",
+          "interfaces": ["eth1", "br-lan"]}
+    c, t, _ = web("POST", "/api/firewall/rules", fl); need(c == 201, f"floating rule: {c} {t[:200]}"); fid = json.loads(t)["id"]
+    c, t, _ = web("POST", "/api/firewall/rules/apply"); need(c == 200, f"apply floating: {c} {t[:200]}")
+    n = Rok("nft list chain inet patronus forward")
+    need('iifname { "br-lan", "eth1" }' in n and "9777" in n, "the floating rule is not in the kernel's forward chain:\n" + n[-500:])
+    lim = dict(fl, name="slate-gate limits", action="accept", port="9778", max_states=50)
+    c, t, _ = web("POST", "/api/firewall/rules", lim)
+    if caps["connlimit"]:
+        need(c == 201, f"connection limit on a kernel that has it: {c} {t[:200]}"); lid = json.loads(t)["id"]
+        c, t, _ = web("POST", "/api/firewall/rules/apply"); need(c == 200, f"apply limit: {c} {t[:200]}")
+        need("ct count over 50" in Rok("nft list chain inet patronus forward"), "the connection limit is not in the kernel")
+        web("DELETE", f"/api/firewall/rules/{lid}")
+    else:
+        need(c == 400 and "kernel has no" in t, f"limit this kernel cannot do was not refused with a reason: {c} {t[:200]}")
+    c, t, _ = web("DELETE", f"/api/firewall/rules/{fid}"); need(c == 200, f"delete floating: {c}")
+    c, t, _ = web("POST", "/api/firewall/rules/apply"); need(c == 200, f"apply after delete: {c}")
+    need("9777" not in Rok("nft list chain inet patronus forward"), "the floating rule is still in the kernel after delete")
+
+
 def history_rollback():
     h = jget("/api/system/history"); need(h, "no configuration revisions")
     # a revision holds the state BEFORE the change that created it: the revision our change makes is the way back
@@ -433,6 +458,7 @@ def main():
     check("boot 1: boot guard armed, `patronus-guard ok` confirms the boot", boot_guard)
     check("boot 1: firewall rule added through the web API is in the kernel's nft chain after apply", fw_rule)
     check("boot 1: an invalid firewall rule is refused and the kernel's rules stay exactly as they were", fw_fail_closed)
+    check("boot 1: a floating rule renders and loads; limits this kernel lacks are refused with the reason", fw_floating)
     check("boot 1: config change recorded as a revision; restoring the earlier revision removes it from nft", history_rollback)
     check("boot 1: DHCP: a LAN client behind eth2 gets a lease from the router (pool, router + DNS options) and the API lists it", lambda: dhcp_dns(LANC, lease))
     check("boot 1: DNS: the router answers a local host record to that client; an unknown name gets no address", lambda: dns_local() if lease else need(False, "no lease"))
