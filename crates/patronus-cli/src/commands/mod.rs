@@ -28,6 +28,7 @@ pub mod policy;
 pub mod site;
 pub mod status;
 pub mod tunnel;
+pub mod update;
 pub mod users;
 pub mod validate;
 pub mod web;
