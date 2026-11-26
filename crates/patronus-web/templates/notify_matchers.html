@@ -22,6 +22,8 @@
     #nm-card .nm-day[aria-pressed="true"] { background: var(--primary-solid); color: white; border-color: var(--primary-solid); }
     .nm-kinds { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; }
     .nm-kinds label { display: inline-flex; gap: 4px; align-items: center; font-size: 0.85em; }
+    .nm-scroll { overflow-x: auto; max-width: 100%; }
+    .nm-body details { font-size: 0.9em; }
     #nm-status { min-height: 1.4em; margin: 6px 0; font-size: 0.9em; }
     #nm-status.nm-err { color: var(--bad-fg); font-weight: 600; }
     #nm-card .nm-yes { color: var(--ok-fg); font-weight: 600; }
@@ -59,7 +61,9 @@
     </div>
     <div id="nm-preview-box" style="display:none">
         <h3 class="text-sm" id="nm-preview-title">Preview</h3>
+        <div class="nm-scroll" tabindex="0" role="region" aria-label="Preview of recent events (scrolls sideways on a narrow screen)">
         <table class="lan" id="nm-preview-table"><thead><tr><th>Time</th><th>Event</th><th>About</th><th>Severity</th><th>Would be sent</th></tr></thead><tbody></tbody></table>
+        </div>
     </div>
 </div>
 <script>
@@ -143,6 +147,7 @@
     }
     function act(kind, id) {
         const f = find(id); if (!f) return;
+        focusId = id;
         let err = '';
         const sib = f.parent ? f.parent.items : null;
         if (kind === 'up') { if (f.index > 0) err = move(id, f.parent, f.index - 1); }
@@ -251,6 +256,8 @@
             acts.appendChild(btn('\u2715', 'Remove: ' + nm, () => act('del', n._id)));
         }
         row.appendChild(acts);
+        // the row's spoken name follows edits of its leaf (listeners on the row run after the control's own)
+        for (const ev of ['input', 'change', 'click']) row.addEventListener(ev, () => row.setAttribute('aria-label', summary(n)));
         row.onkeydown = (e) => {
             if (e.target !== row || !parent) return;
             const m = {ArrowUp: 'up', ArrowDown: 'down', ArrowRight: 'in', ArrowLeft: 'out'}[e.key];
@@ -262,7 +269,7 @@
         row.ondragend = () => { dragId = null; clearMarks(); };
         row.ondragover = (e) => {
             if (dragId === null) return;
-            const z = zone(row, e, n); if (!z) return;
+            const z = zone(row, e, n); if (!z || contains(find(dragId).node, n._id)) return;
             e.preventDefault(); clearMarks(); row.classList.add('nm-drop-' + z);
         };
         row.ondragleave = () => row.classList.remove('nm-drop-into', 'nm-drop-before', 'nm-drop-after');
@@ -271,7 +278,8 @@
             const z = zone(row, e, n); e.preventDefault(); clearMarks(); if (!z) return;
             const id = dragId; dragId = null;
             let err;
-            if (z === 'into') err = move(id, n, n.items.length);
+            if (contains(find(id).node, n._id)) err = 'An item cannot go inside itself.';
+            else if (z === 'into') err = move(id, n, n.items.length);
             else { const f = find(n._id); err = f.parent ? move(id, f.parent, f.index + (z === 'after' ? 1 : 0)) : 'Drop it inside the top group.'; }
             if (err) say(err, true); else say('Moved by drag and drop.');
             render();
@@ -289,7 +297,6 @@
         const f = find(n._id);
         let z = y < 0.25 ? 'before' : (y > 0.75 ? 'after' : (n.items ? 'into' : (y < 0.5 ? 'before' : 'after')));
         if (!f.parent && z !== 'into') z = n.items ? 'into' : null;
-        if (dragId !== null && contains(find(dragId).node, n._id)) return null;
         return z;
     }
     function clearMarks() { for (const r of document.querySelectorAll('.nm-row')) r.classList.remove('nm-drop-into', 'nm-drop-before', 'nm-drop-after'); }
@@ -332,6 +339,14 @@
         document.dispatchEvent(new CustomEvent('matchers-changed', {detail: list}));
     }
     $('nm-select').onchange = () => open($('nm-select').value);
+    // a channel was pointed at another matcher on the channel list: refresh "used by" without losing the open tree
+    document.addEventListener('hook-matcher-changed', async () => {
+        const name = isNew ? '' : $('nm-name').value;
+        const r = await api('GET', '/api/system/matchers'); list = (r.ok && r.json) || list;
+        const m = list.find((x) => x.name === name);
+        if (m) $('nm-used').textContent = m.used_by.length ? 'Used by channel(s): ' + m.used_by.join(', ') + '.' : 'Not used by any channel yet.';
+        const keep = isNew ? '' : name; fill(); $('nm-select').value = keep;
+    });
     $('nm-save').onclick = async () => {
         const name = $('nm-name').value.trim();
         if (!name) { say('Give the matcher a name.', true); return; }
