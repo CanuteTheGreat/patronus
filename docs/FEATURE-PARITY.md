@@ -186,7 +186,7 @@ Last generated: 2026-11-17 (279 features).
 | Remote syslog forwarding (UDP/TCP/TLS, facility filters) | pfS/OPN/OWrt/UniFi/Fort | tested | missing | missing | TLS syslog and per-source filters not covered. | P1 |
 | PPPoE server (for LAN clients/ISP-in-a-box) | pfS/OPN | missing | missing | missing | Add pppoe-server Svc (S-M). | P2 |
 | L2TP server (LNS, with IPsec) | pfS/OPN/OWrt/Fort | tested | missing | missing | ebuild: USE l2tp not default. | P2 |
-| LLDP/CDP neighbour discovery | OPN/OWrt/UniFi | missing | missing | missing | Svc `lldp` rendering lldpd.conf + neighbour table from `lldpcli -f json` (S). | P2 |
+| LLDP/CDP neighbour discovery | OPN/OWrt/UniFi | untested | missing | missing | Svc `lldp` (USE=lldp): lldpd on the listed interfaces only, per-interface mode, CDP/EDP/FDP/SONMP switches, live neighbour table; netlab `lane-j-lldp.sh` runs a second real lldpd as the switch (not yet run in CI, so untested). Not on the Router tier. | P2 |
 | UPS monitoring (NUT) | pfS/OPN/OWrt | missing | missing | missing | Svc `nut` (ups.conf driver, upsd, upsmon shutdown) (M). Needs USB HW to really test - netlab with dummy-ups driver. | P2 |
 | FreeRADIUS server (for Wi-Fi 802.1X / captive portal) | pfS/OPN/OWrt/UniFi/Fort | missing | missing | missing | Svc `radius` with users/NAS clients; consumed by hostapd (M-L). | P2 |
 | Prometheus node exporter / metrics endpoint | pfS/OPN/OWrt/UniFi | partial | untested | untested | Add node_exporter Svc or extend /metrics with host/interface gauges (S). | P2 |
