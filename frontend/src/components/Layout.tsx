@@ -33,6 +33,18 @@ export default function Layout() {
   const navigate = useNavigate()
   const user = getUser()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [version, setVersion] = useState<string | null>(null)
+  // Product version from the public /api/version endpoint (footer of the nav).
+  useEffect(() => {
+    if (typeof fetch !== 'function') return
+    fetch('/api/version')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setVersion(j && typeof j.version === 'string' ? j.version : null))
+      .catch(() => setVersion(null))
+  }, [])
+  const versionLabel = version && (
+    <p className="px-3 text-xs text-gray-500 dark:text-gray-400" data-testid="app-version">Patronus v{version}</p>
+  )
 
   // Each page gets its own tab/history title ("Traffic - Patronus").
   useEffect(() => {
@@ -76,6 +88,7 @@ export default function Layout() {
             )
           })}
         </nav>
+        <div className="absolute bottom-0 left-0 right-0 border-t border-gray-200 dark:border-gray-700 py-3">{versionLabel}</div>
       </div>
 
       {/* Main content */}
@@ -123,6 +136,7 @@ export default function Layout() {
                   </Link>
                 )
               })}
+              <div className="mt-4 border-t border-gray-200 dark:border-gray-700 pt-3">{versionLabel}</div>
             </nav>
           </>
         )}
