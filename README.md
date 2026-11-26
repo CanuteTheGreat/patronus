@@ -290,7 +290,7 @@ that are not finished are listed separately under
   refused and the old set keeps running); a policy per rule set, category or
   classtype and a per-SID override turns rules into alert, drop or off; an
   alert browser filters by time, address and rule, ranks the top talkers and
-  suppresses or limits a rule from one alert. [C87]
+  suppresses or limits a rule from one alert. [C120]
 - Dynamic routing (USE=dynamic-routing): BGP and OSPF through FRRouting, set up
   on the BGP / OSPF page; learned routes are installed in the kernel and the
   session state is shown live. [C52]
