@@ -11,12 +11,14 @@
 
 **Website and docs: [patronus.errant.solutions](https://patronus.errant.solutions)**
 
+**Support the project:** Patronus is free and stays free. If it saves you time, you can leave a one-time tip, a monthly sponsorship or a crypto donation at [errant.solutions/support/patronus](https://errant.solutions/support/patronus/), or sponsor on [GitHub Sponsors](https://github.com/sponsors/CanuteTheGreat).
+
 Patronus is built for Gentoo first: it ships as an ebuild in this
 repository's own overlay (`gentoo/net-firewall/patronus/`), with USE flags
 selecting what is compiled in (see [AGENTS.md](AGENTS.md)). It is written in
 Rust and enforces its firewall with the kernel's nftables.
 
-Commercial support is **planned after a stable 1.0** (a paid stable update channel with best-effort email support; the free channel stays complete).
+Yearly **support plans for businesses** (best-effort email support, no SLA) are available: [errant.solutions/support/patronus/#plans](https://errant.solutions/support/patronus/#plans). A paid stable update channel is **planned after a stable 1.0** (the free channel stays complete).
 
 Patronus is under active development. This README only states what the
 product does today, and **every claim below is proven by a test that runs in

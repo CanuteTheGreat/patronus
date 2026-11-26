@@ -365,6 +365,7 @@ pub async fn system(State(state): State<AppState>, me: crate::auth::AuthUser) ->
         page: "system",
         site_url: about.site_url,
         source_url: about.source_url,
+        support_url: about.support_url,
         users,
         me_id: me.session.user_id,
         me_username: me.session.username.clone(),

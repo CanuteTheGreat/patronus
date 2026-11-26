@@ -12,6 +12,7 @@
 //!   Environment: `PATRONUS_LICENSES_FILE`.
 //! - `about.site_url`       base address of the product site for the privacy and update-policy links.
 //! - `about.source_url`     address of the public source code.
+//! - `about.support_url`    where to support the project financially (one link on the About card).
 
 use crate::state::AppState;
 use askama::Template;
@@ -26,9 +27,11 @@ use axum::{
 pub const CFG_LICENSES_FILE: &str = "legal.licenses_file";
 pub const CFG_SITE_URL: &str = "about.site_url";
 pub const CFG_SOURCE_URL: &str = "about.source_url";
+pub const CFG_SUPPORT_URL: &str = "about.support_url";
 pub const DEFAULT_LICENSES_FILE: &str = "/usr/share/doc/patronus/THIRD-PARTY-LICENSES.txt.gz";
 pub const DEFAULT_SITE_URL: &str = "https://patronus.errant.solutions";
 pub const DEFAULT_SOURCE_URL: &str = "https://github.com/CanuteTheGreat/patronus";
+pub const DEFAULT_SUPPORT_URL: &str = "https://errant.solutions/support/patronus";
 /// Largest bundle the page will serve (the real one is a few MB uncompressed).
 pub const MAX_BUNDLE_BYTES: u64 = 32 * 1024 * 1024;
 
@@ -37,6 +40,7 @@ pub const MAX_BUNDLE_BYTES: u64 = 32 * 1024 * 1024;
 pub struct AboutLinks {
     pub site_url: String,
     pub source_url: String,
+    pub support_url: String,
 }
 
 async fn setting(state: &AppState, key: &'static str) -> Option<String> {
@@ -67,6 +71,7 @@ pub async fn about_links(state: &AppState) -> AboutLinks {
     AboutLinks {
         site_url: clean_url(setting(state, CFG_SITE_URL).await, DEFAULT_SITE_URL),
         source_url: clean_url(setting(state, CFG_SOURCE_URL).await, DEFAULT_SOURCE_URL),
+        support_url: clean_url(setting(state, CFG_SUPPORT_URL).await, DEFAULT_SUPPORT_URL),
     }
 }
 
@@ -232,6 +237,22 @@ mod tests {
         assert_eq!(
             clean_url(Some("https://x\"y".into()), "https://d"),
             "https://d"
+        );
+    }
+
+    #[test]
+    fn support_link_defaults_to_the_project_support_page_and_is_overridable() {
+        assert_eq!(
+            clean_url(None, DEFAULT_SUPPORT_URL),
+            "https://errant.solutions/support/patronus"
+        );
+        assert_eq!(
+            clean_url(Some("https://pay.example/p/".into()), DEFAULT_SUPPORT_URL),
+            "https://pay.example/p"
+        );
+        assert_eq!(
+            clean_url(Some("javascript:alert(1)".into()), DEFAULT_SUPPORT_URL),
+            DEFAULT_SUPPORT_URL
         );
     }
 
