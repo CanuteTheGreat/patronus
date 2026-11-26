@@ -50,6 +50,13 @@
     <p class="text-sm text-muted" id="nm-used"></p>
     <div id="nm-status" role="status" aria-live="polite"></div>
     <ul id="nm-tree" aria-label="Matcher tree"></ul>
+    <div class="nm-bar" role="group" aria-label="Try an event">
+        <label>Try an event <select id="nm-try-kind" aria-label="Event kind to try"></select></label>
+        <label>About <input id="nm-try-subject" placeholder="WAN" maxlength="64" autocomplete="off" aria-label="Subject of the event to try"></label>
+        <label>Severity <select id="nm-try-sev" aria-label="Severity of the event to try"></select></label>
+        <button type="button" class="btn btn-secondary btn-sm" id="nm-try">Which channels get it now?</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="nm-try-send">Send it</button>
+    </div>
     <div id="nm-preview-box" style="display:none">
         <h3 class="text-sm" id="nm-preview-title">Preview</h3>
         <table class="lan" id="nm-preview-table"><thead><tr><th>Time</th><th>Event</th><th>About</th><th>Severity</th><th>Would be sent</th></tr></thead><tbody></tbody></table>
@@ -352,9 +359,20 @@
         $('nm-preview-box').style.display = '';
         say(r.json.matched + ' of ' + r.json.total + ' recent events would be sent.');
     };
+    async function tryEvent(send) {
+        const r = await api('POST', '/api/system/events/try', {kind: $('nm-try-kind').value, subject: $('nm-try-subject').value.trim(),
+            severity: $('nm-try-sev').value, send});
+        if (!r.ok) { say('Try: ' + ((r.json && r.json.error) || r.status), true); return; }
+        const c = r.json.channels;
+        say((send ? 'Sent to ' : 'Would go to ') + (c.length ? c.join(', ') : 'no channel') + ' (judged now, at the box\'s local time).');
+    }
+    $('nm-try').onclick = () => tryEvent(false);
+    $('nm-try-send').onclick = () => tryEvent(true);
     window.nmList = () => list;
     (async function init() {
         const i = await api('GET', '/api/system/matchers/limits'); if (i.ok) info = Object.assign(info, i.json);
+        for (const k of info.kinds) { const o = el('option', '', k); o.value = k; $('nm-try-kind').appendChild(o); }
+        for (const v of info.severities) { const o = el('option', '', v); o.value = v; $('nm-try-sev').appendChild(o); }
         await reload(''); open('');
     })();
 })();

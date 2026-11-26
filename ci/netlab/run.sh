@@ -60,6 +60,8 @@ cp ci/guest-page-e2e.py "$OUT/"
 cp ci/dashboard-page-e2e.py ci/a11y/vendor/axe.min.js "$OUT/"
 # lane N reverse proxy UI scenario
 cp ci/revproxy-page-e2e.py "$OUT/"
+# lane H UI scenario (notification matcher editor): the Playwright script and its contrast scanner
+cp ci/notify-matchers-page-e2e.py ci/a11y/contrast.js "$OUT/"
 # lane J XDP data plane: the shipped BPF program source
 cp crates/patronus-ebpf/src/xdp_firewall.bpf.c "$OUT/"
 OLD_ENV=

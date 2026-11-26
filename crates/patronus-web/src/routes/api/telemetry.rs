@@ -212,6 +212,48 @@ pub async fn preview_matcher(
 }
 
 #[derive(serde::Deserialize)]
+pub struct TryEvent {
+    pub kind: String,
+    #[serde(default)]
+    pub subject: String,
+    #[serde(default)]
+    pub severity: String,
+    /// false (default): only say which channels would get it; true: send it for real.
+    #[serde(default)]
+    pub send: bool,
+}
+
+/// POST /api/system/events/try -- `{"kind","subject","severity","send"}`: which notification
+/// channels would get such an event right now (their matchers judged at the box's local time),
+/// and with `send` true deliver it to them. Nothing is written to the event log.
+pub async fn try_event(
+    State(state): State<AppState>,
+    _a: AdminUser,
+    Json(b): Json<TryEvent>,
+) -> Response {
+    if !telemetry::EVENT_KINDS.contains(&b.kind.as_str()) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid event kind {:?}: one of {}", b.kind, telemetry::EVENT_KINDS.join(", ")),
+        );
+    }
+    let sev = if b.severity.is_empty() { "info" } else { b.severity.as_str() };
+    if !telemetry::SEVERITIES.contains(&sev) {
+        return error(StatusCode::BAD_REQUEST, format!("Invalid severity {sev:?}: info, warning or critical"));
+    }
+    let e = telemetry::sample_event(&b.kind, &b.subject, sev);
+    let names: Vec<String> = telemetry::route(&state.config_store, &e)
+        .await
+        .into_iter()
+        .map(|h| h.name)
+        .collect();
+    if b.send {
+        telemetry::deliver(state.config_store.clone(), e).await;
+    }
+    Json(json!({"channels": names, "sent": b.send})).into_response()
+}
+
+#[derive(serde::Deserialize)]
 pub struct HookMatcherBody {
     #[serde(default)]
     pub matcher: String,
@@ -246,6 +288,7 @@ pub fn router() -> axum::Router<AppState> {
         .route("/system/hooks/:id/matcher", put(set_hook_matcher))
         .route("/system/matchers", get(list_matchers))
         .route("/system/matchers/limits", get(matcher_info))
+        .route("/system/events/try", axum::routing::post(try_event))
         .route("/system/matchers/preview", axum::routing::post(preview_matcher))
         .route("/system/matchers/:name", put(put_matcher).delete(delete_matcher))
 }
