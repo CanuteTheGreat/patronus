@@ -42,6 +42,13 @@ pub fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+/// Request marker for `cve_state` (`scan_requested`, `fetch_requested`): milliseconds, so two
+/// requests inside one second are two requests (the engine serves a request when its marker is
+/// newer than the last one it served).
+pub fn request_marker() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
 // ---------------------------------------------------------------------------
 // report
 // ---------------------------------------------------------------------------

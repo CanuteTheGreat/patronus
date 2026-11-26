@@ -239,6 +239,9 @@ async fn record_keeps_first_seen_prunes_fixed_and_emits_one_event() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn settings_round_trip_and_policy_apply_in_the_window() {
+    // the fixtures' emerge / portageq / data directory are not system paths: the test switch
+    // (the root engine otherwise refuses them, see settings::the_root_engine_only_runs_the_real_tools)
+    std::env::set_var(settings::TRUST_ANY_PATH_ENV, "1");
     let l = lab(&[("dev-python/joblib", "1.1.0-r1")]);
     let store = ConfigStore::open_in_memory().await.unwrap();
     let marker = l.dir.path().join("emerge-args");

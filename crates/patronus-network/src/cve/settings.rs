@@ -135,15 +135,50 @@ fn abs_path(what: &str, p: &str) -> Result<String> {
     Ok(p.to_string())
 }
 
-/// A program: a bare name found in PATH or an absolute path.
-fn program(what: &str, p: &str) -> Result<String> {
+/// Set to run the netlab/unit-test fixtures: with it any program path and data directory is accepted.
+/// Without it the root engine only runs the real `emerge` / `portageq` from a system directory, because
+/// these settings are writable from the web UI and the engine runs as root inside `patronus applyd`.
+pub const TRUST_ANY_PATH_ENV: &str = "PATRONUS_CVE_TRUST_ANY_PATH";
+
+const SYSTEM_BIN_DIRS: &[&str] = &["/usr/bin", "/usr/sbin", "/bin", "/sbin", "/usr/local/bin"];
+const DATA_DIR_PREFIXES: &[&str] = &["/var/lib/", "/var/cache/", "/run/"];
+
+fn trust_any() -> bool {
+    std::env::var_os(TRUST_ANY_PATH_ENV).is_some()
+}
+
+fn data_dir_with(v: &str, trust: bool) -> Result<String> {
+    let d = abs_path("data_dir", v)?;
+    if !trust && !DATA_DIR_PREFIXES.iter().any(|p| d.starts_with(p)) {
+        return Err(bad(format!(
+            "data_dir {d:?}: under {} only",
+            DATA_DIR_PREFIXES.join(", ")
+        )));
+    }
+    Ok(d)
+}
+
+/// A program: the bare name `want`, or `want` in a system directory (never an arbitrary file: the
+/// engine runs it as root).
+fn program(what: &str, p: &str, want: &str) -> Result<String> {
+    program_with(what, p, want, trust_any())
+}
+
+fn program_with(what: &str, p: &str, want: &str, trust: bool) -> Result<String> {
     let p = p.trim();
-    let ok = !p.is_empty()
+    let shape = !p.is_empty()
         && p.len() < 256
         && !p.contains("..")
         && p.bytes().all(|b| b.is_ascii_graphic() && b != b',');
-    if !ok {
-        return Err(bad(format!("{what} {p:?}")));
+    let allowed = p == want
+        || SYSTEM_BIN_DIRS
+            .iter()
+            .any(|d| p.strip_prefix(d).and_then(|r| r.strip_prefix('/')) == Some(want))
+        || trust;
+    if !shape || !allowed {
+        return Err(bad(format!(
+            "{what} {p:?}: only {want} (or {want} in a system directory) may be run as root"
+        )));
     }
     Ok(p.to_string())
 }
@@ -212,7 +247,7 @@ impl Settings {
             s.manifest_path = abs_path("manifest_path", v)?;
         }
         if let Some(v) = &i.data_dir {
-            s.data_dir = abs_path("data_dir", v)?;
+            s.data_dir = data_dir_with(v, trust_any())?;
         }
         if let Some(v) = &i.binaries {
             s.binaries = v
@@ -221,10 +256,10 @@ impl Settings {
                 .collect::<Result<_>>()?;
         }
         if let Some(v) = &i.portageq {
-            s.portageq = program("portageq", v)?;
+            s.portageq = program("portageq", v, "portageq")?;
         }
         if let Some(v) = &i.emerge {
-            s.emerge = program("emerge", v)?;
+            s.emerge = program("emerge", v, "emerge")?;
         }
         if let Some(v) = &i.security_updates {
             let v = v.trim().to_lowercase();
@@ -392,6 +427,44 @@ mod tests {
         assert!(parse_window("02:00-02:00").is_none());
         assert!(parse_window("25:00-02:00").is_none());
         assert!(parse_window("nonsense").is_none());
+    }
+
+    #[test]
+    fn the_root_engine_only_runs_the_real_tools() {
+        let no = |r: Result<String>| r.unwrap_err().to_string();
+        assert!(
+            no(program_with("emerge", "/tmp/evil", "emerge", false)).contains("may be run as root")
+        );
+        assert!(no(program_with("emerge", "/usr/bin/evil", "emerge", false)).contains("Invalid"));
+        assert!(no(program_with(
+            "portageq",
+            "/home/x/portageq",
+            "portageq",
+            false
+        ))
+        .contains("Invalid"));
+        assert!(no(program_with(
+            "emerge",
+            "/usr/bin/../../tmp/emerge",
+            "emerge",
+            false
+        ))
+        .contains("Invalid"));
+        assert!(no(data_dir_with("/etc/cron.d", false)).contains("Invalid"));
+        assert_eq!(
+            program_with("emerge", "/usr/bin/emerge", "emerge", false).unwrap(),
+            "/usr/bin/emerge"
+        );
+        assert_eq!(
+            program_with("portageq", "portageq", "portageq", false).unwrap(),
+            "portageq"
+        );
+        assert_eq!(
+            data_dir_with("/var/lib/patronus/cve2", false).unwrap(),
+            "/var/lib/patronus/cve2"
+        );
+        // the test switch accepts a fixture
+        assert!(program_with("emerge", "/tmp/fixture/emerge", "emerge", true).is_ok());
     }
 
     #[test]
