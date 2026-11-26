@@ -447,7 +447,10 @@ impl FirewallApplier {
             }
             let variants = match rule_variants(&rule, &roles, &groups, &limiter_map, knobs) {
                 Ok(v) => v,
-                Err(why) if rule.action != FirewallAction::Accept && why.starts_with("unknown interface group") => {
+                Err(why)
+                    if rule.action != FirewallAction::Accept
+                        && why.starts_with("unknown interface group") =>
+                {
                     // a block rule must never silently disappear: refuse the ruleset
                     return Err(Error::Firewall(format!(
                         "{label} is a {} rule that names an {why}, refusing to load a ruleset without it",
@@ -2418,10 +2421,17 @@ mod tests {
     #[tokio::test]
     async fn limit_knobs_set_the_table_size_and_the_default_overload_timeout() {
         let s = seeded(&["eth0"], &["eth1"]).await;
-        assert_eq!(crate::floating::limit_knobs(&s).await.unwrap(), (65535, 3600));
+        assert_eq!(
+            crate::floating::limit_knobs(&s).await.unwrap(),
+            (65535, 3600)
+        );
         assert!(crate::floating::save_limit_knobs(&s, 3, 10).await.is_err());
-        assert!(crate::floating::save_limit_knobs(&s, 1024, 0).await.is_err());
-        crate::floating::save_limit_knobs(&s, 2048, 900).await.unwrap();
+        assert!(crate::floating::save_limit_knobs(&s, 1024, 0)
+            .await
+            .is_err());
+        crate::floating::save_limit_knobs(&s, 2048, 900)
+            .await
+            .unwrap();
         let mut r = FirewallRule::new("rate".into(), ChainType::Forward, FirewallAction::Accept);
         r.interface_in = Some("@lan".into());
         r.ip_version = Some(patronus_core::types::IpVersion::V4);
@@ -2429,15 +2439,28 @@ mod tests {
         r.ext.max_src_rate_secs = Some(10);
         r.ext.overload = Some("bad".into());
         s.save_firewall_rule(&r).await.unwrap();
-        let script = FirewallApplier.render_script(&s, false).await.unwrap().script;
+        let script = FirewallApplier
+            .render_script(&s, false)
+            .await
+            .unwrap()
+            .script;
         assert!(script.contains("add set inet patronus ov_bad_v4 { type ipv4_addr; size 2048; flags dynamic,timeout; timeout 900s; }"), "{script}");
         // a rule's own timeout wins
         r.name = "rate2".into();
         r.ext.overload = Some("bad2".into());
         r.ext.overload_secs = Some(60);
         s.save_firewall_rule(&r).await.unwrap();
-        let script = FirewallApplier.render_script(&s, false).await.unwrap().script;
-        assert!(script.contains("ov_bad2_v4 { type ipv4_addr; size 2048; flags dynamic,timeout; timeout 60s; }"), "{script}");
+        let script = FirewallApplier
+            .render_script(&s, false)
+            .await
+            .unwrap()
+            .script;
+        assert!(
+            script.contains(
+                "ov_bad2_v4 { type ipv4_addr; size 2048; flags dynamic,timeout; timeout 60s; }"
+            ),
+            "{script}"
+        );
     }
 
     #[tokio::test]
