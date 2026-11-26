@@ -393,24 +393,168 @@ fn comment_expr(c: &Option<String>) -> Option<String> {
 /// IPv4 and an IPv6 rule). Every operand is validated first, so nothing
 /// unvalidated is spliced into the script (see `is_valid_address_spec`).
 pub fn render_filter_rule(rule: &FirewallRule, aliases: &AliasMap) -> Result<Vec<String>> {
+    Ok(render_filter_rule_ext(rule, aliases, &RenderCtx::default())?.lines)
+}
+
+/// A limiter (rate cap) as the renderer needs it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LimiterSpec {
+    pub rate_kbit: u32,
+    pub burst_kb: u32,
+    pub per_source: bool,
+}
+
+/// Name of the set that holds an interface group's members.
+pub fn ifgroup_set_name(group: &str) -> String {
+    format!("ifgrp_{group}")
+}
+
+/// Extra rendering input: interface expressions that replace the rule's
+/// own single interface (floating rules, interface groups) and the known
+/// limiters.
+#[derive(Debug, Clone, Default)]
+pub struct RenderCtx {
+    /// Full nft match (`iifname @ifgrp_x`, `iifname { "a", "b" }`) used
+    /// instead of `rule.interface_in`.
+    pub iif: Option<String>,
+    /// Same for the outbound side.
+    pub oif: Option<String>,
+    pub limiters: std::collections::BTreeMap<String, LimiterSpec>,
+}
+
+/// nft lines of one rule plus the sets and chains they need.
+#[derive(Debug, Clone, Default)]
+pub struct Rendered {
+    /// `add rule ...` lines for the normal chain, in order.
+    pub lines: Vec<String>,
+    /// `add rule ...` lines for the limiter chain of the rule's hook
+    /// (they run before the established-connection accept, so they see
+    /// every packet of a flow).
+    pub limit_lines: Vec<String>,
+    /// (set name, `add set` line); deduplicated by the caller.
+    pub sets: Vec<(String, String)>,
+}
+
+/// Chain that carries the limiter rules of a hook (priority before the
+/// filter chain, so established traffic is rate-limited too).
+pub fn limit_chain_name(chain: &ChainType) -> String {
+    format!("lim_{chain}")
+}
+
+/// Script that creates the limiter chain of a hook.
+pub fn limit_chain_script(chain: &ChainType) -> String {
+    format!(
+        "add chain {TABLE_FAMILY} {TABLE_NAME} {} {{ type filter hook {chain} priority -10; policy accept; }}\n",
+        limit_chain_name(chain)
+    )
+}
+
+fn valid_overload_name(s: &str) -> bool {
+    is_valid_alias_name(s)
+}
+
+/// Rate `count` per `secs` seconds as an nft `N/unit` (the smallest unit
+/// that holds the period, count scaled up accordingly).
+fn nft_rate(count: u32, secs: u32) -> String {
+    let secs = secs.max(1) as u64;
+    let (unit, len) = if secs <= 1 {
+        ("second", 1u64)
+    } else if secs <= 60 {
+        ("minute", 60)
+    } else if secs <= 3600 {
+        ("hour", 3600)
+    } else {
+        ("day", 86400)
+    };
+    let n = (count as u64 * len).div_ceil(secs).max(1);
+    format!("{n}/{unit}")
+}
+
+fn set_key(fam: Option<IpVersion>) -> (&'static str, &'static str, &'static str) {
+    match fam {
+        Some(IpVersion::V6) => ("ip6", "ipv6_addr", "v6"),
+        _ => ("ip", "ipv4_addr", "v4"),
+    }
+}
+
+/// Render a filter rule including its floating/state-limit/limiter
+/// options. Every operand is validated first (see `is_valid_address_spec`).
+pub fn render_filter_rule_ext(
+    rule: &FirewallRule,
+    aliases: &AliasMap,
+    ctx: &RenderCtx,
+) -> Result<Rendered> {
+    let mut out = Rendered::default();
     if !rule.enabled {
-        return Ok(Vec::new());
+        return Ok(out);
     }
     let what = "firewall rule";
-    let iin = iface_expr(
-        "iifname",
-        rule.interface_in.as_ref(),
-        "interface_in of firewall rule",
-    )?;
-    let iout = iface_expr(
-        "oifname",
-        rule.interface_out.as_ref(),
-        "interface_out of firewall rule",
-    )?;
+    let ext = &rule.ext;
+    let iin = match &ctx.iif {
+        Some(e) => Some(e.clone()),
+        None => iface_expr(
+            "iifname",
+            rule.interface_in.as_ref(),
+            "interface_in of firewall rule",
+        )?,
+    };
+    let iout = match &ctx.oif {
+        Some(e) => Some(e.clone()),
+        None => iface_expr(
+            "oifname",
+            rule.interface_out.as_ref(),
+            "interface_out of firewall rule",
+        )?,
+    };
     let src = parse_addr("source", rule.source.as_ref(), aliases, what)?;
     let dst = parse_addr("destination", rule.destination.as_ref(), aliases, what)?;
-    let mut lines = Vec::new();
-    for fam in families(&[&src, &dst], rule.ip_version, what)? {
+    let limits = ext.max_states.is_some() || ext.per_source() || ext.overload.is_some();
+    if limits && rule.action != FirewallAction::Accept {
+        return Err(Error::Firewall(format!(
+            "Invalid rule {:?}: state limits and limiters only apply to pass rules",
+            rule.name
+        )));
+    }
+    if (ext.max_src_rate.is_some() != ext.max_src_rate_secs.is_some())
+        || ext.max_src_rate == Some(0)
+        || ext.max_src_rate_secs == Some(0)
+        || ext.max_src_conn == Some(0)
+        || ext.max_states == Some(0)
+    {
+        return Err(Error::Firewall(format!(
+            "Invalid rule {:?}: a state limit needs a positive count (and, for a rate, a period)",
+            rule.name
+        )));
+    }
+    if let Some(o) = &ext.overload {
+        if !valid_overload_name(o) {
+            return Err(Error::Firewall(format!(
+                "Invalid overload table name {o:?}"
+            )));
+        }
+        if ext.max_src_rate.is_none() {
+            return Err(Error::Firewall(format!(
+                "Invalid rule {:?}: an overload table needs a max new connection rate",
+                rule.name
+            )));
+        }
+    }
+    let limiter = match &ext.limiter {
+        Some(n) => Some((
+            n.clone(),
+            ctx.limiters.get(n).cloned().ok_or_else(|| {
+                Error::Firewall(format!("Invalid rule {:?}: unknown limiter {n:?}", rule.name))
+            })?,
+        )),
+        None => None,
+    };
+    let mut fams = families(&[&src, &dst], rule.ip_version, what)?;
+    if ext.per_source() && fams == vec![None] {
+        // per-source sets are typed by family
+        fams = vec![Some(IpVersion::V4), Some(IpVersion::V6)];
+    }
+    let rid = rule.id.unwrap_or(0);
+    for fam in fams {
         let mut parts: Vec<String> = Vec::new();
         parts.extend(iin.clone());
         parts.extend(iout.clone());
@@ -428,6 +572,94 @@ pub fn render_filter_rule(rule: &FirewallRule, aliases: &AliasMap) -> Result<Vec
             fam,
             aliases,
         )?);
+        let head = parts.join(" ");
+        let line = |m: &str, stmt: &str| {
+            format!(
+                "add rule {TABLE_FAMILY} {TABLE_NAME} {} {m} {stmt}",
+                rule.chain
+            )
+        };
+        let (kw, ty, suffix) = set_key(fam);
+        let cm = format!("comment \"patronus rule {rid} limit\"");
+        if let Some(o) = &ext.overload {
+            let secs = ext.overload_secs.unwrap_or(3600).max(1);
+            let name = format!("ov_{o}_{suffix}");
+            out.sets.push((
+                name.clone(),
+                format!(
+                    "add set {TABLE} {name} {{ type {ty}; size 65535; flags dynamic,timeout; timeout {secs}s; }}\n"
+                ),
+            ));
+            // sources already in the overload table are dropped on this
+            // rule's interfaces/chain before anything else
+            let mut base: Vec<String> = Vec::new();
+            base.extend(iin.clone());
+            base.extend(iout.clone());
+            base.push(format!("{kw} saddr @{name}"));
+            out.lines.push(line(&base.join(" "), &format!("drop {cm}")));
+        }
+        if let Some(n) = ext.max_states {
+            out.lines.push(line(
+                &head,
+                &format!("ct state new ct count over {n} drop {cm}"),
+            ));
+        }
+        if let Some(n) = ext.max_src_conn {
+            let name = format!("sc{rid}_{suffix}");
+            out.sets.push((
+                name.clone(),
+                format!(
+                    "add set {TABLE} {name} {{ type {ty}; size 65535; flags dynamic; }}\n"
+                ),
+            ));
+            out.lines.push(line(
+                &head,
+                &format!("ct state new add @{name} {{ {kw} saddr ct count over {n} }} drop {cm}"),
+            ));
+        }
+        if let (Some(n), Some(secs)) = (ext.max_src_rate, ext.max_src_rate_secs) {
+            let name = format!("sr{rid}_{suffix}");
+            out.sets.push((
+                name.clone(),
+                format!(
+                    "add set {TABLE} {name} {{ type {ty}; size 65535; flags dynamic,timeout; timeout {}s; }}\n",
+                    secs.max(1) * 2
+                ),
+            ));
+            let over = format!(
+                "add @{name} {{ {kw} saddr limit rate over {} burst {n} packets }}",
+                nft_rate(n, secs)
+            );
+            let stmt = match &ext.overload {
+                Some(o) => format!(
+                    "ct state new {over} add @ov_{o}_{suffix} {{ {kw} saddr }} drop {cm}"
+                ),
+                None => format!("ct state new {over} drop {cm}"),
+            };
+            out.lines.push(line(&head, &stmt));
+        }
+        if let Some((lname, l)) = &limiter {
+            let bps = (l.rate_kbit as u64 * 125).max(1);
+            let burst = l.burst_kb.max(70);
+            let over = format!("limit rate over {bps} bytes/second burst {burst} kbytes");
+            let stmt = if l.per_source {
+                let name = format!("lm{rid}_{suffix}");
+                out.sets.push((
+                    name.clone(),
+                    format!(
+                        "add set {TABLE} {name} {{ type {ty}; size 65535; flags dynamic,timeout; timeout 300s; }}\n"
+                    ),
+                ));
+                format!("add @{name} {{ {kw} saddr {over} }} drop comment \"patronus rule {rid} limiter {lname}\"")
+            } else {
+                format!("{over} drop comment \"patronus rule {rid} limiter {lname}\"")
+            };
+            out.limit_lines.push(format!(
+                "add rule {TABLE_FAMILY} {TABLE_NAME} {} {head} {stmt}",
+                limit_chain_name(&rule.chain)
+            ));
+        }
+        let mut parts = parts;
         if rule.log {
             let tag = match rule.id {
                 Some(id) => format!("patronus[{id}] {}: ", rule.action),
@@ -443,7 +675,7 @@ pub fn render_filter_rule(rule: &FirewallRule, aliases: &AliasMap) -> Result<Vec
             (a, _) => a.to_string(),
         });
         parts.extend(comment_expr(&rule.comment));
-        lines.push(format!(
+        out.lines.push(format!(
             "add rule {} {} {} {}",
             TABLE_FAMILY,
             TABLE_NAME,
@@ -451,7 +683,7 @@ pub fn render_filter_rule(rule: &FirewallRule, aliases: &AliasMap) -> Result<Vec
             parts.join(" ")
         ));
     }
-    Ok(lines)
+    Ok(out)
 }
 
 /// Name of the chain that marks policy-routed traffic (prerouting, mangle
@@ -491,6 +723,7 @@ pub fn render_policy_rule(
     probe.log = false;
     probe.comment = None;
     probe.chain = ChainType::Forward;
+    probe.ext = Default::default();
     let prefix = format!("add rule {TABLE_FAMILY} {TABLE_NAME} forward ");
     render_filter_rule(&probe, aliases)?
         .into_iter()
@@ -1306,5 +1539,135 @@ mod render_contract_tests {
             ),
             "{l:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod floating_tests {
+    use super::*;
+
+    fn pass_rule(id: u64) -> FirewallRule {
+        let mut r = FirewallRule::new("p".into(), ChainType::Forward, FirewallAction::Accept);
+        r.id = Some(id);
+        r.protocol = Some(Protocol::Tcp);
+        r.dport = Some(PortSpec::Single(80));
+        r
+    }
+
+    fn render(r: &FirewallRule, ctx: &RenderCtx) -> Result<Rendered> {
+        render_filter_rule_ext(r, &Default::default(), ctx)
+    }
+
+    #[test]
+    fn ifgroup_expression_replaces_the_single_interface() {
+        let ctx = RenderCtx {
+            iif: Some("iifname @ifgrp_trusted".into()),
+            ..Default::default()
+        };
+        let out = render(&pass_rule(7), &ctx).unwrap();
+        assert_eq!(out.lines.len(), 1);
+        assert!(
+            out.lines[0].contains("iifname @ifgrp_trusted meta l4proto") || out.lines[0].contains("iifname @ifgrp_trusted tcp dport 80 accept"),
+            "{:?}",
+            out.lines
+        );
+    }
+
+    #[test]
+    fn max_src_conn_and_states_render_before_the_pass_line() {
+        let mut r = pass_rule(7);
+        r.ext.max_states = Some(500);
+        r.ext.max_src_conn = Some(20);
+        let out = render(&r, &RenderCtx::default()).unwrap();
+        // family-agnostic rule with a per-source option: one block per family
+        assert_eq!(out.lines.iter().filter(|l| l.ends_with("accept")).count(), 2);
+        let all = out.lines.join("\n");
+        assert!(all.contains("ct state new ct count over 500 drop"));
+        assert!(all.contains("ct state new add @sc7_v4 { ip saddr ct count over 20 } drop"));
+        assert!(all.contains("ct state new add @sc7_v6 { ip6 saddr ct count over 20 } drop"));
+        assert!(out.sets.iter().any(|(n, d)| n == "sc7_v4" && d.contains("flags dynamic")));
+        let first_accept = out.lines.iter().position(|l| l.ends_with("accept")).unwrap();
+        assert!(out.lines[..first_accept].iter().any(|l| l.contains("sc7_v4")));
+    }
+
+    #[test]
+    fn rate_limit_with_overload_table() {
+        let mut r = pass_rule(9);
+        r.ip_version = Some(IpVersion::V4);
+        r.ext.max_src_rate = Some(15);
+        r.ext.max_src_rate_secs = Some(5);
+        r.ext.overload = Some("flooders".into());
+        r.ext.overload_secs = Some(600);
+        let out = render(&r, &RenderCtx::default()).unwrap();
+        let all = out.lines.join("\n");
+        assert!(all.contains("ip saddr @ov_flooders_v4 drop"), "{all}");
+        assert!(
+            all.contains("ct state new add @sr9_v4 { ip saddr limit rate over 180/minute burst 15 packets } add @ov_flooders_v4 { ip saddr } drop"),
+            "{all}"
+        );
+        assert!(out.sets.iter().any(|(n, d)| n == "ov_flooders_v4" && d.contains("timeout 600s")));
+        assert!(out.lines.last().unwrap().ends_with("accept"));
+        assert_eq!(nft_rate(10, 1), "10/second");
+        assert_eq!(nft_rate(1, 90), "40/hour");
+    }
+
+    #[test]
+    fn limiter_lands_in_the_limiter_chain_not_the_rule_chain() {
+        let mut r = pass_rule(3);
+        r.ip_version = Some(IpVersion::V4);
+        r.ext.limiter = Some("cap".into());
+        let mut ctx = RenderCtx::default();
+        ctx.limiters.insert(
+            "cap".into(),
+            LimiterSpec { rate_kbit: 8000, burst_kb: 128, per_source: true },
+        );
+        let out = render(&r, &ctx).unwrap();
+        assert_eq!(out.limit_lines.len(), 1);
+        let l = &out.limit_lines[0];
+        assert!(l.starts_with("add rule inet patronus lim_forward "), "{l}");
+        assert!(
+            l.contains("add @lm3_v4 { ip saddr limit rate over 1000000 bytes/second burst 128 kbytes } drop"),
+            "{l}"
+        );
+        assert!(!out.lines.iter().any(|l| l.contains("limit rate")));
+        r.ext.limiter = Some("nope".into());
+        assert!(render(&r, &ctx).is_err());
+        // a burst below one GSO packet is raised
+        ctx.limiters.insert(
+            "cap".into(),
+            LimiterSpec { rate_kbit: 800, burst_kb: 8, per_source: false },
+        );
+        r.ext.limiter = Some("cap".into());
+        let out = render(&r, &ctx).unwrap();
+        assert!(out.limit_lines[0].contains("limit rate over 100000 bytes/second burst 70 kbytes drop"));
+    }
+
+    #[test]
+    fn limits_only_on_pass_rules_and_inputs_are_checked() {
+        let none = RenderCtx::default();
+        let mut r = pass_rule(1);
+        r.action = FirewallAction::Drop;
+        r.ext.max_states = Some(5);
+        assert!(render(&r, &none).is_err());
+        let mut r = pass_rule(1);
+        r.ext.max_src_rate = Some(5); // no period
+        assert!(render(&r, &none).is_err());
+        let mut r = pass_rule(1);
+        r.ext.overload = Some("x\" }; flush ruleset #".into());
+        r.ext.max_src_rate = Some(5);
+        r.ext.max_src_rate_secs = Some(1);
+        assert!(render(&r, &none).is_err());
+        let mut r = pass_rule(1);
+        r.ext.overload = Some("ok".into()); // overload without a rate
+        assert!(render(&r, &none).is_err());
+    }
+
+    #[test]
+    fn plain_rule_renders_exactly_as_before() {
+        let r = pass_rule(2);
+        let a = render_filter_rule(&r, &Default::default()).unwrap();
+        let b = render(&r, &RenderCtx::default()).unwrap();
+        assert_eq!(a, b.lines);
+        assert!(b.sets.is_empty() && b.limit_lines.is_empty());
     }
 }

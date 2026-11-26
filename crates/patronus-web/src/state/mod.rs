@@ -17,6 +17,7 @@
 pub mod activity;
 pub mod firewall;
 pub mod fwfeeds;
+pub mod fwgroups;
 pub mod fwlog;
 pub mod host;
 pub mod insight;

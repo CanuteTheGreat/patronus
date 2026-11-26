@@ -380,6 +380,13 @@ pub struct FirewallRule {
     /// through ("" = the default route).
     #[serde(default)]
     pub gateway: String,
+    /// Floating/state-limit/limiter/category options.
+    #[serde(default)]
+    pub ext: patronus_core::types::RuleExt,
+    /// Short human summary of `ext` for the rules table ("floating, quick,
+    /// in on 2 interfaces; max 20 conn/src").
+    #[serde(default)]
+    pub ext_summary: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
