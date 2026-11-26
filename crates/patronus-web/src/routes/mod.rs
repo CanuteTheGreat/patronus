@@ -52,6 +52,7 @@ pub fn build_router(
         .merge(api::qos::pages())
         .merge(api::insights::pages())
         .merge(api::packages::pages())
+        .merge(ids_pages())
         .merge(api::svc::pages())
         .merge(api::segmentation::pages())
         .merge(seg_time_pages())
@@ -629,6 +630,23 @@ pub fn absent_features(
     out
 }
 
+#[cfg(feature = "intrusion-detection")]
+fn ids_router() -> Router<AppState> {
+    api::ids::router()
+}
+#[cfg(not(feature = "intrusion-detection"))]
+fn ids_router() -> Router<AppState> {
+    Router::new()
+}
+#[cfg(feature = "intrusion-detection")]
+fn ids_pages() -> Router<AppState> {
+    api::ids::pages()
+}
+#[cfg(not(feature = "intrusion-detection"))]
+fn ids_pages() -> Router<AppState> {
+    Router::new()
+}
+
 fn api_routes() -> Router<AppState> {
     Router::new()
         .route("/features", get(features))
@@ -648,6 +666,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::insights::router())
         .merge(api::insight_history::router())
         .merge(api::packages::router())
+        .merge(ids_router())
         .merge(api::svc::router())
         .merge(api::segmentation::router())
         .merge(seg_time_router())

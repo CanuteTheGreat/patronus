@@ -143,6 +143,10 @@ pub mod wireless;
 
 #[cfg(feature = "intrusion-detection")]
 pub mod ids;
+#[cfg(feature = "intrusion-detection")]
+pub mod ids_alerts;
+#[cfg(feature = "intrusion-detection")]
+pub mod ids_sets;
 
 #[cfg(feature = "dynamic-routing")]
 pub mod frr;

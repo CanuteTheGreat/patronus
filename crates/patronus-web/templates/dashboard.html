@@ -87,6 +87,34 @@
 </section>
 {% endfor %}
 </div>
+<div class="card" id="ids-card" style="display:none">
+    <div class="card-header"><h2 class="card-title">Intrusion detection</h2></div>
+    <p class="text-sm" id="ids-card-line">Loading...</p>
+    <p class="text-sm" id="ids-card-top"></p>
+    <p class="text-sm"><a href="/svc/ids/alerts">Alerts</a> &middot; <a href="/svc/ids">Rule sets and policy</a></p>
+</div>
+<script>
+// Intrusion detection status card (only when this build has it)
+fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(async f => {
+    if (!f || !(f.features || []).includes('intrusion-detection')) return;
+    const d = await fetch('/api/svc/ids', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null);
+    if (!d) return;
+    const st = d.status || {}, s = d.settings || {};
+    const line = document.getElementById('ids-card-line');
+    let txt;
+    if (!s.enabled) txt = 'Off. Turn it on in the settings to watch traffic with Suricata.';
+    else if (!st.installed) txt = 'On, but Suricata is not installed on this system.';
+    else {
+        txt = (st.running ? 'Running' : 'NOT running') + ' in ' + (s.mode === 'ips' ? 'inline protection (IPS)' : 'detection (IDS)') + ' mode with ' + (st.rules_loaded || 0) + ' downloaded and ' + (st.custom_rules || 0) + ' own rules';
+        if (st.rules_dropping) txt += ' (' + st.rules_dropping + ' set to block)';
+        txt += '. Rule sets updated ' + (st.last_rule_update ? new Date(st.last_rule_update * 1000).toLocaleString() : 'never') + '.';
+    }
+    line.textContent = txt;
+    if (s.enabled && !st.running) line.className = 'text-sm bad';
+    document.getElementById('ids-card-top').textContent = (st.alerts_24h || 0) + ' alert(s) in the last 24 hours' + (st.blocked_24h ? ', ' + st.blocked_24h + ' blocked' : '') + '.';
+    document.getElementById('ids-card').style.display = '';
+}).catch(() => {});
+</script>
 {% endblock %}
 
 {% block extra_scripts %}
