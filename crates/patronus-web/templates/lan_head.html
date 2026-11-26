@@ -1,15 +1,16 @@
 <style>
-    table.lan { width: 100%; border-collapse: collapse; margin: 8px 0 16px; }
-    table.lan th, table.lan td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; font-size: 0.9em; }
+    /* LAN-service pages (DHCP, DNS, NTP, segmentation, svc/*): tables and forms on the ui-kit tokens; the shared
+       table look (30 px rows, sunken header) comes from base.html. */
+    table.lan { width: 100%; margin: 8px 0 16px; }
     form.lan-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin: 8px 0; }
     /* a flex item never grows past the form: without min-width 0 a label took the intrinsic width of its textarea (cols) or input (size) and the page scrolled sideways on a phone */
-    form.lan-form label { display: flex; flex-direction: column; font-size: 0.8em; color: var(--muted); min-width: 0; max-width: 100%; }
-    form.lan-form input, form.lan-form select { padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 4px; min-width: 120px; }
+    form.lan-form label { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-sm); color: var(--c-muted); min-width: 0; max-width: 100%; }
+    form.lan-form input, form.lan-form select { min-width: 120px; }
     form.lan-form input, form.lan-form select, form.lan-form textarea { max-width: 100%; box-sizing: border-box; }
-    .ok { color: var(--ok-fg); font-weight: 600; }
-    .bad { color: var(--bad-fg); font-weight: 600; }
-    .empty { color: var(--muted); font-style: italic; }
-    .alert-error { background: var(--bad-bg); color: var(--bad-fg); padding: 10px; border-radius: 6px; margin-bottom: 12px; }
+    .ok { color: var(--c-ok); font-weight: 600; }
+    .bad { color: var(--c-crit); font-weight: 600; }
+    .empty { color: var(--c-muted); padding: var(--s-3) 0; }
+    .alert-error { background: var(--c-crit-bg); color: var(--c-crit); border: 1px solid var(--c-border); padding: 8px var(--s-3); border-radius: var(--r-md); margin-bottom: 12px; }
     .mono { font-family: var(--font-mono); }
     table.lan select { min-height: 24px; }
 </style>
