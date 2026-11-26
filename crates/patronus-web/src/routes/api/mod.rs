@@ -8,6 +8,8 @@ pub mod backup_targets;
 pub mod device;
 pub mod firewall;
 pub mod groups;
+#[cfg(feature = "intrusion-detection")]
+pub mod ids;
 pub mod ha;
 pub mod insight_history;
 pub mod insights;

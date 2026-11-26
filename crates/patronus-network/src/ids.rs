@@ -14,7 +14,14 @@
 //! checked with `suricata -T` before the running instance is replaced; a rule
 //! Suricata rejects leaves the previous one running and is reported.
 //! The Alerts card of the page reads the last alerts from eve.json.
+//!
+//! Rule sets (ET Open, abuse.ch, ...) are managed by [`crate::ids_sets`]: typed sources, a nightly
+//! download in the product's own task, `suricata -T` before a new set replaces the running one,
+//! per-ruleset/category/classtype policy and per-SID overrides, suppress/threshold entries. The
+//! alert history (`ids_alerts`, retention) and its browser queries are [`crate::ids_alerts`].
 
+use crate::ids_alerts;
+use crate::ids_sets::{self, CurlFetch, Extra, Schedule};
 use crate::lan::{self, invalid};
 use crate::supervise::{which, write_atomic, Supervisor};
 use crate::svc::{self, Coll, Field, Kind, Settings, Spec, Svc};
@@ -29,12 +36,14 @@ pub const LOG_DIR: &str = "/var/log/suricata";
 pub const DISTRO_RULES: &str = "/var/lib/suricata/rules/suricata.rules";
 pub const QUEUE: u16 = 3;
 
-static FIELDS: [Field; 5] = [
+static FIELDS: [Field; 11] = [
     Field::new("enabled", "Intrusion detection", Kind::Bool).def("0"),
     Field::new("mode", "Mode", Kind::Select(&["ids", "ips"]))
         .def("ids")
         .help("ids = alert only; ips = inline, rules with action drop block the packets"),
-    Field::new("interface", "Watch interface", Kind::Iface).def("@wan"),
+    Field::new("interface", "Watch interface", Kind::Iface)
+        .def("@wan")
+        .help("@wan, @lan, @optN or a device name; more interfaces below"),
     Field::new("home_net", "Protected networks (HOME_NET)", Kind::Text)
         .def("192.168.0.0/16,10.0.0.0/8,172.16.0.0/12")
         .help("comma-separated networks"),
@@ -45,6 +54,112 @@ static FIELDS: [Field; 5] = [
     )
     .def("1")
     .help("uses /var/lib/suricata/rules/suricata.rules when it exists"),
+    Field::new(
+        "update_enabled",
+        "Update the rule sets automatically",
+        Kind::Bool,
+    )
+    .def("1")
+    .help("downloads the enabled rule sets in the window below; a new one is fetched at once"),
+    Field::new(
+        "update_hour",
+        "Update window starts at (hour, 0-23)",
+        Kind::Int(0, 23),
+    )
+    .def("3")
+    .help("local time of this router"),
+    Field::new(
+        "update_window_hours",
+        "Update window length (hours)",
+        Kind::Int(1, 24),
+    )
+    .def("3"),
+    Field::new(
+        "update_interval_hours",
+        "Update at most every (hours)",
+        Kind::Int(1, 720),
+    )
+    .def("24"),
+    Field::new(
+        "alert_retention_days",
+        "Keep alerts for (days)",
+        Kind::Int(1, 3650),
+    )
+    .def("30"),
+    Field::new(
+        "alert_max_rows",
+        "Keep at most this many alerts",
+        Kind::Int(1000, 5_000_000),
+    )
+    .def("200000"),
+];
+
+static SOURCE_FIELDS: [Field; 7] = [
+    Field::new("key", "Short name", Kind::Token)
+        .req()
+        .help("letters, digits, - and _ (used in the policy)"),
+    Field::new("name", "Name", Kind::Text).req(),
+    Field::new("url", "Download URL", Kind::Text).req().help(
+        "http:// or https://; {suricata_version} is replaced by the installed Suricata's version",
+    ),
+    Field::new(
+        "format",
+        "Format",
+        Kind::Select(&["tar.gz", "rules", "rules.gz"]),
+    )
+    .def("tar.gz"),
+    Field::new("licence", "Licence", Kind::Text),
+    Field::new("enabled", "Use this rule set", Kind::Bool).def("0"),
+    Field::new("max_mb", "Largest download (MB)", Kind::Int(1, 512)).def("64"),
+];
+
+static POLICY_FIELDS: [Field; 5] = [
+    Field::new("scope", "Applies to", Kind::Select(&["ruleset", "category", "classtype"]))
+        .def("ruleset")
+        .help("a rule set, a category (the rule file, e.g. emerging-malware) or a classtype"),
+    Field::new("target", "Name", Kind::Token).req(),
+    Field::new("action", "Action", Kind::Select(&["alert", "drop", "disable"]))
+        .def("alert")
+        .help("drop only blocks in inline (IPS) mode; most specific policy wins, a SID override beats all"),
+    Field::new("note", "Note", Kind::Text),
+    Field::new("enabled", "Enabled", Kind::Bool).def("1"),
+];
+
+static OVERRIDE_FIELDS: [Field; 4] = [
+    Field::new("sid", "Rule SID", Kind::Int(1, 4_294_967_295)).req(),
+    Field::new(
+        "action",
+        "Action",
+        Kind::Select(&["alert", "drop", "disable"]),
+    )
+    .def("disable"),
+    Field::new("note", "Note", Kind::Text),
+    Field::new("enabled", "Enabled", Kind::Bool).def("1"),
+];
+
+static SUPPRESS_FIELDS: [Field; 8] = [
+    Field::new("sid", "Rule SID", Kind::Int(1, 4_294_967_295)).req(),
+    Field::new(
+        "kind",
+        "What",
+        Kind::Select(&["suppress", "limit", "threshold", "both"]),
+    )
+    .def("suppress")
+    .help("suppress = no alert; limit = at most count alerts per period; threshold = alert every count-th match"),
+    Field::new("track", "Tracked by", Kind::Select(&["none", "by_src", "by_dst"]))
+        .def("none")
+        .help("limit/threshold need by_src or by_dst; suppress with an address needs one too"),
+    Field::new("ip", "Only for address", Kind::Text)
+        .help("suppress only: an address or address/prefix of the source (by_src) or destination (by_dst)"),
+    Field::new("count", "Count", Kind::Int(1, 100_000)),
+    Field::new("seconds", "Period (seconds)", Kind::Int(1, 2_592_000)),
+    Field::new("note", "Note", Kind::Text),
+    Field::new("enabled", "Enabled", Kind::Bool).def("1"),
+];
+
+static IFACE_FIELDS: [Field; 2] = [
+    Field::new("iface", "Interface", Kind::Iface).req(),
+    Field::new("enabled", "Enabled", Kind::Bool).def("1"),
 ];
 
 static RULE_FIELDS: [Field; 8] = [
@@ -78,14 +193,51 @@ static SPEC: Spec = Spec {
             running ones.",
     applier: "ids",
     fields: &FIELDS,
-    colls: &[Coll {
-        key: "rules",
-        title: "Rules",
-        table: "ids_rules",
-        fields: &RULE_FIELDS,
-        unique: None,
-    }],
-    actions: &[],
+    colls: &[
+        Coll {
+            key: "sources",
+            title: "Rule sets (downloaded)",
+            table: "ids_sources",
+            fields: &SOURCE_FIELDS,
+            unique: Some("key"),
+        },
+        Coll {
+            key: "policies",
+            title: "Policy per rule set / category / classtype",
+            table: "ids_policies",
+            fields: &POLICY_FIELDS,
+            unique: None,
+        },
+        Coll {
+            key: "overrides",
+            title: "Rule overrides (by SID)",
+            table: "ids_overrides",
+            fields: &OVERRIDE_FIELDS,
+            unique: None,
+        },
+        Coll {
+            key: "suppress",
+            title: "Suppress and threshold",
+            table: "ids_suppress",
+            fields: &SUPPRESS_FIELDS,
+            unique: None,
+        },
+        Coll {
+            key: "interfaces",
+            title: "More interfaces to watch",
+            table: "ids_ifaces",
+            fields: &IFACE_FIELDS,
+            unique: None,
+        },
+        Coll {
+            key: "rules",
+            title: "Your own rules",
+            table: "ids_rules",
+            fields: &RULE_FIELDS,
+            unique: None,
+        },
+    ],
+    actions: &[("update", "Update rule sets now")],
 };
 
 pub struct IdsSvc;
@@ -129,6 +281,128 @@ fn check_rule(body: &Value) -> Result<()> {
     Ok(())
 }
 
+/// The row as it will be stored: the stored row (when editing) with the request's fields on top.
+async fn effective(
+    store: &ConfigStore,
+    c: &Coll,
+    id: Option<i64>,
+    body: &Value,
+) -> Result<serde_json::Map<String, Value>> {
+    let mut m = serde_json::Map::new();
+    if let Some(id) = id {
+        if let Some(r) = svc::raw_rows(store, c)
+            .await?
+            .into_iter()
+            .find(|r| r["id"].as_i64() == Some(id))
+        {
+            m = r;
+        }
+    }
+    if let Some(o) = body.as_object() {
+        for (k, v) in o {
+            m.insert(k.clone(), v.clone());
+        }
+    }
+    Ok(m)
+}
+
+fn gs(m: &serde_json::Map<String, Value>, k: &str) -> String {
+    match m.get(k) {
+        Some(Value::String(s)) => s.trim().to_string(),
+        Some(Value::Number(n)) => n.to_string(),
+        _ => String::new(),
+    }
+}
+
+/// An address or address/prefix, or empty.
+fn check_ip_or_net(s: &str) -> bool {
+    s.is_empty()
+        || s.parse::<std::net::IpAddr>().is_ok()
+        || s.parse::<ipnetwork::IpNetwork>().is_ok()
+}
+
+async fn check_row(store: &ConfigStore, coll: &str, id: Option<i64>, body: &Value) -> Result<()> {
+    let c = svc::find_coll(&SPEC, coll)?;
+    match coll {
+        "rules" => check_rule(body),
+        "sources" => {
+            let m = effective(store, c, id, body).await?;
+            let key = gs(&m, "key");
+            if key.is_empty()
+                || key.len() > 32
+                || !key
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            {
+                return Err(invalid(format!(
+                    "rule set short name {key:?} (letters, digits, - and _, at most 32)"
+                )));
+            }
+            ids_sets::check_url(&gs(&m, "url"))
+        }
+        "policies" => {
+            let m = effective(store, c, id, body).await?;
+            let (scope, target) = (gs(&m, "scope"), gs(&m, "target"));
+            let dup = svc::raw_rows(store, c).await?.iter().any(|r| {
+                r["id"].as_i64() != id && gs(r, "scope") == scope && gs(r, "target") == target
+            });
+            if dup {
+                return Err(invalid(format!(
+                    "request: a policy for {scope} {target:?} already exists (change that one)"
+                )));
+            }
+            Ok(())
+        }
+        "overrides" => {
+            let m = effective(store, c, id, body).await?;
+            let sid = gs(&m, "sid");
+            let dup = svc::raw_rows(store, c)
+                .await?
+                .iter()
+                .any(|r| r["id"].as_i64() != id && gs(r, "sid") == sid);
+            if dup {
+                return Err(invalid(format!(
+                    "request: rule {sid} already has an override (change that one)"
+                )));
+            }
+            Ok(())
+        }
+        "suppress" => {
+            let m = effective(store, c, id, body).await?;
+            let (kind, track, ip) = (gs(&m, "kind"), gs(&m, "track"), gs(&m, "ip"));
+            let tracked = track == "by_src" || track == "by_dst";
+            if !check_ip_or_net(&ip) {
+                return Err(invalid(format!(
+                    "suppress address {ip:?} (an address or address/prefix)"
+                )));
+            }
+            if kind == "suppress" {
+                if !ip.is_empty() && !tracked {
+                    return Err(invalid(
+                        "suppress: an address needs \"Tracked by\" by_src or by_dst",
+                    ));
+                }
+            } else {
+                if !tracked {
+                    return Err(invalid(format!(
+                        "{kind}: \"Tracked by\" must be by_src or by_dst"
+                    )));
+                }
+                if !ip.is_empty() {
+                    return Err(invalid(format!(
+                        "{kind}: an address only works for suppress"
+                    )));
+                }
+                if gs(&m, "count").is_empty() || gs(&m, "seconds").is_empty() {
+                    return Err(invalid(format!("{kind}: count and period are required")));
+                }
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
 #[async_trait]
 impl Svc for IdsSvc {
     fn spec(&self) -> &'static Spec {
@@ -149,9 +423,26 @@ impl Svc for IdsSvc {
         id: Option<i64>,
         body: &Value,
     ) -> Result<i64> {
-        check_rule(body)?;
         let c = svc::find_coll(&SPEC, coll)?;
+        check_row(store, coll, id, body).await?;
         svc::save_row(store, c, id, body).await
+    }
+
+    async fn action(&self, store: &ConfigStore, name: &str, _body: &Value) -> Result<Value> {
+        match name {
+            "update" => {
+                ids_sets::request_update(store).await?;
+                Ok(
+                    json!({"requested": true, "note": "the rule sets are downloaded and checked now; see the status below"}),
+                )
+            }
+            _ => Err(invalid(format!("request: no action {name:?}"))),
+        }
+    }
+
+    /// "Update now" is a request the root applier acts on while it applies.
+    fn action_applies(&self, name: &str) -> bool {
+        name == "update"
     }
 }
 
@@ -168,7 +459,7 @@ pub struct Rule {
 }
 
 pub async fn rules(store: &ConfigStore) -> Result<Vec<Rule>> {
-    Ok(svc::raw_rows(store, &SPEC.colls[0])
+    Ok(svc::raw_rows(store, svc::find_coll(&SPEC, "rules")?)
         .await?
         .iter()
         .filter(|r| lan::flag(r["enabled"].as_str().unwrap_or("")))
@@ -254,8 +545,8 @@ pub fn render_yaml(i: &YamlInput) -> String {
         }
     }
     c.push_str(&format!(
-        "default-rule-path: {}\nrule-files:\n  - patronus.rules\n",
-        i.rules_dir
+        "default-rule-path: {}\nthreshold-file: {}/threshold.config\nrule-files:\n  - patronus.rules\n  - sources.rules\n",
+        i.rules_dir, i.rules_dir
     ));
     if i.distro_rules {
         c.push_str(&format!("  - {DISTRO_RULES}\n"));
@@ -290,6 +581,9 @@ pub fn recent_alerts(eve: &std::path::Path, n: usize) -> Vec<Value> {
     v
 }
 
+/// One run of the applier or of the background task at a time: both write the rule files.
+static RUN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[derive(Clone)]
 pub struct IdsApplier {
     sup: Supervisor,
@@ -308,6 +602,14 @@ impl Default for IdsApplier {
     }
 }
 
+/// Everything the config says about the running IDS.
+struct Plan {
+    s: Settings,
+    devs: Vec<String>,
+    home: Vec<String>,
+    rules: Vec<Rule>,
+}
+
 impl IdsApplier {
     pub fn with_supervisor(sup: Supervisor, log_dir: std::path::PathBuf, check: bool) -> Self {
         Self {
@@ -317,15 +619,198 @@ impl IdsApplier {
         }
     }
 
-    async fn plan(
+    fn dir(&self) -> std::path::PathBuf {
+        self.sup.paths.state_dir.join("suricata")
+    }
+
+    async fn plan(&self, store: &ConfigStore) -> Result<Plan> {
+        let s = Settings::load(store, &SPEC).await?;
+        let mut devs = lan::resolve_iface(store, &s.s("interface")).await?;
+        for r in svc::raw_rows(store, svc::find_coll(&SPEC, "interfaces")?).await? {
+            if !lan::flag(r["enabled"].as_str().unwrap_or("")) {
+                continue;
+            }
+            for d in lan::resolve_iface(store, r["iface"].as_str().unwrap_or("")).await? {
+                if !devs.contains(&d) {
+                    devs.push(d);
+                }
+            }
+        }
+        let home = check_home_net(&s.s("home_net"))?;
+        Ok(Plan {
+            s,
+            devs,
+            home,
+            rules: rules(store).await?,
+        })
+    }
+
+    fn schedule(s: &Settings) -> Schedule {
+        Schedule {
+            enabled: s.b("update_enabled"),
+            hour: s.n("update_hour"),
+            window_hours: s.n("update_window_hours"),
+            interval_hours: s.n("update_interval_hours"),
+        }
+    }
+
+    fn yaml_for(&self, p: &Plan, rules_dir: &std::path::Path) -> String {
+        render_yaml(&YamlInput {
+            mode: &p.s.s("mode"),
+            devices: &p.devs,
+            home_net: &p.home,
+            rules_dir: &rules_dir.to_string_lossy(),
+            log_dir: &self.log_dir.to_string_lossy(),
+            distro_rules: p.s.b("distro_rules") && std::path::Path::new(DISTRO_RULES).exists(),
+            classification: std::path::Path::new("/etc/suricata/classification.config").exists(),
+        })
+    }
+
+    /// `suricata -T` on the bundle (`patronus.rules`, `sources.rules`, `threshold.config`) in `dir`.
+    fn test_bundle(
+        &self,
+        bin: &std::path::Path,
+        p: &Plan,
+        dir: &std::path::Path,
+    ) -> std::result::Result<(), String> {
+        let cand = dir.join("suricata.yaml.new");
+        write_atomic(&cand, &self.yaml_for(p, dir), 0o644).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&self.log_dir).ok();
+        let o = std::process::Command::new(bin)
+            .args(["-T", "-c"])
+            .arg(&cand)
+            .arg("-l")
+            .arg(&self.log_dir)
+            .output()
+            .map_err(|e| format!("suricata -T: {e}"))?;
+        let _ = std::fs::remove_file(&cand);
+        if o.status.success() {
+            return Ok(());
+        }
+        let out = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let tail: Vec<&str> = out
+            .lines()
+            .filter(|l| l.contains("rror") || l.contains("ERR"))
+            .take(6)
+            .collect();
+        Err(if tail.is_empty() {
+            out.trim().chars().take(400).collect::<String>()
+        } else {
+            tail.join(" | ")
+        })
+    }
+
+    /// Download the sources that are due (`force`: all enabled ones), check them against the rest
+    /// of the running set and swap them in. Caller holds [`RUN`].
+    async fn run_update(
         &self,
         store: &ConfigStore,
-    ) -> Result<(Settings, Vec<String>, Vec<String>, Vec<Rule>)> {
-        let s = Settings::load(store, &SPEC).await?;
-        let devs = lan::resolve_iface(store, &s.s("interface")).await?;
-        let home = check_home_net(&s.s("home_net"))?;
-        Ok((s, devs, home, rules(store).await?))
+        p: &Plan,
+        force: bool,
+    ) -> Result<Vec<ids_sets::Outcome>> {
+        let dir = self.dir();
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| Error::Service(format!("{}: {e}", dir.display())))?;
+        let bin = which("suricata");
+        let thr = ids_sets::render_threshold(store).await?;
+        let extra = Extra {
+            files: vec![
+                ("patronus.rules", render_rules(&p.rules)),
+                ("threshold.config", thr),
+            ],
+        };
+        let version = bin.as_deref().and_then(ids_sets::suricata_version);
+        let fetch = CurlFetch {
+            tmp: dir.join("dl"),
+        };
+        let check = self.check;
+        let mut validate = |cand: &std::path::Path| -> std::result::Result<(), String> {
+            match (&bin, check) {
+                (Some(b), true) => self.test_bundle(b, p, cand),
+                _ => Ok(()),
+            }
+        };
+        ids_sets::update(
+            store,
+            &dir,
+            &fetch,
+            &Self::schedule(&p.s),
+            force,
+            version.as_deref(),
+            &extra,
+            &mut validate,
+        )
+        .await
     }
+
+    /// One pass of the background task: collect alerts, apply retention, and download the rule
+    /// sets that are due (then re-apply so the daemon runs them).
+    pub async fn tick(&self, store: &ConfigStore) {
+        if let Err(e) = ids_alerts::ingest(store, &self.log_dir.join("eve.json")).await {
+            tracing::warn!("ids alerts: {e}");
+        }
+        let Ok(p) = self.plan(store).await else {
+            return;
+        };
+        static LAST_PRUNE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+        let t = lan::now();
+        if t - LAST_PRUNE.load(std::sync::atomic::Ordering::Relaxed) >= 600 {
+            LAST_PRUNE.store(t, std::sync::atomic::Ordering::Relaxed);
+            if let Err(e) = ids_alerts::prune(
+                store,
+                p.s.n("alert_retention_days"),
+                p.s.n("alert_max_rows"),
+            )
+            .await
+            {
+                tracing::warn!("ids alert retention: {e}");
+            }
+        }
+        if !p.s.b("enabled") || !p.s.b("update_enabled") {
+            return;
+        }
+        let changed = {
+            let _g = RUN.lock().await;
+            match self.run_update(store, &p, false).await {
+                Ok(o) => o.iter().any(|x| x.status == "ok"),
+                Err(e) => {
+                    tracing::warn!("ids rule-set update: {e}");
+                    false
+                }
+            }
+        };
+        if changed {
+            if let Err(e) = self.apply(store).await {
+                tracing::warn!("ids apply after the rule-set update: {e}");
+            }
+        }
+    }
+}
+
+/// The background task of the root process (applyd, or patronus-web when there is no applyd):
+/// every `PATRONUS_IDS_TICK_SECS` (default 60) collect alerts and run due rule-set updates.
+pub fn spawn_task(store: std::sync::Arc<ConfigStore>, only_without_applyd: bool) {
+    let secs = std::env::var("PATRONUS_IDS_TICK_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(60);
+    tokio::spawn(async move {
+        let a = IdsApplier::default();
+        let mut t = tokio::time::interval(std::time::Duration::from_secs(secs));
+        t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            t.tick().await;
+            if only_without_applyd && crate::applyd::socket_path().exists() {
+                continue;
+            }
+            a.tick(&store).await;
+        }
+    });
 }
 
 #[async_trait]
@@ -339,8 +824,10 @@ impl Applier for IdsApplier {
     }
 
     async fn apply(&self, store: &ConfigStore) -> Result<ApplyReport> {
+        let _g = RUN.lock().await;
         let mut rep = ApplyReport::default();
-        let (s, devs, home, rs) = self.plan(store).await?;
+        let p = self.plan(store).await?;
+        let s = &p.s;
         if !s.b("enabled") {
             let was = self.sup.stop(svc::DAEMON_SERVICE, INSTANCE).await?;
             rep.applied(if was {
@@ -350,7 +837,7 @@ impl Applier for IdsApplier {
             });
             return Ok(rep);
         }
-        if devs.is_empty() {
+        if p.devs.is_empty() {
             return Err(invalid(format!(
                 "intrusion detection: interface {} is not assigned to any device",
                 s.s("interface")
@@ -363,63 +850,58 @@ impl Applier for IdsApplier {
                     .into(),
             )
         })?;
-        let dir = self.sup.paths.state_dir.join("suricata");
+        let dir = self.dir();
         std::fs::create_dir_all(&dir)
             .map_err(|e| Error::Service(format!("{}: {e}", dir.display())))?;
         std::fs::create_dir_all(&self.log_dir).ok();
-        let rules_path = dir.join("patronus.rules");
-        let conf = dir.join("suricata.yaml");
         let ips = s.s("mode") == "ips";
-        let yaml = render_yaml(&YamlInput {
-            mode: &s.s("mode"),
-            devices: &devs,
-            home_net: &home,
-            rules_dir: &dir.to_string_lossy(),
-            log_dir: &self.log_dir.to_string_lossy(),
-            distro_rules: s.b("distro_rules") && std::path::Path::new(DISTRO_RULES).exists(),
-            classification: std::path::Path::new("/etc/suricata/classification.config").exists(),
-        });
-        let new_rules = render_rules(&rs);
-        let old_rules = std::fs::read_to_string(&rules_path).ok();
-        let rules_changed = write_atomic(&rules_path, &new_rules, 0o644)?;
-        let cand = dir.join("suricata.yaml.new");
-        if self.check {
-            write_atomic(&cand, &yaml, 0o644)?;
-            let o = std::process::Command::new(&bin)
-                .args([
-                    "-T",
-                    "-c",
-                    &cand.to_string_lossy(),
-                    "-l",
-                    &self.log_dir.to_string_lossy(),
-                ])
-                .output()
-                .map_err(|e| Error::Service(format!("suricata -T: {e}")))?;
-            let _ = std::fs::remove_file(&cand);
-            if !o.status.success() {
-                if let Some(old) = old_rules {
-                    let _ = write_atomic(&rules_path, &old, 0o644);
-                }
-                let out = format!(
-                    "{}{}",
-                    String::from_utf8_lossy(&o.stdout),
-                    String::from_utf8_lossy(&o.stderr)
-                );
-                let tail: Vec<&str> = out
-                    .lines()
-                    .filter(|l| l.contains("rror") || l.contains("ERR"))
-                    .take(6)
-                    .collect();
-                return Err(invalid(format!(
-                    "intrusion detection config (rejected by suricata -T, previous rules kept): {}",
-                    if tail.is_empty() {
-                        out.trim().chars().take(400).collect::<String>()
-                    } else {
-                        tail.join(" | ")
+
+        // "Update now": download and check the rule sets first (refusals are recorded per source
+        // and never fail the apply: the running rules stay)
+        let (asked, done) = ids_sets::update_request(store).await;
+        if asked > done {
+            match self.run_update(store, &p, true).await {
+                Ok(outs) => {
+                    for o in outs {
+                        rep.applied(format!("rule set {}: {} ({})", o.key, o.status, o.message));
                     }
+                }
+                Err(e) => rep.warn(format!("rule-set update: {e}")),
+            }
+            ids_sets::mark_update_done(store, lan::now()).await;
+        }
+
+        // the candidate bundle: checked by Suricata before anything live is touched
+        let sets = ids_sets::render_sources(store, &dir, None).await?;
+        let thr = ids_sets::render_threshold(store).await?;
+        let custom = render_rules(&p.rules);
+        if self.check {
+            let cand = dir.join("apply-cand");
+            let _ = std::fs::remove_dir_all(&cand);
+            std::fs::create_dir_all(&cand)
+                .map_err(|e| Error::Service(format!("{}: {e}", cand.display())))?;
+            for (n, c) in [
+                ("patronus.rules", &custom),
+                ("sources.rules", &sets.text),
+                ("threshold.config", &thr),
+            ] {
+                std::fs::write(cand.join(n), c)
+                    .map_err(|e| Error::Service(format!("{}: {e}", cand.display())))?;
+            }
+            let verdict = self.test_bundle(&bin, &p, &cand);
+            let _ = std::fs::remove_dir_all(&cand);
+            if let Err(why) = verdict {
+                return Err(invalid(format!(
+                    "intrusion detection config (rejected by suricata -T, previous rules kept): {why}"
                 )));
             }
         }
+        let conf = dir.join("suricata.yaml");
+        let yaml = self.yaml_for(&p, &dir);
+        let rules_path = dir.join("patronus.rules");
+        let sets_path = dir.join("sources.rules");
+        let thr_path = dir.join("threshold.config");
+
         let mut argv: Vec<String> = vec![
             bin.to_string_lossy().into(),
             "-c".into(),
@@ -441,41 +923,81 @@ impl Applier for IdsApplier {
             argv.push("--af-packet".into());
         }
         std::fs::create_dir_all(&self.sup.paths.run_dir).ok();
-        // rules changed but the file content the supervisor fingerprints is the yaml:
-        // put the rules in its file list so a rule edit restarts the daemon
+        // the supervisor fingerprints the files it is given: a rule, policy or threshold edit
+        // changes one of them, so the daemon restarts with the new set
         let started = svc::ensure_daemon(
             &self.sup,
             INSTANCE,
             argv,
-            vec![(conf, yaml, 0o644), (rules_path, new_rules, 0o644)],
+            vec![
+                (conf, yaml, 0o644),
+                (rules_path, custom, 0o644),
+                (sets_path, sets.text.clone(), 0o644),
+                (thr_path, thr, 0o644),
+            ],
         )
         .await?;
-        let _ = rules_changed;
         rep.applied(format!(
-            "suricata {} ({} mode on {}, {} custom rule(s))",
+            "suricata {} ({} mode on {}, {} custom rule(s), {} rule(s) from {} rule set(s))",
             if started {
                 "(re)started"
             } else {
                 "running, unchanged"
             },
             if ips { "inline IPS" } else { "IDS" },
-            devs.join(", "),
-            rs.len()
+            p.devs.join(", "),
+            p.rules.len(),
+            sets.loaded(),
+            sets.per_source.len(),
         ));
         Ok(rep)
     }
 
     async fn render(&self, store: &ConfigStore) -> Result<String> {
-        let (s, _devs, _home, rs) = self.plan(store).await?;
-        if !s.b("enabled") {
+        let p = self.plan(store).await?;
+        if !p.s.b("enabled") {
             return Ok("# intrusion detection off\n".into());
         }
-        Ok(format!("## patronus.rules\n{}", render_rules(&rs)))
+        let sets = ids_sets::render_sources(store, &self.dir(), None).await?;
+        let st: Vec<String> = sets
+            .per_source
+            .iter()
+            .map(|(k, v)| {
+                format!(
+                    "# rule set {k}: {} loaded, {} dropping",
+                    v.loaded, v.dropping
+                )
+            })
+            .collect();
+        Ok(format!(
+            "## patronus.rules\n{}\n## sources.rules\n{}\n## threshold.config\n{}",
+            render_rules(&p.rules),
+            st.join("\n"),
+            ids_sets::render_threshold(store).await?
+        ))
     }
 
     async fn status(&self, store: &ConfigStore) -> Result<Value> {
         let s = Settings::load(store, &SPEC).await?;
         let rs = rules(store).await?;
+        let dir = self.dir();
+        let (mut loaded, mut dropping) = (0usize, 0usize);
+        if let Ok(t) = std::fs::read_to_string(dir.join("sources.rules")) {
+            for l in t.lines() {
+                if l.is_empty() || l.starts_with('#') {
+                    continue;
+                }
+                loaded += 1;
+                if l.starts_with("drop ") || l.starts_with("reject") {
+                    dropping += 1;
+                }
+            }
+        }
+        let sm = ids_alerts::summary(store).await.unwrap_or(Value::Null);
+        let last_ok = ids_sets::state(store)
+            .await
+            .map(|m| m.values().filter_map(|x| x.ok_at).max())
+            .unwrap_or(None);
         Ok(json!({
             "enabled": s.b("enabled"),
             "mode": s.s("mode"),
@@ -483,6 +1005,12 @@ impl Applier for IdsApplier {
             "running": self.sup.is_running(svc::DAEMON_SERVICE, INSTANCE),
             "custom_rules": rs.len(),
             "distro_rules_present": std::path::Path::new(DISTRO_RULES).exists(),
+            "rules_loaded": loaded,
+            "rules_dropping": dropping,
+            "rule_sets": ids_sets::overview(store, &dir).await.unwrap_or(Value::Null),
+            "last_rule_update": last_ok,
+            "alerts_24h": sm["alerts_24h"],
+            "blocked_24h": sm["blocked_24h"],
             "alerts": recent_alerts(&self.log_dir.join("eve.json"), 25),
         }))
     }
