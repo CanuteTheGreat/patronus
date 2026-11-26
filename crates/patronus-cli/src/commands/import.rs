@@ -14,6 +14,17 @@ pub async fn pfsense(
 ) -> Result<()> {
     let maps = uci::parse_maps(&maps)?;
     let xml = std::fs::read_to_string(&file).with_context(|| format!("read {}", file.display()))?;
+    // ports not mapped with --map go to the port with the same role on this box (wan, lan, optN)
+    let roles = match super::apply::open_store(db.as_deref()).await {
+        Ok(s) => s.interface_roles().await.unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    let auto = pfsense::role_maps(&xml, &roles, &maps);
+    for (o, n) in &auto {
+        println!("port matched by role: {o} -> {n}");
+    }
+    let mut maps = maps;
+    maps.extend(auto);
     let plan = pfsense::build_plan(&xml, &maps)?;
     print!("{}", pfsense::render(&plan, !yes));
     if !yes {

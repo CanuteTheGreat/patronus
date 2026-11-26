@@ -76,7 +76,8 @@ impl ImportQuery {
 /// A parsed import: the human-readable plan and a way to write it.
 #[cfg(feature = "import")]
 enum Prepared {
-    Pfsense(patronus_import::pfsense::PfPlan),
+    /// the plan + the port maps chosen by role (shown above the plan)
+    Pfsense(patronus_import::pfsense::PfPlan, Vec<String>),
     Openwrt(patronus_import::uci::Plan),
 }
 
@@ -84,7 +85,13 @@ enum Prepared {
 impl Prepared {
     fn render(&self) -> String {
         match self {
-            Prepared::Pfsense(p) => patronus_import::pfsense::render(p, true),
+            Prepared::Pfsense(p, auto) => {
+                let mut s = String::new();
+                for a in auto {
+                    s.push_str(&format!("port matched by role: {a}\n"));
+                }
+                s + &patronus_import::pfsense::render(p, true)
+            }
             Prepared::Openwrt(p) => patronus_import::uci::render(p, true),
         }
     }
@@ -94,7 +101,7 @@ impl Prepared {
         store: &patronus_config::store::ConfigStore,
     ) -> anyhow::Result<Vec<String>> {
         match self {
-            Prepared::Pfsense(p) => patronus_import::pfsense::apply(store, p).await,
+            Prepared::Pfsense(p, _) => patronus_import::pfsense::apply(store, p).await,
             Prepared::Openwrt(p) => patronus_import::uci::apply(store, p).await,
         }
     }
@@ -102,7 +109,12 @@ impl Prepared {
 
 /// Parse the uploaded file. Errors are user errors (400): wrong format, bad map, unreadable archive.
 #[cfg(feature = "import")]
-async fn prepare(kind: &str, q: &ImportQuery, body: &[u8]) -> Result<Prepared, String> {
+async fn prepare(
+    kind: &str,
+    q: &ImportQuery,
+    body: &[u8],
+    roles: &[(String, String)],
+) -> Result<Prepared, String> {
     use patronus_import::{pfsense, uci};
     if body.is_empty() {
         return Err("Invalid import: the file is empty".into());
@@ -114,8 +126,13 @@ async fn prepare(kind: &str, q: &ImportQuery, body: &[u8]) -> Result<Prepared, S
             let xml = std::str::from_utf8(body).map_err(|_| {
                 "Invalid import: a config.xml is text (UTF-8), this file is not".to_string()
             })?;
+            // ports the user did not map go to the port with the same role on this box (wan, lan, optN)
+            let auto = pfsense::role_maps(xml, roles, &maps);
+            let notes: Vec<String> = auto.iter().map(|(o, n)| format!("{o} -> {n}")).collect();
+            let mut maps = maps;
+            maps.extend(auto);
             pfsense::build_plan(xml, &maps)
-                .map(Prepared::Pfsense)
+                .map(|p| Prepared::Pfsense(p, notes))
                 .map_err(|e| format!("Invalid config.xml: {e:#}"))
         }
         "openwrt" => {
@@ -150,7 +167,7 @@ async fn prepare(kind: &str, q: &ImportQuery, body: &[u8]) -> Result<Prepared, S
 
 /// POST /api/system/import/:kind/plan -- what an import would do; nothing is written.
 pub async fn plan(
-    State(_s): State<AppState>,
+    State(s): State<AppState>,
     _me: crate::auth::AuthUser,
     Path(kind): Path<String>,
     Query(q): Query<ImportQuery>,
@@ -158,14 +175,15 @@ pub async fn plan(
 ) -> Response {
     #[cfg(feature = "import")]
     {
-        match prepare(&kind, &q, &body).await {
+        let roles = s.config_store.interface_roles().await.unwrap_or_default();
+        match prepare(&kind, &q, &body, &roles).await {
             Ok(p) => Json(json!({ "kind": kind, "plan": p.render() })).into_response(),
             Err(m) => error(StatusCode::BAD_REQUEST, m),
         }
     }
     #[cfg(not(feature = "import"))]
     {
-        let _ = (kind, q, body);
+        let _ = (s, kind, q, body);
         unavailable()
     }
 }
@@ -180,7 +198,8 @@ pub async fn apply(
 ) -> Response {
     #[cfg(feature = "import")]
     {
-        let p = match prepare(&kind, &q, &body).await {
+        let roles = s.config_store.interface_roles().await.unwrap_or_default();
+        let p = match prepare(&kind, &q, &body, &roles).await {
             Ok(p) => p,
             Err(m) => return error(StatusCode::BAD_REQUEST, m),
         };
@@ -257,7 +276,9 @@ mod tests {
         let q = ImportQuery {
             maps: Some("em0=eth0, em1=eth1".into()),
         };
-        let p = prepare("pfsense", &q, XML.as_bytes()).await.expect("plan");
+        let p = prepare("pfsense", &q, XML.as_bytes(), &[])
+            .await
+            .expect("plan");
         let text = p.render();
         assert!(text.contains("eth1"), "{text}");
         assert!(text.contains("192.168.7.1"), "{text}");
@@ -265,17 +286,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unmapped_ports_follow_this_box_roles_and_the_plan_says_so() {
+        let roles = vec![
+            ("enp0s1".to_string(), "wan".to_string()),
+            ("enp0s2".to_string(), "lan".to_string()),
+        ];
+        let p = prepare("pfsense", &ImportQuery::default(), XML.as_bytes(), &roles)
+            .await
+            .expect("plan");
+        let text = p.render();
+        assert!(
+            text.contains("port matched by role: em1 -> enp0s2"),
+            "{text}"
+        );
+        assert!(text.contains("enp0s2"), "{text}");
+        // an explicit map wins over the role
+        let q = ImportQuery {
+            maps: Some("em1=eth7".into()),
+        };
+        let text = prepare("pfsense", &q, XML.as_bytes(), &roles)
+            .await
+            .expect("plan")
+            .render();
+        assert!(
+            !text.contains("em1 -> enp0s2") && text.contains("eth7"),
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
     async fn bad_input_is_a_user_error() {
         let q = ImportQuery::default();
-        assert!(prepare("pfsense", &q, b"").await.is_err());
-        assert!(prepare("pfsense", &q, b"\xff\xfe").await.is_err());
-        assert!(prepare("pfsense", &q, b"<not-xml").await.is_err());
-        assert!(prepare("sonicwall", &q, XML.as_bytes()).await.is_err());
-        assert!(prepare("openwrt", &q, b"not a tarball").await.is_err());
+        assert!(prepare("pfsense", &q, b"", &[]).await.is_err());
+        assert!(prepare("pfsense", &q, b"\xff\xfe", &[]).await.is_err());
+        assert!(prepare("pfsense", &q, b"<not-xml", &[]).await.is_err());
+        assert!(prepare("sonicwall", &q, XML.as_bytes(), &[]).await.is_err());
+        assert!(prepare("openwrt", &q, b"not a tarball", &[]).await.is_err());
         let bad = ImportQuery {
             maps: Some("nonsense".into()),
         };
-        assert!(prepare("pfsense", &bad, XML.as_bytes()).await.is_err());
+        assert!(prepare("pfsense", &bad, XML.as_bytes(), &[]).await.is_err());
     }
 
     #[test]
