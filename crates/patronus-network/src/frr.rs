@@ -57,7 +57,7 @@ static NEIGHBOR_FIELDS: [Field; 5] = [
 
 static NETWORK_FIELDS: [Field; 1] = [Field::new("prefix", "Network to announce", Kind::Cidr).req()];
 
-static OSPF_FIELDS: [Field; 4] = [
+static OSPF_FIELDS: [Field; 5] = [
     Field::new("iface", "Interface", Kind::Iface).req(),
     Field::new("area", "Area", Kind::Token).def("0.0.0.0"),
     Field::new(
@@ -67,7 +67,18 @@ static OSPF_FIELDS: [Field; 4] = [
     )
     .def("0"),
     Field::new("enabled", "Enabled", Kind::Bool).def("1"),
+    Field::new(
+        "network",
+        "Network type (auto: point-to-point on route-based IPsec interfaces, else broadcast)",
+        Kind::Select(&["auto", "broadcast", "point-to-point"]),
+    )
+    .def("auto"),
 ];
+
+/// Interfaces of route-based IPsec tunnels (`ipsec::XFRM_PREFIX`; repeated
+/// here because the IPsec module is a separate build feature): they have no
+/// broadcast domain, so OSPF over them is point-to-point unless said otherwise.
+pub const XFRM_IF_PREFIX: &str = "xfrm";
 
 static SPEC: Spec = Spec {
     slug: "frr",
@@ -123,8 +134,8 @@ pub struct Plan {
     /// (address, remote_as, password, description)
     pub neighbors: Vec<(String, i64, String, String)>,
     pub networks: Vec<String>,
-    /// (device, area, passive)
-    pub ospf_ifaces: Vec<(String, String, bool)>,
+    /// (device, area, passive, network type: broadcast | point-to-point)
+    pub ospf_ifaces: Vec<(String, String, bool, String)>,
 }
 
 pub async fn plan(store: &ConfigStore) -> Result<Plan> {
@@ -159,6 +170,12 @@ pub async fn plan(store: &ConfigStore) -> Result<Plan> {
             continue;
         }
         for d in lan::resolve_iface(store, r["iface"].as_str().unwrap_or("")).await? {
+            let network = match r["network"].as_str().unwrap_or("") {
+                "broadcast" => "broadcast",
+                "point-to-point" => "point-to-point",
+                _ if d.starts_with(XFRM_IF_PREFIX) => "point-to-point",
+                _ => "broadcast",
+            };
             p.ospf_ifaces.push((
                 d,
                 r["area"]
@@ -167,6 +184,7 @@ pub async fn plan(store: &ConfigStore) -> Result<Plan> {
                     .unwrap_or("0.0.0.0")
                     .into(),
                 lan::flag(r["passive"].as_str().unwrap_or("")),
+                network.into(),
             ));
         }
     }
@@ -182,7 +200,7 @@ pub fn validate(p: &Plan) -> Result<()> {
     if p.bgp && p.neighbors.is_empty() && p.networks.is_empty() {
         return Err(invalid("BGP: add a neighbour or a network to announce"));
     }
-    for (_, area, _) in &p.ospf_ifaces {
+    for (_, area, _, _) in &p.ospf_ifaces {
         let ok_dotted = area.parse::<std::net::Ipv4Addr>().is_ok();
         if !ok_dotted && area.parse::<u32>().is_err() {
             return Err(invalid(format!("OSPF area {area:?} (a number or a.b.c.d)")));
@@ -228,8 +246,11 @@ pub fn render_conf(p: &Plan) -> String {
         c.push_str(" exit-address-family\n!\n");
     }
     if p.ospf {
-        for (d, area, passive) in &p.ospf_ifaces {
+        for (d, area, passive, network) in &p.ospf_ifaces {
             c.push_str(&format!("interface {d}\n ip ospf area {area}\n"));
+            if network == "point-to-point" {
+                c.push_str(" ip ospf network point-to-point\n");
+            }
             if *passive {
                 c.push_str(" ip ospf passive\n");
             }
@@ -474,8 +495,19 @@ mod tests {
             ospf: true,
             router_id: "10.0.0.1".into(),
             ospf_ifaces: vec![
-                ("rtr-lan".into(), "0.0.0.0".into(), true),
-                ("rtr-wan".into(), "0.0.0.1".into(), false),
+                ("rtr-lan".into(), "0.0.0.0".into(), true, "broadcast".into()),
+                (
+                    "rtr-wan".into(),
+                    "0.0.0.1".into(),
+                    false,
+                    "broadcast".into(),
+                ),
+                (
+                    "xfrm1".into(),
+                    "0.0.0.0".into(),
+                    false,
+                    "point-to-point".into(),
+                ),
             ],
             ..Default::default()
         };
@@ -486,6 +518,16 @@ mod tests {
         );
         assert!(
             c.contains("interface rtr-wan\n ip ospf area 0.0.0.1\n!"),
+            "{c}"
+        );
+        assert!(
+            c.contains(
+                "interface xfrm1\n ip ospf area 0.0.0.0\n ip ospf network point-to-point\n!"
+            ),
+            "{c}"
+        );
+        assert!(
+            !c.contains("interface rtr-wan\n ip ospf area 0.0.0.1\n ip ospf network"),
             "{c}"
         );
         assert!(c.contains("router ospf\n ospf router-id 10.0.0.1"));
