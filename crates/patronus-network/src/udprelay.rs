@@ -58,7 +58,9 @@ static RULE_FIELDS: [Field; 6] = [
         .help("one or more devices or @lan / @optN, comma separated"),
     Field::new("spoof", "Keep original source address", Kind::Bool)
         .def("1")
-        .help("replies then go straight to the sender; off = use the target interface's own address"),
+        .help(
+            "replies then go straight to the sender; off = use the target interface's own address",
+        ),
     Field::new("enabled", "Enabled", Kind::Bool).def("1"),
     Field::new("description", "Description", Kind::Text),
 ];
@@ -257,7 +259,10 @@ impl Applier for UdpRelayApplier {
         if !s.b("enabled") {
             return Ok("# UDP broadcast relay off\n".into());
         }
-        Ok(format!("## udp-relay.json\n{}", render(&load(store).await?)))
+        Ok(format!(
+            "## udp-relay.json\n{}",
+            render(&load(store).await?)
+        ))
     }
 
     async fn status(&self, store: &ConfigStore) -> Result<Value> {
@@ -326,12 +331,10 @@ pub mod packet {
     }
 
     fn sum(mut acc: u32, data: &[u8]) -> u32 {
-        let mut it = data.chunks_exact(2);
-        for c in &mut it {
-            acc += u16::from_be_bytes([c[0], c[1]]) as u32;
-        }
-        if let [b] = it.remainder() {
-            acc += (*b as u32) << 8;
+        for c in data.chunks(2) {
+            let hi = c[0] as u32;
+            let lo = c.get(1).copied().unwrap_or(0) as u32;
+            acc += (hi << 8) | lo;
         }
         acc
     }
@@ -418,7 +421,7 @@ pub mod engine {
                 }
                 if let (Some(ad), Some(m)) = (a.address, a.netmask) {
                     if let (Some(ad), Some(m)) = (ad.as_sockaddr_in(), m.as_sockaddr_in()) {
-                        out.push((Ipv4Addr::from(ad.ip()), Ipv4Addr::from(m.ip())));
+                        out.push((ad.ip(), m.ip()));
                     }
                 }
             }
@@ -435,7 +438,7 @@ pub mod engine {
         if let Ok(it) = nix::ifaddrs::getifaddrs() {
             for a in it {
                 if let Some(ad) = a.address.as_ref().and_then(|a| a.as_sockaddr_in()) {
-                    v.push(Ipv4Addr::from(ad.ip()));
+                    v.push(ad.ip());
                 }
             }
         }
@@ -450,7 +453,13 @@ pub mod engine {
 
     fn packet_socket(idx: i32) -> std::io::Result<OwnedFd> {
         let proto = (libc::ETH_P_IP as u16).to_be() as i32;
-        let fd = unsafe { libc::socket(libc::AF_PACKET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, proto) };
+        let fd = unsafe {
+            libc::socket(
+                libc::AF_PACKET,
+                libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
+                proto,
+            )
+        };
         if fd < 0 {
             return Err(std::io::Error::last_os_error());
         }
@@ -535,8 +544,7 @@ pub mod engine {
 
     /// Is `dst` a broadcast for the segment `addrs` belong to?
     pub fn is_broadcast_for(dst: Ipv4Addr, addrs: &[(Ipv4Addr, Ipv4Addr)]) -> bool {
-        dst == Ipv4Addr::BROADCAST
-            || addrs.iter().any(|&(a, m)| directed_broadcast(a, m) == dst)
+        dst == Ipv4Addr::BROADCAST || addrs.iter().any(|&(a, m)| directed_broadcast(a, m) == dst)
     }
 
     struct Bucket {
@@ -705,7 +713,10 @@ pub mod engine {
     }
 
     /// Run until SIGTERM/SIGINT. Blocks.
-    pub fn run(conf_path: &std::path::Path, stats_path: Option<&std::path::Path>) -> anyhow::Result<()> {
+    pub fn run(
+        conf_path: &std::path::Path,
+        stats_path: Option<&std::path::Path>,
+    ) -> anyhow::Result<()> {
         let conf: RelayConf = serde_json::from_str(&std::fs::read_to_string(conf_path)?)?;
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         for sig in [signal_hook_flag::TERM, signal_hook_flag::INT] {
@@ -716,15 +727,24 @@ pub mod engine {
         for r in &conf.rules {
             let c = Arc::new(Counters::default());
             all.push((r.src.clone(), r.id, c.clone()));
-            by_src.entry(r.src.clone()).or_default().push((r.clone(), c));
+            by_src
+                .entry(r.src.clone())
+                .or_default()
+                .push((r.clone(), c));
         }
         let mut threads = Vec::new();
         for (src, rules) in by_src {
             let stop = stop.clone();
             let rate = conf.rate_limit;
-            threads.push(std::thread::spawn(move || run_source(src, rules, rate, stop)));
+            threads.push(std::thread::spawn(move || {
+                run_source(src, rules, rate, stop)
+            }));
         }
-        eprintln!("udp-relay: {} rule(s) on {} interface(s)", conf.rules.len(), threads.len());
+        eprintln!(
+            "udp-relay: {} rule(s) on {} interface(s)",
+            conf.rules.len(),
+            threads.len()
+        );
         let started = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -789,13 +809,21 @@ mod tests {
 
     #[test]
     fn ports_parse_normalise_and_refuse_dhcp() {
-        assert_eq!(parse_ports("137, 138,5000-5010").unwrap(), vec![(137, 137), (138, 138), (5000, 5010)]);
+        assert_eq!(
+            parse_ports("137, 138,5000-5010").unwrap(),
+            vec![(137, 137), (138, 138), (5000, 5010)]
+        );
         assert_eq!(check_ports("1900 , 137").unwrap(), "1900,137");
         assert_eq!(check_ports("5000-5010").unwrap(), "5000-5010");
-        for bad in ["", "0", "70000", "a", "10-5", "137,", "67", "60-70", "68", "1;2", "-5"] {
+        for bad in [
+            "", "0", "70000", "a", "10-5", "137,", "67", "60-70", "68", "1;2", "-5",
+        ] {
             assert!(parse_ports(bad).is_err(), "{bad:?} must be refused");
         }
-        let many = (1000..1040).map(|n| n.to_string()).collect::<Vec<_>>().join(",");
+        let many = (1000..1040)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         assert!(parse_ports(&many).is_err(), "more than 32 entries");
     }
 
@@ -832,7 +860,10 @@ mod tests {
         while acc >> 16 != 0 {
             acc = (acc & 0xffff) + (acc >> 16);
         }
-        assert_eq!(acc, 0xffff, "UDP checksum verifies (odd payload length included)");
+        assert_eq!(
+            acc, 0xffff,
+            "UDP checksum verifies (odd payload length included)"
+        );
     }
 
     #[test]
@@ -848,7 +879,13 @@ mod tests {
         p[9] = 6;
         assert!(parse(&p).is_none(), "TCP");
         assert!(parse(&[0x45, 0, 0]).is_none());
-        let mut t = build(Ipv4Addr::new(1, 1, 1, 1), Ipv4Addr::BROADCAST, 1, 2, b"abcdef");
+        let mut t = build(
+            Ipv4Addr::new(1, 1, 1, 1),
+            Ipv4Addr::BROADCAST,
+            1,
+            2,
+            b"abcdef",
+        );
         t.truncate(30);
         assert!(parse(&t).is_none(), "truncated");
         assert!(port_matches(&[(137, 138), (5000, 5010)], 5005));
@@ -863,7 +900,10 @@ mod tests {
         assert_eq!(directed_broadcast(a, m), Ipv4Addr::new(192, 168, 7, 255));
         assert!(is_broadcast_for(Ipv4Addr::BROADCAST, &[(a, m)]));
         assert!(is_broadcast_for(Ipv4Addr::new(192, 168, 7, 255), &[(a, m)]));
-        assert!(!is_broadcast_for(Ipv4Addr::new(192, 168, 8, 255), &[(a, m)]));
+        assert!(!is_broadcast_for(
+            Ipv4Addr::new(192, 168, 8, 255),
+            &[(a, m)]
+        ));
     }
 
     #[tokio::test]
@@ -875,7 +915,9 @@ mod tests {
             Some("/bin/true".into()),
         );
         assert!(a.apply(&s).await.is_ok(), "off: nothing to do");
-        svc::put_settings(&s, &SPEC, &json!({"enabled": true})).await.unwrap();
+        svc::put_settings(&s, &SPEC, &json!({"enabled": true}))
+            .await
+            .unwrap();
         let e = a.apply(&s).await.unwrap_err();
         assert!(e.to_string().contains("at least one"), "{e}");
         let c = &SPEC.colls[0];
@@ -889,20 +931,40 @@ mod tests {
             assert!(svc::save_row(&s, c, None, &bad).await.is_err(), "{bad}");
         }
         // same source twice with different ports/targets is allowed (multi-port per interface)
-        svc::save_row(&s, c, None, &json!({"iface": "eth1", "ports": "137,138", "targets": "eth2, eth3"}))
-            .await
-            .unwrap();
-        svc::save_row(&s, c, None, &json!({"iface": "eth1", "ports": "1900", "targets": "eth2", "spoof": false}))
-            .await
-            .unwrap();
+        svc::save_row(
+            &s,
+            c,
+            None,
+            &json!({"iface": "eth1", "ports": "137,138", "targets": "eth2, eth3"}),
+        )
+        .await
+        .unwrap();
+        svc::save_row(
+            &s,
+            c,
+            None,
+            &json!({"iface": "eth1", "ports": "1900", "targets": "eth2", "spoof": false}),
+        )
+        .await
+        .unwrap();
         // a rule whose only target is its own source is refused at apply
-        svc::save_row(&s, c, None, &json!({"iface": "eth4", "ports": "9", "targets": "eth4"}))
+        svc::save_row(
+            &s,
+            c,
+            None,
+            &json!({"iface": "eth4", "ports": "9", "targets": "eth4"}),
+        )
+        .await
+        .unwrap();
+        let e = a.apply(&s).await.unwrap_err();
+        assert!(
+            e.to_string().contains("other") || e.to_string().contains("besides"),
+            "{e}"
+        );
+        let rows = svc::raw_rows(&s, c).await.unwrap();
+        svc::delete_row(&s, c, rows[2]["id"].as_i64().unwrap())
             .await
             .unwrap();
-        let e = a.apply(&s).await.unwrap_err();
-        assert!(e.to_string().contains("other") || e.to_string().contains("besides"), "{e}");
-        let rows = svc::raw_rows(&s, c).await.unwrap();
-        svc::delete_row(&s, c, rows[2]["id"].as_i64().unwrap()).await.unwrap();
         let conf = load(&s).await.unwrap();
         assert_eq!(conf.rate_limit, 200);
         assert_eq!(conf.rules.len(), 2);
@@ -911,12 +973,18 @@ mod tests {
         assert!(conf.rules[0].spoof && !conf.rules[1].spoof);
         let r = a.render(&s).await.unwrap();
         assert!(r.contains("\"src\": \"eth1\"") && r.contains("eth3"), "{r}");
-        let back: RelayConf = serde_json::from_str(r.trim_start_matches("## udp-relay.json\n")).unwrap();
+        let back: RelayConf =
+            serde_json::from_str(r.trim_start_matches("## udp-relay.json\n")).unwrap();
         assert_eq!(back, conf);
         // disabled rules do not reach the daemon
-        svc::save_row(&s, c, Some(rows[1]["id"].as_i64().unwrap()), &json!({"enabled": false}))
-            .await
-            .unwrap();
+        svc::save_row(
+            &s,
+            c,
+            Some(rows[1]["id"].as_i64().unwrap()),
+            &json!({"enabled": false}),
+        )
+        .await
+        .unwrap();
         assert_eq!(load(&s).await.unwrap().rules.len(), 1);
     }
 }
