@@ -377,9 +377,7 @@ fn system(b: &mut B, root: Node) {
         b.plan.ext.general = Some((host, tz));
     }
     if let Some(d) = txt(s, "domain") {
-        b.note(format!(
-            "system: domain '{d}': set it on the General page (the importer writes the host name and time zone only)"
-        ));
+        b.plan.ext.general_domain = Some(d.to_ascii_lowercase());
     }
     let servers = txt(s, "timeservers").map(|t| words(&t)).unwrap_or_default();
     if !servers.is_empty() {
@@ -2719,6 +2717,8 @@ mod tests {
             p.plan.ext.general,
             Some((Some("edge1".into()), Some("Europe/Berlin".into())))
         );
+        assert_eq!(p.plan.ext.general_domain.as_deref(), Some("example.org"));
+        assert!(render(&p, true).contains("domain example.org"));
         let ntp = p.plan.ext.ntp.as_ref().unwrap();
         assert_eq!(ntp.1, vec!["0.pool.example.org", "1.pool.example.org"]);
     }
