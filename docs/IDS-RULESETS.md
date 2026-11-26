@@ -74,9 +74,20 @@ Unit tests: `ids_sets`, `ids_alerts`, `ids` in patronus-network.
 
 ## Router (embedded) tier
 
-Not on the router image: Suricata plus ET Open needs memory the AP/Slate classes do not have (measured
-numbers below), so the page reports "not built" there, like the other USE-gated features.
+Not on the router image (AP and Slate classes): the page, its API and the alert browser are compiled out
+(USE=intrusion-detection is off there), `/api/features` lists intrusion detection as absent with the reason,
+and the QEMU gate (`no_ids` in `ci/embedded-aarch64/ax1800/qemu-gate.sh`) checks that those pages answer
+404 with that explanation. Why it does not fit, measured with the real set (below): a Suricata with ET Open
+needs about 0.5 GB just to load and more while it runs, which is the whole RAM of an AP-class unit.
 
-## Measured cost (standard tier)
+## Measured with the real ET Open set (x86_64, Suricata 7.0.3 from Ubuntu 24.04, 2 CPUs)
 
-See the end of this file for the size and RAM measured with the real ET Open set.
+| | |
+|---|---|
+| download | `emerging.rules.tar.gz` 5.7 MB, 54 rule files, 56 MB unpacked, 72,601 rule lines of which 19,517 ship switched off |
+| merged `sources.rules` (53,084 active rules, policy applied) | 36 MB, rendered in 80 ms; the same with a ruleset-wide `drop` policy: 53,084 dropping rules, 87 ms |
+| `suricata -T` of the merged bundle (what runs before every swap) | exit 0, 12.8 s, peak 520 MB resident |
+| disk per source | `current` + `prev` copy of the unpacked files (about 2 x 56 MB for ET Open) plus the merged file |
+
+An update therefore costs one download, one 13 s check and one daemon restart (the restart reloads the
+whole set; in IPS mode the firewall's `bypass` keeps forwarding while Suricata loads).
