@@ -6,6 +6,9 @@
 //! `patronus applyd`) -> firewall (VRRP/sync ports) and is undone when the
 //! applier refuses it. Compiled with `USE=ha`; without it the page says so.
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use crate::state::AppState;
 #[cfg(feature = "ha")]
 use axum::response::{Html, IntoResponse};

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ ""|lang_code }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -713,117 +713,117 @@
                     <img class="logo-mark" src="/brand/mark.png" alt="" width="44" height="44">
                     <div class="logo-text">
                         <h1>Patronus</h1>
-                        <p>Firewall</p>
+                        <p>{{ "brand-tagline"|t }}</p>
                     </div>
                 </a>
             </div>
 
             <nav class="sidebar-nav">
                 <div class="nav-section">
-                    <div class="nav-section-title">Overview</div>
+                    <div class="nav-section-title">{{ "nav-section-overview"|t }}</div>
                     <a href="/" class="nav-item {% if page == "dashboard" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
                         </svg>
-                        <span>Dashboard</span>
+                        <span>{{ "nav-dashboard"|t }}</span>
                     </a>
                 </div>
 
                 <div class="nav-section">
-                    <div class="nav-section-title">Security</div>
+                    <div class="nav-section-title">{{ "nav-section-security"|t }}</div>
                     <a href="/firewall" class="nav-item {% if page == "firewall" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
                         </svg>
-                        <span>Firewall</span>
+                        <span>{{ "nav-firewall"|t }}</span>
                     </a>
                     <a href="/vpn" class="nav-item {% if page == "vpn" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
                         </svg>
-                        <span>VPN</span>
+                        <span>{{ "nav-vpn"|t }}</span>
                     </a>
                 </div>
 
                 <div class="nav-section">
-                    <div class="nav-section-title">Network</div>
+                    <div class="nav-section-title">{{ "nav-section-network"|t }}</div>
                     <a href="/wifi" id="nav-wifi" style="display:none" class="nav-item {% if page == "wifi" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"></path>
                         </svg>
-                        <span>Wi-Fi</span>
+                        <span>{{ "nav-wifi"|t }}</span>
                     </a>
                     <a href="/interfaces" class="nav-item {% if page == "interfaces" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
                         </svg>
-                        <span>Interfaces</span>
+                        <span>{{ "nav-interfaces"|t }}</span>
                     </a>
                     <a href="/routing" class="nav-item {% if page == "routing" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path>
                         </svg>
-                        <span>Routing</span>
+                        <span>{{ "nav-routing"|t }}</span>
                     </a>
                     <a href="/dhcp" class="nav-item {% if page == "dhcp" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path>
                         </svg>
-                        <span>DHCP</span>
+                        <span>{{ "nav-dhcp"|t }}</span>
                     </a>
                     <a href="/dns" class="nav-item {% if page == "dns" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
                         </svg>
-                        <span>DNS</span>
+                        <span>{{ "nav-dns"|t }}</span>
                     </a>
                     <a href="/ntp" class="nav-item {% if page == "ntp" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                         </svg>
-                        <span>NTP</span>
+                        <span>{{ "nav-ntp"|t }}</span>
                     </a>
                     <a href="/ha" class="nav-item {% if page == "ha" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V7M4 7c0-2 1-3 3-3h10c2 0 3 1 3 3M4 7h16M9 12h6"></path>
                         </svg>
-                        <span>High availability</span>
+                        <span>{{ "nav-ha"|t }}</span>
                     </a>
                     <a href="/qos" class="nav-item {% if page == "qos" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h10M4 18h6"></path>
                         </svg>
-                        <span>Traffic shaping</span>
+                        <span>{{ "nav-qos"|t }}</span>
                     </a>
                     <a href="/segmentation" class="nav-item {% if page == "segmentation" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h5a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm9 0a1 1 0 011-1h5a1 1 0 011 1v5a1 1 0 01-1 1h-5a1 1 0 01-1-1V5zM4 14a1 1 0 011-1h5a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1v-5zm12 3h4m-2-2v4"></path>
                         </svg>
-                        <span>Device segmentation</span>
+                        <span>{{ "nav-segmentation"|t }}</span>
                     </a>
                     <a href="/svc/guest" class="nav-item {% if page == "svc-guest" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                        <span>Guest network</span>
+                        <span>{{ "nav-guest"|t }}</span>
                     </a>
                 </div>
 
                 <div class="nav-section">
-                    <div class="nav-section-title">Services</div>
+                    <div class="nav-section-title">{{ "nav-section-services"|t }}</div>
                     <a href="/svc/syslog" class="nav-item {% if page == "svc-syslog" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        <span>Syslog</span>
+                        <span>{{ "nav-syslog"|t }}</span>
                     </a>
                     <a href="/svc/netflow" class="nav-item {% if page == "svc-netflow" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        <span>NetFlow export</span>
+                        <span>{{ "nav-netflow"|t }}</span>
                     </a>
                     <a href="/svc/igmp" class="nav-item {% if page == "svc-igmp" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        <span>IGMP proxy</span>
+                        <span>{{ "nav-igmp"|t }}</span>
                     </a>
                     <a href="/svc/mdns" class="nav-item {% if page == "svc-mdns" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        <span>mDNS repeater</span>
+                        <span>{{ "nav-mdns"|t }}</span>
                     </a>
                     <a href="/svc/udp-relay" class="nav-item {% if page == "svc-udp-relay" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
@@ -831,11 +831,11 @@
                     </a>
                     <a href="/svc/nat64" class="nav-item {% if page == "svc-nat64" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        <span>NAT64 / DNS64</span>
+                        <span>{{ "nav-nat64"|t }}</span>
                     </a>
                     <a href="/svc/l2tp" class="nav-item {% if page == "svc-l2tp" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        <span>L2TP server</span>
+                        <span>{{ "nav-l2tp"|t }}</span>
                     </a>
                     <a href="/svc/revproxy" class="nav-item {% if page == "svc-revproxy" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
@@ -843,68 +843,68 @@
                     </a>
                     <a href="/svc/ids" class="nav-item {% if page == "svc-ids" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        <span>Intrusion detection</span>
+                        <span>{{ "nav-ids"|t }}</span>
                     </a>
                     <a href="/svc/frr" class="nav-item {% if page == "svc-frr" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        <span>BGP / OSPF</span>
+                        <span>{{ "nav-frr"|t }}</span>
                     </a>
                     <a href="/svc/wol" class="nav-item {% if page == "svc-wol" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        <span>Wake-on-LAN</span>
+                        <span>{{ "nav-wol"|t }}</span>
                     </a>
                 </div>
 
                 <div class="nav-section">
-                    <div class="nav-section-title">Advanced</div>
+                    <div class="nav-section-title">{{ "nav-section-advanced"|t }}</div>
                     <a href="/monitoring" class="nav-item {% if page == "monitoring" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
                         </svg>
-                        <span>Monitoring</span>
+                        <span>{{ "nav-monitoring"|t }}</span>
                     </a>
                     <a href="/insights" class="nav-item {% if page == "insights" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"></path>
                         </svg>
-                        <span>Traffic insights</span>
+                        <span>{{ "nav-insights"|t }}</span>
                     </a>
                     <a href="/segmentation/time" class="nav-item {% if page == "time-limits" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                         </svg>
-                        <span>Time limits</span>
+                        <span>{{ "nav-time-limits"|t }}</span>
                     </a>
                     <a href="/segmentation/dns" class="nav-item {% if page == "dns-policy" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
                         </svg>
-                        <span>DNS policy &amp; logs</span>
+                        <span>{{ "nav-dns-policy"|t }}</span>
                     </a>
                     <a href="/diagnostics" class="nav-item {% if page == "diagnostics" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                         </svg>
-                        <span>Diagnostics</span>
+                        <span>{{ "nav-diagnostics"|t }}</span>
                     </a>
                     <a href="/packages" class="nav-item {% if page == "packages" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
                         </svg>
-                        <span>Packages</span>
+                        <span>{{ "nav-packages"|t }}</span>
                     </a>
                     <a href="/device" id="nav-device" style="display:none" class="nav-item {% if page == "device" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path>
                         </svg>
-                        <span>Device</span>
+                        <span>{{ "nav-device"|t }}</span>
                     </a>
                     <a href="/system" class="nav-item {% if page == "system" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
                         </svg>
-                        <span>System</span>
+                        <span>{{ "nav-system"|t }}</span>
                     </a>
                 </div>
             </nav>
@@ -912,9 +912,9 @@
             <div class="sidebar-footer">
                 <div class="status-indicator">
                     <span class="status-dot"></span>
-                    <span>System Online</span>
+                    <span>{{ "status-online"|t }}</span>
                 </div>
-                <a class="sidebar-version" href="/system" title="About this Patronus">Patronus @PATRONUS_VERSION@</a>
+                <a class="sidebar-version" href="/system" title="{{ "about-this-patronus"|t }}">Patronus @PATRONUS_VERSION@</a>
             </div>
         </aside>
 
@@ -923,23 +923,23 @@
             <!-- Header -->
             <header class="header">
                 <div class="header-left">
-                    <button class="menu-toggle" id="menuToggle" type="button" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">☰</button>
+                    <button class="menu-toggle" id="menuToggle" type="button" aria-label="{{ "menu-open"|t }}" aria-controls="sidebar" aria-expanded="false">☰</button>
                     <a href="/" class="header-brand"><img src="/brand/mark.png" alt="" width="32" height="32"><span>Patronus</span></a>
                     <div class="breadcrumbs">
-                        <a href="/">Home</a>
+                        <a href="/">{{ "crumb-home"|t }}</a>
                         {% if page != "dashboard" %}
                         <span>/</span>
-                        <span>{% if page == "dhcp" %}DHCP{% else if page == "dns" %}DNS{% else if page == "dns-policy" %}DNS policy{% else if page == "ntp" %}NTP{% else if page == "qos" %}QoS{% else if page == "vpn" %}VPN{% else if page == "wifi" %}Wi-Fi{% else if page == "ha" %}High availability{% else if page == "time-limits" %}Time limits{% else %}{{ page|capitalize }}{% endif %}</span>
+                        <span>{{ page|crumb }}</span>
                         {% endif %}
                     </div>
                 </div>
 
                 <div class="header-right">
                     <div class="search-box">
-                        <input type="text" class="search-input" placeholder="Search...">
+                        <input type="text" class="search-input" placeholder="{{ "header-search"|t }}">
                     </div>
 
-                    <button class="theme-toggle" id="themeToggle" title="Toggle dark mode">
+                    <button class="theme-toggle" id="themeToggle" title="{{ "theme-toggle"|t }}" aria-label="{{ "theme-toggle"|t }}">
                         🌙
                     </button>
 
@@ -952,12 +952,17 @@
 
             <!-- Page Content -->
             <main class="content">
-                <div id="setup-banner" style="display:none;background:var(--warn-bg);color:var(--warn-fg);padding:.6em 1em;margin-bottom:1em;border-radius:4px">This router has not been set up yet. <a href="/setup">Run the setup wizard</a></div>
+                <div id="setup-banner" style="display:none;background:var(--warn-bg);color:var(--warn-fg);padding:.6em 1em;margin-bottom:1em;border-radius:4px">{{ "setup-banner-text"|t }} <a href="/setup">{{ "setup-banner-link"|t }}</a></div>
                 {% block content %}{% endblock %}
             </main>
         </div>
     </div>
 
+    <script>
+        // Strings the page scripts need, in the language of this page (the js-* keys of i18n/*.ftl)
+        window.PATRONUS_I18N = {{ ""|js_catalog|safe }};
+        function tr(key) { return (window.PATRONUS_I18N || {})[key] || key; }
+    </script>
     <script>
         // Theme toggle
         const themeToggle = document.getElementById('themeToggle');
@@ -974,7 +979,7 @@
         function syncThemeUi() {
             const dark = effectiveDark();
             themeToggle.textContent = dark ? '☀️' : '🌙';
-            themeToggle.title = dark ? 'Switch to light mode' : 'Switch to dark mode';
+            themeToggle.title = dark ? tr('js-theme-to-light') : tr('js-theme-to-dark');
             themeToggle.setAttribute('aria-label', themeToggle.title);
         }
         function dropThemeColorOverride() {
@@ -1026,7 +1031,7 @@
             if (advanced) {
                 advanced.classList.toggle('hidden');
                 btn.textContent = advanced.classList.contains('hidden') ?
-                    'Advanced ▼' : 'Advanced ▲';
+                    tr('js-advanced-open') : tr('js-advanced-close');
             }
         }
 
@@ -1056,8 +1061,8 @@
             if (f && !f.some(x => have.has(x))) {
                 if (a.getAttribute('href') === '/svc/guest') {
                     // never silently hidden: stays in the menu, marked, and the page says why
-                    a.classList.add('nav-unavailable'); a.title = 'Not available on this unit: open it to see why';
-                    const sp = a.querySelector('span'); if (sp && !sp.textContent.includes('unavailable')) sp.textContent += ' (unavailable)';
+                    a.classList.add('nav-unavailable'); a.title = tr('js-nav-unavailable-hint');
+                    const sp = a.querySelector('span'); if (sp && !sp.textContent.includes(tr('js-nav-unavailable-suffix'))) sp.textContent += ' ' + tr('js-nav-unavailable-suffix');
                 } else a.style.display = 'none';
             }
         });

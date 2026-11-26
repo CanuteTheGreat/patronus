@@ -13,6 +13,9 @@
 //! controls that would do nothing useful, and refuses changes to the
 //! router-only APIs.
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use crate::routes::api::setup::DeviceRole;
 use crate::state::AppState;
 use askama::Template;

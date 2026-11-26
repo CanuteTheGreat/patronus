@@ -6,6 +6,9 @@
 //! the router keeps no history. Nothing is invented: with accounting off or
 //! conntrack unreadable the answer says so.
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use crate::state::AppState;
 use askama::Template;
 use axum::{
