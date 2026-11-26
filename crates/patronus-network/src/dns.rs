@@ -86,6 +86,18 @@ pub struct DnsSettings {
     /// Log every query (dnsmasq `log-queries`; `dns.log_queries`).
     #[serde(default)]
     pub log_queries: bool,
+    /// Use the DNS servers of the gateways that carry traffic as upstreams
+    /// as well (`dns.gateway_servers`, default on; a gateway with no DNS
+    /// servers contributes nothing).
+    #[serde(default = "default_true")]
+    pub gateway_servers: bool,
+    /// Those servers right now (read from the gateway monitor, not stored).
+    #[serde(default)]
+    pub gateway_upstreams: Vec<IpAddr>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 pub const DEFAULT_CACHE_SIZE: u32 = 10000;
@@ -127,6 +139,9 @@ pub struct DnsSettingsInput {
     pub upstream_tls: Option<bool>,
     #[serde(default)]
     pub upstream_tls_name: Option<String>,
+    /// Also forward to the DNS servers of the gateways that carry traffic.
+    #[serde(default)]
+    pub gateway_servers: Option<bool>,
 }
 
 /// Private and local ranges unbound strips from public answers.
@@ -166,6 +181,21 @@ pub fn check_url(u: &str) -> Result<String> {
 }
 
 impl DnsSettings {
+    /// Where queries are forwarded: the configured upstreams plus, unless DNS
+    /// over TLS is on (those servers do not speak it), the DNS servers of the
+    /// gateways that carry traffic.
+    pub fn forward_to(&self) -> Vec<IpAddr> {
+        let mut v = self.upstreams.clone();
+        if !self.upstream_tls && self.gateway_servers {
+            for g in &self.gateway_upstreams {
+                if !v.contains(g) {
+                    v.push(*g);
+                }
+            }
+        }
+        v
+    }
+
     /// The mode in effect (`auto` resolved against what is installed).
     pub fn effective_mode(&self, env: &LanEnv) -> &str {
         match self.mode.as_str() {
@@ -205,6 +235,8 @@ pub async fn settings(store: &ConfigStore) -> Result<DnsSettings> {
             .parse()
             .unwrap_or(DEFAULT_CACHE_SIZE),
         log_queries: lan::flag(&g("dns.log_queries", "0")),
+        gateway_servers: lan::flag(&g("dns.gateway_servers", "1")),
+        gateway_upstreams: gateway_upstreams(store).await,
         dns64_prefix: {
             let n = lan::settings_with_prefix(store, "nat64.").await?;
             let on = n.get("nat64.enabled").is_some_and(|v| lan::flag(v))
@@ -217,6 +249,18 @@ pub async fn settings(store: &ConfigStore) -> Result<DnsSettings> {
             })
         },
     })
+}
+
+/// DNS servers of the gateways that carry traffic now (empty when none has
+/// any or the routing store cannot be read).
+async fn gateway_upstreams(store: &ConfigStore) -> Vec<IpAddr> {
+    match crate::routes::load(store).await {
+        Ok(cfg) => crate::multiwan::usable_dns_servers(
+            &cfg,
+            &crate::routes::current_status().unwrap_or_default(),
+        ),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Validate and store the settings given (unset fields keep their value).
@@ -271,6 +315,9 @@ pub async fn save_settings(store: &ConfigStore, i: &DnsSettingsInput) -> Result<
     }
     if let Some(t) = i.upstream_tls {
         kv.push(("dns.upstream_tls", if t { "1" } else { "0" }.into()));
+    }
+    if let Some(t) = i.gateway_servers {
+        kv.push(("dns.gateway_servers", if t { "1" } else { "0" }.into()));
     }
     if let Some(n) = &i.upstream_tls_name {
         let n = if n.trim().is_empty() {
@@ -767,7 +814,7 @@ pub fn render_unbound(
     }
     // unbound refuses to forward to 127.0.0.0/8 / ::1 unless told otherwise
     // (a local DNS server on another port is a common domain override)
-    if domains.iter().any(|d| d.server.is_loopback()) || s.upstreams.iter().any(|u| u.is_loopback())
+    if domains.iter().any(|d| d.server.is_loopback()) || s.forward_to().iter().any(|u| u.is_loopback())
     {
         c.push_str("    do-not-query-localhost: no\n");
     }
@@ -869,7 +916,7 @@ pub fn render_unbound(
             c.push_str(&format!("    forward-addr: {sv}\n"));
         }
     }
-    if !s.upstreams.is_empty() {
+    if !s.forward_to().is_empty() {
         c.push_str("\nforward-zone:\n    name: \".\"\n");
         if dot(s) {
             // DNS over TLS: port 853, certificate must carry the name;
@@ -882,7 +929,7 @@ pub fn render_unbound(
                 ));
             }
         } else {
-            for u in &s.upstreams {
+            for u in &s.forward_to() {
                 c.push_str(&format!("    forward-addr: {u}\n"));
             }
         }
@@ -994,9 +1041,9 @@ pub async fn dnsmasq_part(
             lines.push(format!("rebind-domain-ok=/{d}/"));
         }
     }
-    if !s.upstreams.is_empty() {
+    if !s.forward_to().is_empty() {
         lines.push("no-resolv".into());
-        for u in &s.upstreams {
+        for u in &s.forward_to() {
             lines.push(format!("server={u}"));
         }
     }

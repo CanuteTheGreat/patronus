@@ -32,13 +32,13 @@
             <td>{{ g.interface }}{% if !g.dev.is_empty() %} <span class="text-muted">= {{ g.dev }}</span>{% endif %}</td>
             <td class="mono">{% if g.dynamic %}dynamic{% if !g.resolved.is_empty() %}: {{ g.resolved }}{% endif %}{% else %}{{ g.address }}{% endif %}</td>
             <td class="mono">{% if !g.monitor_enabled %}off{% else if g.monitor_ip.is_empty() && g.monitor_ips.is_empty() %}gateway{% else %}{{ g.monitor_ip }}{% if !g.monitor_ips.is_empty() %}{% if !g.monitor_ip.is_empty() %}, {% endif %}{{ g.monitor_ips }}{% endif %}<br><span class="text-sm text-muted">{{ g.monitor_reliability }} must answer, every {{ g.monitor_interval }} s, down after {{ g.monitor_down }}, up after {{ g.monitor_up }}</span>{% endif %}</td>
-            <td class="gw-state"><span class="{{ g.state_class }}">{{ g.state }}</span>{% if !g.problem.is_empty() %}<br><span class="text-sm text-muted">{{ g.problem }}</span>{% endif %}</td>
+            <td class="gw-state"><span class="{{ g.state_class }}">{{ g.state }}</span>{% if !g.warning.is_empty() %} <span class="warn gw-warning" title="Above its warning level, still carrying traffic">warning: {{ g.warning }}</span>{% endif %}{% if !g.problem.is_empty() %}<br><span class="text-sm text-muted">{{ g.problem }}</span>{% endif %}{% if !g.killed.is_empty() %}<br><span class="text-sm text-muted gw-killed">{{ g.killed }}</span>{% endif %}</td>
             <td>{{ g.loss }}</td><td>{{ g.rtt }}</td>
             <td>{{ g.description }}</td>
             <td><button class="btn btn-secondary btn-sm" onclick="editGateway(this)"
                     data-name="{{ g.name }}" data-interface="{{ g.interface }}" data-family="{{ g.family }}"
                     data-address="{{ g.address }}" data-monitor="{{ g.monitor_ip }}" data-monitor-ips="{{ g.monitor_ips }}" data-reliability="{{ g.monitor_reliability }}" data-interval="{{ g.monitor_interval }}" data-down="{{ g.monitor_down }}" data-up="{{ g.monitor_up }}" data-monitor-enabled="{{ g.monitor_enabled }}"
-                    data-loss="{{ g.loss_threshold }}" data-latency="{{ g.latency_threshold }}" data-failback="{{ g.failback_delay }}" data-ramp="{{ g.failback_ramp }}" data-description="{{ g.description }}">Edit</button>
+                    data-loss="{{ g.loss_threshold }}" data-latency="{{ g.latency_threshold }}" data-loss-warn="{{ g.loss_warn }}" data-latency-warn="{{ g.latency_warn }}" data-dns="{{ g.dns_servers }}" data-failback="{{ g.failback_delay }}" data-ramp="{{ g.failback_ramp }}" data-description="{{ g.description }}">Edit</button>
                 <button class="btn btn-danger btn-sm" onclick="del('/api/routing/gateways/{{ g.name }}', 'Delete gateway {{ g.name }}?')">Delete</button></td>
         </tr>
         {% endfor %}
@@ -57,8 +57,11 @@
         <label>Down (failed rounds) <input type="number" name="monitor_down" value="5" min="1" max="10"></label>
         <label>Up (good rounds) <input type="number" name="monitor_up" value="1" min="1" max="10"></label>
         <label>Monitor <input type="checkbox" name="monitor_enabled" checked></label>
-        <label>Loss threshold % <input type="number" name="loss_threshold" value="20" min="1" max="100"></label>
-        <label>Latency threshold ms <input type="number" name="latency_threshold" value="500" min="1"></label>
+        <label>Loss: down at % <input type="number" name="loss_threshold" value="20" min="1" max="100"></label>
+        <label>Loss: warn at % (0 = off) <input type="number" name="loss_warn" value="0" min="0" max="99"></label>
+        <label>Latency: down at ms <input type="number" name="latency_threshold" value="500" min="1"></label>
+        <label>Latency: warn at ms (0 = off) <input type="number" name="latency_warn" value="0" min="0"></label>
+        <label>DNS servers of this uplink (comma separated) <input name="dns_servers" placeholder="9.9.9.9, 149.112.112.112"></label>
         <label>Failback delay s (0 = at once) <input type="number" name="failback_delay" value="0" min="0" max="3600"></label>
         <label>Failback ramp s (0 = at once) <input type="number" name="failback_ramp" value="0" min="0" max="3600"></label>
         <label>Description <input name="description"></label>
@@ -73,18 +76,23 @@
     {% else %}
     <p class="text-sm text-muted">Members are <code>gateway:tier[:weight]</code>. The lowest tier with a usable member carries the
         traffic; several usable members in that tier share it by weight; when the whole tier fails the next tier takes over.
-        The trigger decides what makes a member unusable.</p>
+        The trigger decides what makes a member unusable. <b>Sticky connections</b> keep one client on the uplink it was
+        given for that many seconds after its last packet (several members in one tier). <b>Kill states</b> deletes the
+        tracked connections of an uplink that left service (and, if chosen, of the fallback when a better one returns) so
+        open flows move to the working uplink at once.</p>
     {% if groups.is_empty() %}<p class="empty">No gateway groups.</p>{% else %}
     <table class="lan" id="gateway-groups">
-        <thead><tr><th>Name</th><th>Trigger</th><th>Members (tier / weight / state)</th><th>Description</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Trigger</th><th>Sticky</th><th>Kill states</th><th>Members (tier / weight / state)</th><th>Description</th><th></th></tr></thead>
         <tbody>
         {% for g in groups %}
         <tr data-group="{{ g.name }}">
             <td class="mono"><b>{{ g.name }}</b></td>
             <td>{{ g.trigger }}</td>
+            <td>{% if g.sticky_secs == 0 %}off{% else %}{{ g.sticky_secs }} s{% endif %}</td>
+            <td>{{ g.kill_states }}</td>
             <td>{% for m in g.members %}<div class="mono">{{ m.gateway }} &middot; tier {{ m.tier }} &middot; weight {{ m.weight }} &middot; {{ m.state }}{% if m.active %} <span class="ok">active</span>{% endif %}</div>{% endfor %}</td>
             <td>{{ g.description }}</td>
-            <td><button class="btn btn-secondary btn-sm" onclick="editGroup(this)" data-name="{{ g.name }}" data-trigger="{{ g.trigger }}"
+            <td><button class="btn btn-secondary btn-sm" onclick="editGroup(this)" data-name="{{ g.name }}" data-trigger="{{ g.trigger }}" data-sticky="{{ g.sticky_secs }}" data-kill="{{ g.kill_states }}"
                     data-members="{{ g.members_spec }}" data-description="{{ g.description }}">Edit</button>
                 <button class="btn btn-danger btn-sm" onclick="del('/api/routing/groups/{{ g.name }}', 'Delete group {{ g.name }}?')">Delete</button></td>
         </tr>
@@ -101,6 +109,13 @@
                 <option value="loss">Packet loss</option>
                 <option value="latency">High latency</option>
                 <option value="loss_latency">Packet loss or high latency</option>
+            </select></label>
+        <label>Sticky connections s (0 = off) <input type="number" name="sticky_secs" value="0" min="0" max="604800"></label>
+        <label>Kill states
+            <select name="kill_states">
+                <option value="down">When a member goes down</option>
+                <option value="down_recovery">When a member goes down or comes back</option>
+                <option value="none">Never</option>
             </select></label>
         <label>Description <input name="description"></label>
         <button class="btn btn-primary btn-sm" type="submit" id="group-submit">Add group</button>
@@ -203,6 +218,8 @@
         f.elements['monitor_down'].value = d.down || 5; f.elements['monitor_up'].value = d.up || 1;
         f.elements['monitor_enabled'].checked = d.monitorEnabled === 'true';
         f.elements['loss_threshold'].value = d.loss; f.elements['latency_threshold'].value = d.latency;
+        f.elements['loss_warn'].value = d.lossWarn || 0; f.elements['latency_warn'].value = d.latencyWarn || 0;
+        f.elements['dns_servers'].value = d.dns || '';
         f.elements['failback_delay'].value = d.failback || 0;
         f.elements['failback_ramp'].value = d.ramp || 0;
         f.elements['description'].value = d.description;
@@ -219,6 +236,7 @@
         const f = document.getElementById('group-form'), d = b.dataset;
         f.elements['name'].value = d.name; f.elements['members'].value = d.members;
         f.elements['trigger'].value = d.trigger; f.elements['description'].value = d.description;
+        f.elements['sticky_secs'].value = d.sticky || 0; f.elements['kill_states'].value = d.kill || 'down';
         editing(f, d.name, 'group-submit', 'Save group ' + d.name);
     }
     function saveRoute(ev) {

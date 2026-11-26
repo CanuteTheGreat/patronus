@@ -177,6 +177,9 @@ fn gw(name: &str, iface: &str, addr: Option<&str>) -> Gateway {
         monitor_enabled: true,
         loss_threshold: 20,
         latency_threshold: 500,
+        loss_warn: 0,
+        latency_warn: 0,
+        dns_servers: vec![],
         failback_delay: 0,
         failback_ramp: 0,
         description: None,
@@ -194,6 +197,8 @@ fn st(state: GwState) -> GwStatus {
         recovered_at: None,
         ramp_secs: 0,
         probes: Vec::new(),
+        warning: None,
+        killed: None,
     }
 }
 
@@ -419,6 +424,8 @@ fn two_wan_cfg() -> (RoutingConfig, BTreeMap<String, Resolved>) {
         groups: vec![GatewayGroup {
             name: "FAILOVER".into(),
             trigger: Trigger::Down,
+            sticky_secs: 0,
+            kill_states: KillStates::Down,
             members: vec![
                 Member {
                     gateway: "WAN1".into(),
@@ -1000,6 +1007,8 @@ fn bad_input_is_refused_before_it_reaches_the_store() {
 
     let g = |m: MembersInput| {
         GroupInput {
+            sticky_secs: None,
+            kill_states: None,
             name: "G".into(),
             trigger: None,
             members: m,
@@ -1051,6 +1060,8 @@ async fn groups_need_existing_gateways_of_one_family() {
         .unwrap();
     let grp = |spec: &str| {
         GroupInput {
+            sticky_secs: None,
+            kill_states: None,
             name: "G".into(),
             trigger: Some("loss".into()),
             members: MembersInput::Spec(spec.into()),
