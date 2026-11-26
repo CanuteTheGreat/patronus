@@ -128,7 +128,7 @@
             } else td.textContent = renderValue(v);
             tr.appendChild(td); t.appendChild(tr);
         }
-        box.appendChild(t);
+        const sw = document.createElement('div'); sw.className = 'svc-scroll'; sw.appendChild(t); box.appendChild(sw);
     }
     function idsTable(head, rows) {
         const t = document.createElement('table'); t.className = 'lan';

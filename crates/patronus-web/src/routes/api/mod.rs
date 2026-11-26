@@ -10,9 +10,9 @@ pub mod dashboard;
 pub mod device;
 pub mod firewall;
 pub mod groups;
+pub mod ha;
 #[cfg(feature = "intrusion-detection")]
 pub mod ids;
-pub mod ha;
 pub mod insight_history;
 pub mod insights;
 pub mod interfaces;
