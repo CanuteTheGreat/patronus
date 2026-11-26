@@ -132,8 +132,8 @@ def define(args):
         m.check("refused-assign-changed-nothing", _roles(fw) == roles, "roles unchanged")
 
         m.phase("1. CLI plan: printed, nothing written")
-        fw.succeed("patronus config export > /root/export-before.json")
-        revs_before = fw.succeed("patronus config revisions | wc -l").strip()
+        fw.succeed("patronus config export 2>/dev/null > /root/export-before.json")
+        revs_before = fw.succeed("patronus config revisions 2>/dev/null | wc -l").strip()
         plan = fw.succeed(f"patronus import pfsense {CFG} --plan --map em0={wan} --map em1={lan} --map em2={opt}", timeout=120)
         m.check("cli-plan-names-the-rules", "LAN web out" in plan and "IoT not to LAN" in plan, plan[-600:])
         m.check("cli-plan-names-the-vlan-on-the-mapped-port", f"{opt}.{VLAN_TAG}" in plan, plan[-600:])
@@ -154,10 +154,10 @@ def define(args):
         m.phase("3. web apply: written + applied, revision kept")
         code, r = api("POST", "/api/system/import/pfsense/apply", "@" + CFG, timeout=600)
         m.check("web-apply-200", code == 200 and isinstance(r, dict) and r.get("ok") is True, f"{code} {str(r)[:400]}")
-        revs = fw.succeed("patronus config revisions")
+        revs = fw.succeed("patronus config revisions 2>/dev/null")
         m.check("revision-kept-before-the-import", "import" in revs.lower(), revs[:400])
         _kernel_state(m, fw, lan, opt, "after-import")
-        export = fw.succeed("patronus config export")
+        export = fw.succeed("patronus config export 2>/dev/null")
         m.check("reservation-in-the-store", RES_MAC in export.lower() and RES_IP in export, "dhcp static map")
         m.check("dns-host-override-in-the-store", DNS_IP in export and DNS_HOST in export, "unbound host override")
 
@@ -189,10 +189,10 @@ def _kernel_state(m, fw, lan, opt, when):
 def _nothing_imported(m, fw, revs_before, what):
     """nothing of the config.xml reached the store: no rule, alias, VLAN, reservation or host override, no new revision
     (other store rows may change meanwhile: the services write their own state)"""
-    exp = fw.succeed("patronus config export")
+    exp = fw.succeed("patronus config export 2>/dev/null")
     found = [s for s in ("LAN web out", "IoT not to LAN", "web_ports", f".{VLAN_TAG}\"", RES_MAC, DNS_IP, "fw-imported") if s in exp]
-    revs = fw.succeed("patronus config revisions | wc -l").strip()
-    diff = fw.execute("patronus config export > /root/export-now.json; diff /root/export-before.json /root/export-now.json | head -20")[1]
+    revs = fw.succeed("patronus config revisions 2>/dev/null | wc -l").strip()
+    diff = fw.execute("patronus config export 2>/dev/null > /root/export-now.json; diff /root/export-before.json /root/export-now.json | head -20")[1]
     m.check(f"{what}-wrote-nothing", not found and revs == revs_before, f"imported strings in the store: {found}; revisions {revs_before}->{revs}; "
             f"other changes: {diff.strip()[:300] or 'none'}")
 
