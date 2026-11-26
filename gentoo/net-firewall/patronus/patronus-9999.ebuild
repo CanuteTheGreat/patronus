@@ -35,6 +35,7 @@ IUSE="
 	intrusion-detection suricata snort
 	syslog igmp ups mdns nat64 l2tp upnp vrf web-proxy dynamic-routing sdwan
 	zabbix-agent telegraf
+	syslog igmp mdns udp-relay nat64 l2tp upnp vrf web-proxy dynamic-routing sdwan
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp +plugins
@@ -256,6 +257,7 @@ src_configure() {
 		$(usex ups "ups" "")
 		$(usex zabbix-agent "zabbix-agent" "")
 		$(usex telegraf "telegraf" "")
+		$(usex udp-relay "udp-relay" "")
 		$(usex mdns "mdns" "")
 		$(usex nat64 "nat64" "")
 		$(usex l2tp "l2tp" "")
@@ -408,6 +410,7 @@ src_install() {
 		use ups && webfeatures+=( ups )
 		use zabbix-agent && webfeatures+=( zabbix-agent )
 		use telegraf && webfeatures+=( telegraf )
+		use udp-relay && webfeatures+=( udp-relay )
 		use mdns && webfeatures+=( mdns )
 		use nat64 && webfeatures+=( nat64 )
 		use l2tp && webfeatures+=( l2tp )

@@ -43,6 +43,10 @@ pub enum Kind {
     Cidr4,
     Cidr6,
     Mac,
+    /// UDP ports and ranges, `137,138,5000-5010` (normalised; see `udprelay::parse_ports`).
+    Ports,
+    /// Comma separated interface specs (`@lan,@opt1,eth2`), each as [`Kind::Iface`].
+    Ifaces,
     /// Stored, never returned (`"********"` when set); `"********"` or empty on
     /// write keeps the stored value. 8..=128 printable ASCII without quotes.
     Secret,
@@ -182,6 +186,8 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     v.push(Arc::new(crate::mdns::MdnsSvc));
     #[cfg(feature = "ups")]
     v.push(Arc::new(crate::ups::UpsSvc));
+    #[cfg(feature = "udp-relay")]
+    v.push(Arc::new(crate::udprelay::UdpRelaySvc));
     #[cfg(feature = "nat64")]
     v.push(Arc::new(crate::nat64::Nat64Svc));
     #[cfg(feature = "l2tp")]
@@ -211,6 +217,68 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     v
 }
 
+/// Ports 67/68 are DHCP: relaying them would duplicate offers and break
+/// clients; the DHCP relay is the tool for that.
+pub const REFUSED_PORTS: [u16; 2] = [67, 68];
+
+/// Parse a normalised port list (`137,138,5000-5010`) into inclusive ranges.
+pub fn parse_ports(s: &str) -> std::result::Result<Vec<(u16, u16)>, String> {
+    let mut out = Vec::new();
+    for part in s.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            return Err("empty entry".into());
+        }
+        let num = |t: &str| -> std::result::Result<u16, String> {
+            match t.trim().parse::<u32>() {
+                Ok(n) if (1..=65535).contains(&n) => Ok(n as u16),
+                _ => Err(format!("{t:?} is not a port from 1 to 65535")),
+            }
+        };
+        let (lo, hi) = match part.split_once('-') {
+            Some((a, b)) => (num(a)?, num(b)?),
+            None => {
+                let n = num(part)?;
+                (n, n)
+            }
+        };
+        if lo > hi {
+            return Err(format!("range {part:?} runs backwards"));
+        }
+        for p in REFUSED_PORTS {
+            if (lo..=hi).contains(&p) {
+                return Err(format!("port {p} is DHCP: use the DHCP relay"));
+            }
+        }
+        out.push((lo, hi));
+    }
+    if out.is_empty() {
+        return Err("no ports".into());
+    }
+    if out.len() > 32 {
+        return Err("at most 32 ports or ranges".into());
+    }
+    Ok(out)
+}
+
+pub fn fmt_ports(r: &[(u16, u16)]) -> String {
+    r.iter()
+        .map(|&(a, b)| {
+            if a == b {
+                a.to_string()
+            } else {
+                format!("{a}-{b}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Validate and normalise a port list for [`Kind::Ports`].
+pub fn check_ports(s: &str) -> std::result::Result<String, String> {
+    parse_ports(s).map(|r| fmt_ports(&r))
+}
+
 pub fn find(slug: &str) -> Option<Arc<dyn Svc>> {
     all().into_iter().find(|s| s.spec().slug == slug)
 }
@@ -220,6 +288,7 @@ pub const SVC_TABLES: &[&str] = &[
     "syslog_targets",
     "igmp_interfaces",
     "mdns_interfaces",
+    "udp_relay_rules",
     "l2tp_users",
     "proxy_blocked",
     "vrf_instances",
@@ -336,6 +405,20 @@ pub fn check(f: &Field, v: &Value) -> Result<String> {
             }
         }
         Kind::Mac => lan::check_mac(&t),
+        Kind::Ports => check_ports(&t).map_err(|e| bad(&e)),
+        Kind::Ifaces => {
+            let mut out: Vec<String> = Vec::new();
+            for part in t.split(',') {
+                let one = lan::check_iface_spec(part)?;
+                if !out.contains(&one) {
+                    out.push(one);
+                }
+            }
+            if out.len() > 16 {
+                return Err(bad("at most 16 interfaces"));
+            }
+            Ok(out.join(","))
+        }
         Kind::Secret => {
             if t == SECRET_MASK {
                 return Ok(t);

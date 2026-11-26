@@ -491,6 +491,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "smart",
         "ups",
         "mdns",
+        "udp-relay",
         "nat64",
         "upnp",
         "vrf",
@@ -564,6 +565,10 @@ pub fn absent_features(
         ("smart", "S.M.A.R.T. disk health"),
         ("ups", "UPS monitoring (NUT)"),
         ("mdns", "mDNS repeater (device discovery across networks)"),
+        (
+            "udp-relay",
+            "UDP broadcast relay (discovery across segments)",
+        ),
         ("nat64", "NAT64 / DNS64"),
         ("upnp", "UPnP / NAT-PMP"),
         ("vrf", "VRFs"),

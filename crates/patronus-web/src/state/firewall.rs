@@ -933,6 +933,32 @@ impl FirewallManager {
         outbound_nat_mode(&self.store).await.map_err(Self::e)
     }
 
+    /// `firewall.mgmt_only`: with a management network (role `mgmt`), SSH and
+    /// the web UI answer only there (default on).
+    pub async fn mgmt_only(&self) -> bool {
+        patronus_config::defaults::mgmt_only(&self.store).await
+    }
+
+    pub async fn set_mgmt_only(&self, on: bool) -> anyhow::Result<()> {
+        use patronus_config::defaults::MGMT_ONLY_KEY;
+        let _g = self.edit.lock().await;
+        let old = self.mgmt_only().await;
+        let txt = |b: bool| if b { "true" } else { "false" };
+        self.snapshot(format!("set management network only {}", txt(on)))
+            .await?;
+        self.store
+            .save_system_config(MGMT_ONLY_KEY, txt(on))
+            .await
+            .map_err(Self::e)?;
+        if let Err(e) = self.push().await {
+            let _ = self.store.save_system_config(MGMT_ONLY_KEY, txt(old)).await;
+            return Err(e);
+        }
+        self.audit("update", "mgmt_only", txt(on), serde_json::Value::Null)
+            .await;
+        Ok(())
+    }
+
     pub async fn set_outbound_mode(&self, mode: &str) -> anyhow::Result<()> {
         let mode = OutboundNatMode::parse(mode).map_err(Self::e)?;
         let _g = self.edit.lock().await;
@@ -1620,6 +1646,7 @@ mod tests {
             Some(&patronus_config::Bootstrap {
                 wan: vec!["eth0".into()],
                 lan: vec!["eth1".into()],
+                ..Default::default()
             }),
             &["eth0".into(), "eth1".into()],
         )
@@ -1655,6 +1682,7 @@ mod tests {
             Some(&patronus_config::Bootstrap {
                 wan: vec!["eth0".into()],
                 lan: vec!["eth1".into()],
+                ..Default::default()
             }),
             &["eth0".into(), "eth1".into()],
         )
@@ -1890,7 +1918,7 @@ mod tests {
             &store,
             Some(&patronus_config::Bootstrap {
                 wan: vec!["lo".into()],
-                lan: vec![],
+                ..Default::default()
             }),
             &["lo".into()],
         )

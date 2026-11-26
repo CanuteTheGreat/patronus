@@ -60,6 +60,31 @@ fn parse_anti_lockout_ports(list: Option<&str>) -> Vec<u16> {
     .unwrap_or_else(|| ANTI_LOCKOUT_PORTS.to_vec())
 }
 
+/// `system_config` key: while an interface carries the `mgmt` role (a
+/// dedicated management network), SSH and the web UI answer ONLY there
+/// (`1`, the default) or also on the other interfaces (`0`).
+pub const MGMT_ONLY_KEY: &str = "firewall.mgmt_only";
+
+/// [`MGMT_ONLY_KEY`]: on unless it is set to `0` / `false` / `off` / `no`.
+pub async fn mgmt_only(store: &ConfigStore) -> bool {
+    parse_mgmt_only(
+        store
+            .load_system_config(MGMT_ONLY_KEY)
+            .await
+            .ok()
+            .flatten()
+            .as_deref(),
+    )
+}
+
+/// The value of [`MGMT_ONLY_KEY`] (`None` = unset = on).
+pub fn parse_mgmt_only(v: Option<&str>) -> bool {
+    !matches!(
+        v.map(|s| s.trim().to_ascii_lowercase()).as_deref(),
+        Some("0" | "false" | "off" | "no")
+    )
+}
+
 /// `system_config` key of the managed SSH server's port (lane H/L3).
 pub const SSH_PORT_KEY: &str = "ssh.port";
 
@@ -96,11 +121,106 @@ pub fn default_bootstrap_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(DEFAULT_BOOTSTRAP_PATH))
 }
 
-/// Interface roles read from the `[network]` section of patronus.toml.
+/// Interface roles (and the virtual devices they sit on) read from the
+/// `[network]` section of patronus.toml.
+///
+/// ```toml
+/// [network]
+/// wan_interface  = "bond0.100"   # also wan_interfaces = [...]
+/// lan_interface  = "bond0.30"
+/// mgmt_interface = "bond0.20"    # optional dedicated management network
+///
+/// [[network.bond]]               # link aggregation created at first boot
+/// name = "bond0"
+/// members = ["enp1s0", "enp2s0"]
+/// mode = "802.3ad"               # 802.3ad | active-backup | balance-xor | ...
+/// xmit_hash_policy = "layer2+3"  # optional
+/// lacp_rate = "fast"             # optional, 802.3ad only
+/// miimon = 100                   # optional (ms)
+///
+/// [[network.vlan]]               # 802.1Q VLAN created at first boot
+/// parent = "bond0"
+/// tag = 100
+/// name = "bond0.100"             # optional, default <parent>.<tag>
+/// ```
+///
+/// Bonds and VLANs declared here are created by the interfaces applier on
+/// the first boot (`patronus apply`), so a role may name them before they
+/// exist in the kernel. docs/ISO-INSTALL.md lists every key.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Bootstrap {
     pub wan: Vec<String>,
     pub lan: Vec<String>,
+    /// Dedicated management network (role `mgmt`): carries the anti-lockout
+    /// rule (SSH + web UI) instead of the LAN.
+    pub mgmt: Vec<String>,
+    pub bonds: Vec<BootBond>,
+    pub vlans: Vec<BootVlan>,
+}
+
+/// A `[[network.bond]]` entry of patronus.toml.
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct BootBond {
+    pub name: String,
+    #[serde(default)]
+    pub members: Vec<String>,
+    #[serde(default = "default_bond_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub xmit_hash_policy: Option<String>,
+    #[serde(default)]
+    pub lacp_rate: Option<String>,
+    #[serde(default)]
+    pub miimon: Option<u32>,
+    #[serde(default)]
+    pub primary: Option<String>,
+}
+
+/// Mode of a `[[network.bond]]` entry without `mode`.
+pub const DEFAULT_BOND_MODE: &str = "active-backup";
+
+fn default_bond_mode() -> String {
+    DEFAULT_BOND_MODE.into()
+}
+
+/// Bond modes of Linux bonding (`l2_bonds.mode`).
+pub const BOND_MODES: &[&str] = &[
+    "active-backup",
+    "802.3ad",
+    "balance-xor",
+    "balance-rr",
+    "broadcast",
+    "balance-tlb",
+    "balance-alb",
+];
+
+/// Transmit hash policies (`xmit_hash_policy`).
+pub const BOND_HASH_POLICIES: &[&str] = &[
+    "layer2",
+    "layer2+3",
+    "layer3+4",
+    "encap2+3",
+    "encap3+4",
+    "vlan+srcmac",
+];
+
+/// A `[[network.vlan]]` entry of patronus.toml.
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct BootVlan {
+    pub parent: String,
+    pub tag: u16,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+impl BootVlan {
+    /// The device name: `name`, or `<parent>.<tag>`.
+    pub fn device(&self) -> String {
+        self.name
+            .clone()
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| format!("{}.{}", self.parent, self.tag))
+    }
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -113,32 +233,178 @@ struct BootstrapFile {
 struct NetworkSection {
     wan_interface: Option<String>,
     lan_interface: Option<String>,
+    mgmt_interface: Option<String>,
     #[serde(default)]
     wan_interfaces: Vec<String>,
     #[serde(default)]
     lan_interfaces: Vec<String>,
+    #[serde(default)]
+    mgmt_interfaces: Vec<String>,
+    #[serde(default)]
+    bond: Vec<BootBond>,
+    #[serde(default)]
+    vlan: Vec<BootVlan>,
+}
+
+/// Linux interface name rules (at most 15 bytes, no `/`, `:` or blanks).
+fn ifname_ok(n: &str) -> bool {
+    !n.is_empty()
+        && n.len() <= 15
+        && n != "."
+        && n != ".."
+        && n.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'@'))
+}
+
+fn role_list(one: Option<String>, mut many: Vec<String>) -> Vec<String> {
+    if let Some(x) = one {
+        many.insert(0, x);
+    }
+    let mut out: Vec<String> = Vec::new();
+    for x in many {
+        if !x.trim().is_empty() && !out.contains(&x) {
+            out.push(x);
+        }
+    }
+    out
 }
 
 impl Bootstrap {
-    /// Parse patronus.toml text.
+    /// Parse patronus.toml text. Bonds / VLANs that fail [`Self::validate`]
+    /// are still returned: role assignment must not depend on them, and the
+    /// first-boot network seeding refuses them with the plain-words reason.
     pub fn parse(text: &str) -> Result<Self> {
         let f: BootstrapFile =
             toml::from_str(text).map_err(|e| Error::Config(format!("patronus.toml: {e}")))?;
-        let mut b = Bootstrap {
-            wan: f.network.wan_interfaces,
-            lan: f.network.lan_interfaces,
-        };
-        if let Some(w) = f.network.wan_interface {
-            b.wan.insert(0, w);
+        let n = f.network;
+        Ok(Bootstrap {
+            wan: role_list(n.wan_interface, n.wan_interfaces),
+            lan: role_list(n.lan_interface, n.lan_interfaces),
+            mgmt: role_list(n.mgmt_interface, n.mgmt_interfaces),
+            bonds: n.bond,
+            vlans: n.vlan,
+        })
+    }
+
+    /// The first problem with the bonds / VLANs / roles, in plain words.
+    pub fn validate(&self) -> Result<()> {
+        let bad = |m: String| Err(Error::Config(format!("patronus.toml [network]: {m}")));
+        let mut members: Vec<&str> = Vec::new();
+        let mut names: Vec<String> = Vec::new();
+        for b in &self.bonds {
+            if !ifname_ok(&b.name) {
+                return bad(format!(
+                    "bond name {:?} is not a valid interface name",
+                    b.name
+                ));
+            }
+            if !BOND_MODES.contains(&b.mode.as_str()) {
+                return bad(format!(
+                    "bond {}: mode {:?} (one of {})",
+                    b.name,
+                    b.mode,
+                    BOND_MODES.join(", ")
+                ));
+            }
+            if b.members.is_empty() {
+                return bad(format!("bond {} has no member ports", b.name));
+            }
+            for m in &b.members {
+                if !ifname_ok(m) || m == &b.name {
+                    return bad(format!("bond {}: member {m:?} is not a valid port", b.name));
+                }
+                if members.contains(&m.as_str()) {
+                    return bad(format!("port {m} is a member of two bonds"));
+                }
+                members.push(m);
+            }
+            if let Some(h) = &b.xmit_hash_policy {
+                if !BOND_HASH_POLICIES.contains(&h.as_str()) {
+                    return bad(format!(
+                        "bond {}: xmit_hash_policy {h:?} (one of {})",
+                        b.name,
+                        BOND_HASH_POLICIES.join(", ")
+                    ));
+                }
+            }
+            if let Some(r) = &b.lacp_rate {
+                if r != "slow" && r != "fast" {
+                    return bad(format!("bond {}: lacp_rate {r:?} (slow or fast)", b.name));
+                }
+                if b.mode != "802.3ad" {
+                    return bad(format!("bond {}: lacp_rate needs mode 802.3ad", b.name));
+                }
+            }
+            if let Some(ms) = b.miimon {
+                if ms == 0 || ms > 10_000 {
+                    return bad(format!("bond {}: miimon {ms} (1-10000 ms)", b.name));
+                }
+            }
+            if let Some(p) = &b.primary {
+                if !b.members.contains(p) {
+                    return bad(format!("bond {}: primary {p} is not a member", b.name));
+                }
+            }
+            if names.contains(&b.name) {
+                return bad(format!("two devices are named {}", b.name));
+            }
+            names.push(b.name.clone());
         }
-        if let Some(l) = f.network.lan_interface {
-            b.lan.insert(0, l);
+        for v in &self.vlans {
+            if !(1..=4094).contains(&v.tag) {
+                return bad(format!("VLAN tag {} on {} (1-4094)", v.tag, v.parent));
+            }
+            if !ifname_ok(&v.parent) {
+                return bad(format!(
+                    "VLAN {}: parent {:?} is not a valid interface",
+                    v.tag, v.parent
+                ));
+            }
+            let d = v.device();
+            if !ifname_ok(&d) {
+                return bad(format!(
+                    "VLAN device name {d:?} is invalid or longer than 15 characters: set `name`"
+                ));
+            }
+            if members.contains(&v.parent.as_str()) {
+                return bad(format!(
+                    "VLAN {d}: {} is a bond member; put the VLAN on the bond instead",
+                    v.parent
+                ));
+            }
+            if names.contains(&d) {
+                return bad(format!("two devices are named {d}"));
+            }
+            names.push(d);
         }
-        b.wan.retain(|s| !s.trim().is_empty());
-        b.lan.retain(|s| !s.trim().is_empty());
-        b.wan.dedup();
-        b.lan.dedup();
-        Ok(b)
+        for (role, list) in [("wan", &self.wan), ("lan", &self.lan), ("mgmt", &self.mgmt)] {
+            for n in list {
+                if members.contains(&n.as_str()) {
+                    return bad(format!(
+                        "{role} interface {n} is a bond member: give the role to the bond (or a VLAN on it)"
+                    ));
+                }
+            }
+        }
+        for m in &self.mgmt {
+            if self.wan.contains(m) || self.lan.contains(m) {
+                return bad(format!(
+                    "the management network {m} is also the WAN or LAN: use a separate port or VLAN, or leave mgmt_interface out"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Bond and VLAN devices declared here (created at first boot); empty
+    /// when the declaration is invalid.
+    pub fn virtual_names(&self) -> Vec<String> {
+        if self.validate().is_err() {
+            return Vec::new();
+        }
+        let mut v: Vec<String> = self.bonds.iter().map(|b| b.name.clone()).collect();
+        v.extend(self.vlans.iter().map(|x| x.device()));
+        v
     }
 
     /// Load the bootstrap file; `Ok(None)` if it does not exist.
@@ -186,9 +452,12 @@ pub async fn ensure_defaults(
     if store.interface_roles().await?.is_empty() {
         if let Some(b) = bootstrap {
             let mut planned: Vec<(String, String)> = Vec::new();
-            for (role, names) in [("wan", &b.wan), ("lan", &b.lan)] {
+            // bonds / VLANs the bootstrap declares are created by the interfaces applier
+            // later in this same boot: a role may name them before they exist
+            let declared = b.virtual_names();
+            for (role, names) in [("wan", &b.wan), ("lan", &b.lan), ("mgmt", &b.mgmt)] {
                 for n in names {
-                    if existing.iter().any(|e| e == n) {
+                    if existing.iter().any(|e| e == n) || declared.contains(n) {
                         planned.push((n.clone(), role.to_string()));
                     } else {
                         let w = format!(
@@ -405,12 +674,108 @@ mod tests {
         assert_eq!(Bootstrap::parse("").unwrap(), Bootstrap::default());
     }
 
+    #[test]
+    fn parses_bonds_vlans_and_the_management_network() {
+        let b = Bootstrap::parse(
+            "[network]\nwan_interface = \"bond0.100\"\nlan_interface = \"bond0.30\"\nmgmt_interface = \"bond0.20\"\n\
+             [[network.bond]]\nname = \"bond0\"\nmembers = [\"eth0\", \"eth1\"]\nmode = \"802.3ad\"\nxmit_hash_policy = \"layer2+3\"\nlacp_rate = \"fast\"\n\
+             [[network.vlan]]\nparent = \"bond0\"\ntag = 100\n[[network.vlan]]\nparent = \"bond0\"\ntag = 30\n\
+             [[network.vlan]]\nparent = \"bond0\"\ntag = 20\nname = \"bond0.20\"\n",
+        )
+        .unwrap();
+        assert_eq!(b.mgmt, vec!["bond0.20"]);
+        assert_eq!(b.bonds[0].mode, "802.3ad");
+        assert_eq!(b.bonds[0].members, vec!["eth0", "eth1"]);
+        assert_eq!(b.vlans[0].device(), "bond0.100");
+        b.validate().unwrap();
+        assert_eq!(
+            b.virtual_names(),
+            vec!["bond0", "bond0.100", "bond0.30", "bond0.20"]
+        );
+        // a bond without mode = active-backup
+        let b = Bootstrap::parse("[[network.bond]]\nname='bond1'\nmembers=['eth2']\n").unwrap();
+        assert_eq!(b.bonds[0].mode, DEFAULT_BOND_MODE);
+    }
+
+    #[test]
+    fn bootstrap_problems_are_plain_words() {
+        let err = |t: &str| {
+            let b = Bootstrap::parse(t).unwrap();
+            assert!(b.virtual_names().is_empty(), "{t}");
+            b.validate().unwrap_err().to_string()
+        };
+        let base = "[[network.bond]]\nname='bond0'\nmembers=['eth0','eth1']\n";
+        assert!(
+            err("[[network.bond]]\nname='bond0'\nmembers=['eth0']\nmode='lacp'\n").contains("mode")
+        );
+        assert!(err("[[network.bond]]\nname='bond0'\n").contains("no member"));
+        assert!(err(&format!(
+            "{base}[[network.bond]]\nname='bond1'\nmembers=['eth1']\n"
+        ))
+        .contains("two bonds"));
+        assert!(
+            err("[[network.bond]]\nname='b'\nmembers=['e']\nlacp_rate='fast'\n")
+                .contains("802.3ad")
+        );
+        assert!(err(
+            "[[network.bond]]\nname='b'\nmembers=['e']\nmode='802.3ad'\nxmit_hash_policy='l9'\n"
+        )
+        .contains("xmit_hash_policy"));
+        assert!(
+            err(&format!("{base}[[network.vlan]]\nparent='bond0'\ntag=0\n")).contains("1-4094")
+        );
+        assert!(err(&format!(
+            "{base}[[network.vlan]]\nparent='bond0'\ntag=4095\n"
+        ))
+        .contains("1-4094"));
+        assert!(
+            err(&format!("{base}[[network.vlan]]\nparent='eth0'\ntag=5\n")).contains("bond member")
+        );
+        assert!(
+            err("[[network.vlan]]\nparent='enp0s31f6abcd'\ntag=4000\n").contains("15 characters")
+        );
+        assert!(err(&format!("{base}[network]\nwan_interface='eth1'\n")).contains("bond member"));
+        assert!(err("[network]\nlan_interface='eth1'\nmgmt_interface='eth1'\n[[network.vlan]]\nparent='eth1'\ntag=2\n").contains("management"));
+    }
+
+    #[tokio::test]
+    async fn roles_may_name_declared_bonds_and_vlans_and_mgmt() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let b = Bootstrap::parse(
+            "[network]\nwan_interface='bond0.100'\nmgmt_interface='bond0.20'\nlan_interface='eth2'\n\
+             [[network.bond]]\nname='bond0'\nmembers=['eth0','eth1']\nmode='802.3ad'\n\
+             [[network.vlan]]\nparent='bond0'\ntag=100\n[[network.vlan]]\nparent='bond0'\ntag=20\n",
+        )
+        .unwrap();
+        let existing = vec!["eth0".to_string(), "eth1".into(), "eth2".into()];
+        let r = ensure_defaults(&s, Some(&b), &existing).await.unwrap();
+        assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+        assert_eq!(
+            s.interfaces_with_role("wan").await.unwrap(),
+            vec!["bond0.100"]
+        );
+        assert_eq!(
+            s.interfaces_with_role("mgmt").await.unwrap(),
+            vec!["bond0.20"]
+        );
+        assert_eq!(s.interfaces_with_role("lan").await.unwrap(), vec!["eth2"]);
+    }
+
+    #[test]
+    fn mgmt_only_defaults_on() {
+        assert!(parse_mgmt_only(None));
+        assert!(parse_mgmt_only(Some("1")));
+        assert!(!parse_mgmt_only(Some(" Off")));
+        assert!(!parse_mgmt_only(Some("0")));
+    }
+
     #[tokio::test]
     async fn seeds_once_assigns_existing_roles_and_respects_deletions() {
         let s = ConfigStore::open_in_memory().await.unwrap();
         let b = Bootstrap {
             wan: vec!["wan0".into()],
             lan: vec!["lan0".into(), "ghost0".into()],
+            ..Default::default()
         };
         let existing = vec!["lo".to_string(), "lan0".into(), "wan0".into()];
         let r = ensure_defaults(&s, Some(&b), &existing).await.unwrap();
@@ -542,7 +907,7 @@ mod tests {
             Bootstrap::load(&f).unwrap(),
             Some(Bootstrap {
                 wan: vec!["eth0".into()],
-                lan: vec![],
+                ..Default::default()
             })
         );
         // a directory where the file should be: a real error, not "no file"
@@ -573,6 +938,7 @@ mod tests {
         let b = Bootstrap {
             wan: vec!["eth0".into()],
             lan: vec!["eth1".into()],
+            ..Default::default()
         };
         ensure_defaults(&s, Some(&b), &["eth0".into(), "eth1".into(), "eth5".into()])
             .await

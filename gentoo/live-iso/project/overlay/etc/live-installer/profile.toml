@@ -2,6 +2,9 @@
 name = "patronus"
 title = "Patronus"
 network_mode = "wan-lan"             # OPNsense-style WAN/LAN assignment
+# install-time bonds (LAGG/LACP), VLAN-tagged WAN/LAN, PPPoE and a dedicated management network (liveinst/netvirt.py); Patronus
+# creates them at its first boot from [network] + [firstboot] in /etc/patronus/patronus.toml
+net_bonds_vlans = true
 filesystems = ["zfs", "xfs", "ext4"]  # ZFS default (single disk or mirror); XFS = automatic fallback (RAM < 8 GB, no ZFS module for the kernel/arch); ext4 = manual Advanced choice, never preselected
 # Disk encryption (owner decision 2026-11-03): a firewall must boot with nobody at the console. ZFS is natively encrypted ONLY when a working
 # TPM 2.0 can unseal the key unattended (the installer self-tests seal+unseal); otherwise the disk is NOT encrypted and nothing is ever asked at boot.

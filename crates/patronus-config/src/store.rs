@@ -1227,10 +1227,11 @@ fn nat_columns(t: &NatType) -> (&'static str, Option<String>, Option<u16>, Optio
     }
 }
 
-/// `wan`, `lan` or `opt<N>`.
+/// `wan`, `lan`, `mgmt` (a dedicated management network) or `opt<N>`.
 pub fn is_valid_role(r: &str) -> bool {
     r == "wan"
         || r == "lan"
+        || r == "mgmt"
         || (r.len() > 3 && r.starts_with("opt") && r[3..].bytes().all(|b| b.is_ascii_digit()))
 }
 
@@ -1821,6 +1822,7 @@ mod tests {
         assert!(!is_valid_sysctl_key("net.ipv4 .x"));
         assert!(is_valid_role("wan") && is_valid_role("lan") && is_valid_role("opt2"));
         assert!(!is_valid_role("opt") && !is_valid_role("dmz"));
+        assert!(is_valid_role("mgmt"));
     }
 
     #[tokio::test]

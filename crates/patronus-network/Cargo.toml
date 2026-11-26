@@ -41,6 +41,8 @@ ups = []
 zabbix-agent = []
 telegraf = []
 mdns = []
+# UDP broadcast relay: built-in engine (`patronus udp-relay run`), no external daemon
+udp-relay = []
 nat64 = []
 l2tp = []
 upnp = []

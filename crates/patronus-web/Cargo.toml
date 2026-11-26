@@ -17,7 +17,7 @@ path = "src/lib.rs"
 # builds patronus-web with --no-default-features and the USE-selected list):
 # lane C interfaces (vlan, pppoe, dhcpcd) and the lane D LAN-service pages
 # (dhcp, dns, ntp).
-default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "smart", "mdns", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "threat-feeds", "journal", "tls-rustls", "ups", "zabbix-agent", "telegraf"]
+default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "smart", "mdns", "udp-relay", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "threat-feeds", "journal", "tls-rustls", "ups", "zabbix-agent", "telegraf"]
 vlan = ["patronus-network/vlan"]
 pppoe = ["patronus-network/pppoe"]
 dhcpcd = ["patronus-network/dhcpcd"]
@@ -43,6 +43,7 @@ ups = ["patronus-network/ups"]
 zabbix-agent = ["patronus-network/zabbix-agent"]
 telegraf = ["patronus-network/telegraf"]
 mdns = ["patronus-network/mdns"]
+udp-relay = ["patronus-network/udp-relay"]
 nat64 = ["patronus-network/nat64"]
 l2tp = ["patronus-network/l2tp"]
 upnp = ["patronus-network/upnp"]

@@ -30,6 +30,7 @@ pub mod site;
 pub mod smart;
 pub mod status;
 pub mod tunnel;
+pub mod udprelay;
 pub mod users;
 pub mod validate;
 pub mod web;
