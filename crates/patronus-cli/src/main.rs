@@ -54,6 +54,14 @@ enum Commands {
         dry_run: bool,
     },
 
+    /// Import another router's configuration (pfSense / OPNsense config.xml).
+    /// Prints the plan by default; `--yes` writes the config store.
+    #[cfg(feature = "uci-import")]
+    Import {
+        #[command(subcommand)]
+        what: ImportWhat,
+    },
+
     /// Import an OpenWrt UCI config (a `sysupgrade -b` tarball or a directory
     /// with etc/config/*) into the config store. Review with `patronus apply
     /// --dry-run`.
@@ -268,6 +276,27 @@ enum Commands {
     Metrics {
         #[command(subcommand)]
         action: MetricsCommands,
+    },
+}
+
+/// What `patronus import` reads.
+#[cfg(feature = "uci-import")]
+#[derive(Subcommand)]
+enum ImportWhat {
+    /// A pfSense CE or OPNsense `config.xml` (both are read the same way)
+    #[command(visible_alias = "opnsense")]
+    Pfsense {
+        /// The config.xml (Diagnostics > Backup & Restore; System > Configuration > Backups)
+        file: PathBuf,
+        /// Print the plan and write nothing (this is also the default without --yes)
+        #[arg(long)]
+        plan: bool,
+        /// Old device -> device on this box, repeatable (`--map em0=eth0 --map igb1=eth1`)
+        #[arg(long = "map", value_name = "OLDDEV=NEWDEV")]
+        map: Vec<String>,
+        /// Write the plan into the config store (review with `patronus apply --dry-run`)
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -823,6 +852,19 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "wifi-ap")]
         Commands::WifiEvent { iface, mac, keyid } => {
             commands::wifi::event(cli.db, iface, mac, keyid).await?;
+        }
+
+        #[cfg(feature = "uci-import")]
+        Commands::Import {
+            what:
+                ImportWhat::Pfsense {
+                    file,
+                    plan: _,
+                    map,
+                    yes,
+                },
+        } => {
+            commands::import_pfsense::run(cli.db, file, map, yes).await?;
         }
 
         #[cfg(feature = "uci-import")]

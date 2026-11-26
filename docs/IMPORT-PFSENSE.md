@@ -1,0 +1,48 @@
+# Importing a pfSense / OPNsense configuration
+
+```
+patronus import pfsense config.xml [--plan] [--map OLDDEV=NEWDEV]... [--yes]
+```
+
+Reads a `config.xml` exported from pfSense CE or OPNsense (the alias `patronus import opnsense`
+works too; the root element tells the two apart). Without `--yes` (or with `--plan`) it only
+prints the plan and writes nothing. With `--yes` it writes the config store; then review with
+`patronus apply --dry-run` and run `patronus apply`.
+
+Secrets (PPPoE and WireGuard keys, IPsec pre-shared keys) are written to the store but never
+printed: the report shows `(set)`.
+
+## --map
+
+pfSense names devices after the driver (`em0`, `igb1`, `vtnet0`). Give the names on this box:
+`--map em0=eth0 --map em1=eth1`. VLAN devices follow their parent (`em1.20` becomes `eth1.20`).
+Without a map the old names are kept and the plan says so.
+
+## Imported
+
+- System: host name, time zone, NTP servers.
+- Interfaces (`wan`, `lan`, `optN`): device, role, enabled, MTU, IPv4 static/DHCP/PPPoE, IPv6
+  static/DHCPv6/SLAAC; `track6` becomes DHCPv6 prefix delegation from the WAN to that interface.
+- VLANs and PPPoE links (the PPPoE password is decoded and stored).
+- Gateways, gateway groups, static routes (to a gateway with a fixed address).
+- Aliases: host, network and port aliases (pfSense `<aliases>` and OPNsense Firewall > Alias).
+  Rules refer to them as `$name`.
+- Firewall rules: pass/block/reject, protocol, source/destination (address, network, alias, an
+  interface name meaning that interface's subnet), ports, disabled, log, IPv4/IPv6.
+- Port forwards, 1:1 NAT of single addresses.
+- DHCP servers (range, lease time, domain, DNS) and static mappings.
+- DNS host overrides and domain overrides (pfSense Unbound, OPNsense Unbound plus).
+- WireGuard tunnels and peers (pfSense package, OPNsense plugin).
+- IPsec IKEv2 pre-shared-key site-to-site tunnels (Patronus default proposals are used).
+
+## Covered by default
+
+The automatic anti-lockout rule, the default LAN allow rule, the allow rules pfSense generates for
+port forwards, and automatic/hybrid outbound NAT.
+
+## Listed for manual work
+
+Everything else appears under `unmapped` in plain words, never silently dropped: rules with
+"not" or floating rules, URL/GeoIP aliases, OpenVPN servers and clients, IKEv1 or certificate
+IPsec, mobile IPsec, outbound NAT rules, virtual IPs, certificates, users, shapers, captive
+portal, bridges/LAGG, DHCPv6 server, and installed packages.
