@@ -139,24 +139,53 @@ pub fn render_nft(groups: &[StickyGroup], stale: &[String], flush: &BTreeSet<Str
     s
 }
 
-/// Map names and, per map, the marks stored in it, from `nft -j list table`.
-pub fn parse_table(json: &str) -> BTreeMap<String, Vec<u32>> {
-    let mut out = BTreeMap::new();
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
-        return out;
-    };
-    for item in v["nftables"].as_array().into_iter().flatten() {
-        let Some(m) = item.get("map") else { continue };
-        let Some(name) = m["name"].as_str() else {
-            continue;
-        };
-        let mut marks = Vec::new();
-        for e in m["elem"].as_array().into_iter().flatten() {
-            if let Some(val) = e.as_array().and_then(|p| p.get(1)).and_then(|x| x.as_u64()) {
-                marks.push(val as u32);
+/// Map names and, per map, the marks stored in it, from the text of
+/// `nft list table` (not `nft -j`: Gentoo's nftables is built without JSON by
+/// default). An element reads `<addr> timeout 1m expires 59s : 0x00010001`; the
+/// list may continue on further lines.
+pub fn parse_table(text: &str) -> BTreeMap<String, Vec<u32>> {
+    let mut out: BTreeMap<String, Vec<u32>> = BTreeMap::new();
+    let mut cur: Option<String> = None;
+    let mut in_elems = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("map ") {
+            if let Some(name) = rest.strip_suffix('{').map(str::trim) {
+                out.entry(name.to_string()).or_default();
+                cur = Some(name.to_string());
+                in_elems = false;
+                continue;
             }
         }
-        out.insert(name.to_string(), marks);
+        if t == "}" && !in_elems {
+            // end of a map block (the table's own closing brace comes last)
+            cur = None;
+        }
+        let Some(name) = &cur else { continue };
+        let mut body = t;
+        if let Some(r) = t.strip_prefix("elements = {") {
+            in_elems = true;
+            body = r;
+        }
+        if !in_elems {
+            continue;
+        }
+        let done = body.contains('}');
+        for entry in body.trim_end_matches('}').split(',') {
+            if let Some((_, v)) = entry.rsplit_once(" : ") {
+                let v = v.trim();
+                let n = match v.strip_prefix("0x") {
+                    Some(h) => u32::from_str_radix(h, 16).ok(),
+                    None => v.parse().ok(),
+                };
+                if let Some(n) = n {
+                    out.get_mut(name).map(|m| m.push(n));
+                }
+            }
+        }
+        if done {
+            in_elems = false;
+        }
     }
     out
 }
@@ -173,7 +202,6 @@ pub async fn apply_sticky(
         .run(
             "nft",
             &[
-                "-j".into(),
                 "list".into(),
                 "table".into(),
                 "inet".into(),
@@ -201,7 +229,11 @@ pub async fn apply_sticky(
     }
     let maps = live.as_deref().map(parse_table).unwrap_or_default();
     let want: BTreeSet<String> = groups.iter().map(|g| g.map_name()).collect();
-    let stale: Vec<String> = maps.keys().filter(|m| !want.contains(*m)).cloned().collect();
+    let stale: Vec<String> = maps
+        .keys()
+        .filter(|m| !want.contains(*m))
+        .cloned()
+        .collect();
     let mut flush = BTreeSet::new();
     for g in groups {
         let name = g.map_name();
@@ -394,17 +426,16 @@ impl Killer for SystemKiller {
 
 /// DNS servers of the gateways that carry traffic now (down gateways' servers
 /// are not queried: they sit behind a dead uplink), in gateway-name order.
-pub fn usable_dns_servers(
-    cfg: &RoutingConfig,
-    status: &BTreeMap<String, GwStatus>,
-) -> Vec<IpAddr> {
+pub fn usable_dns_servers(cfg: &RoutingConfig, status: &BTreeMap<String, GwStatus>) -> Vec<IpAddr> {
     let mut out: Vec<IpAddr> = Vec::new();
     for g in &cfg.gateways {
         let ok = match status.get(&g.name) {
             // no monitor result yet: usable
             None => true,
-            Some(s) => usable(s.state, Trigger::LossLatency)
-                || matches!(s.state, GwState::Loss | GwState::Latency),
+            Some(s) => {
+                usable(s.state, Trigger::LossLatency)
+                    || matches!(s.state, GwState::Loss | GwState::Latency)
+            }
         };
         if ok {
             for ip in &g.dns_servers {

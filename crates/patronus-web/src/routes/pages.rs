@@ -210,7 +210,11 @@ async fn uplink_tile(
     Vec<crate::templates::DashUplink>,
     Vec<crate::templates::DashUplinkEvent>,
 ) {
-    let st = state.routing.status().await.unwrap_or(serde_json::Value::Null);
+    let st = state
+        .routing
+        .status()
+        .await
+        .unwrap_or(serde_json::Value::Null);
     let (gateways, _, _) = super::api::routing::views(&st);
     let uplinks: Vec<crate::templates::DashUplink> = gateways
         .into_iter()
