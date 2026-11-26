@@ -128,6 +128,17 @@ $1
   kind: User
   metadata: { name: opsuser }
   spec: { role: operator, password_hash: "$OPS_HASH", enabled: true, groups: [vpn-admins] }
+- apiVersion: patronus.firewall/v1
+  kind: NotifyMatcher
+  metadata: { name: night-wan }
+  spec:
+    description: "WAN trouble on weekday nights, never guest links"
+    tree:
+      op: all
+      items:
+        - { op: kind, kinds: [gateway_down] }
+        - { op: calendar, days: [mon, tue, wed, thu, fri], start: "22:00", end: "06:00" }
+        - { op: not, items: [ { op: subject, glob: "guest*" } ] }
 $2
 EOF
 }
@@ -167,6 +178,11 @@ nl_assert_nft_has "udp dport 51899 accept"
 LAPTOPKEY=$(sql "SELECT public_key FROM wg_peers WHERE name='laptop'")
 [ -n "$LAPTOPKEY" ] && [ "$(sql "SELECT count(*) FROM wg_peers WHERE private_key IS NOT NULL")" = 1 ] || nl_fail "the road-warrior peer has no generated key pair"
 nl_ok "wgtest is up (port 51899, 10.77.0.1/24) with the declared peer and a laptop peer whose key pair Patronus generated"
+
+echo "--- notification matcher"
+[ "$(sql "SELECT count(*) FROM notify_matchers WHERE name='night-wan'")" = 1 ] || nl_fail "NotifyMatcher night-wan was not stored"
+sql "SELECT tree FROM notify_matchers WHERE name='night-wan'" | grep -F '"op":"calendar"' >/dev/null || nl_fail "the matcher tree was not stored: $(sql "SELECT tree FROM notify_matchers")"
+nl_ok "NotifyMatcher night-wan stored with its nested tree"
 
 echo "--- IPsec"
 SW=$(swanctl --list-conns 2>&1) || { echo "$SW"; tail -20 /t/charon-rtr.log; nl_fail "swanctl --list-conns"; }
@@ -234,6 +250,7 @@ done
 [ "$(sql "SELECT count(*) FROM firewall_rules WHERE origin='gitops'")" = 0 ] || nl_fail "gitops rules left"
 [ "$(sql "SELECT count(*) FROM web_users WHERE username IN ('opsuser','viewer')")" = 0 ] || nl_fail "declared users left"
 [ "$(sql "SELECT count(*) FROM rbac_groups")" = 0 ] || nl_fail "group left"
+[ "$(sql "SELECT count(*) FROM notify_matchers")" = 0 ] || nl_fail "notification matcher left after its file was deleted"
 # web login = system users: there is no built-in admin row. GitOps must not have created or
 # removed any web account, and the CI-seeded system account (shadow files, not web_users)
 # must still sign in after every declared User/Group is gone.
