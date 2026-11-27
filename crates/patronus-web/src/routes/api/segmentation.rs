@@ -20,8 +20,6 @@
 #[allow(unused_imports)]
 use crate::i18n::filters;
 use crate::state::AppState;
-#[cfg(feature = "segmentation")]
-use axum::response::Html;
 use axum::response::IntoResponse;
 
 #[cfg(feature = "segmentation")]
