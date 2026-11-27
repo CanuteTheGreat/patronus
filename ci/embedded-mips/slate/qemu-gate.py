@@ -418,7 +418,7 @@ def banner(timeout=5):
 def guard_bans():
     """Brute-force protection (bruteforce feature): real failed Dropbear logins from the WAN side ban that address in the kernel set; the
     banned address reaches nothing, the LAN-side control channel is untouched, an unban gives access back."""
-    rc, o = R("patronus guard status >/dev/null 2>&1; echo $?"); need(o.strip().endswith("0"), "the image carries no brute-force protection (patronus guard): " + o[-200:])
+    rc, o = R("patronus-cli guard status >/dev/null 2>&1; echo $?"); need(o.strip().endswith("0"), "the image carries no brute-force protection (patronus-cli guard): " + o[-200:])
     c, t, _ = web("POST", "/api/firewall/rules", dict(RULE, name="slate-gate ssh from wan", port="22", interface="@wan")); need(c == 201, f"WAN ssh rule: {c} {t[:200]}"); rid = json.loads(t)["id"]
     try:
         c, t, _ = web("POST", "/api/firewall/rules/apply"); need(c == 200, f"apply: {c} {t[:200]}")
@@ -437,10 +437,10 @@ def guard_bans():
             rc, o = R("nft list set inet patronus_guard ban4")
             if "10.0.2.2" in o: break
             time.sleep(3)
-        need("10.0.2.2" in o, "10.0.2.2 not in the ban set: " + o[-300:] + "\n" + R("tail -5 /var/log/messages; patronus guard status")[1])
+        need("10.0.2.2" in o, "10.0.2.2 not in the ban set: " + o[-300:] + "\n" + R("tail -5 /var/log/messages; patronus-cli guard status")[1])
         need(not banner(8), "the banned address still reaches sshd")
         rc, o = R("nft list table inet patronus_guard"); drops = sum(int(x) for x in re.findall(r"counter packets (\d+)", o)); need(drops > 0, "drop counter did not grow:\n" + o[-400:])
-        need("Dropbear" in Rok("patronus guard status"), "guard status does not name the source")
+        need("Dropbear" in Rok("patronus-cli guard status"), "guard status does not name the source")
         GM("guard_applyd_rss_before_kb", rss0.split()[0] if rss0 else "?"); GM("guard_applyd_rss_with_ban_kb", rss().split()[0] if rss() else "?")
         c, t, _ = web("DELETE", "/api/guard/bans?address=10.0.2.2"); need(c == 200, f"unban: {c} {t[:200]}")
         time.sleep(1); need(banner(30), "no SSH access after the unban")

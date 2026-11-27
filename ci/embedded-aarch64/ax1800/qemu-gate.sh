@@ -578,24 +578,24 @@ ssh_banner() { # host-side: the SSH banner of the guest through the attacker net
 ssh_attack() { for i in $(seq 1 "$1"); do ssh -p $ATKP -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
     -o ConnectTimeout=10 -o BatchMode=yes -o PreferredAuthentications=password -o KexAlgorithms=curve25519-sha256 \
     ci-nosuchuser@127.0.0.1 true </dev/null >/dev/null 2>&1 || true; sleep 1; done; }
-guard_rss() { R 'for p in $(pgrep -f "patronus-applyd|patronus applyd"); do sed -n "s/^VmRSS:[[:space:]]*//p" /proc/$p/status; done | head -1'; }
+guard_rss() { R 'for p in $(pgrep -f "patronus-applyd|patronus-cli applyd|patronus applyd"); do sed -n "s/^VmRSS:[[:space:]]*//p" /proc/$p/status; done | head -1'; }
 guard_bans() {
   R 'ip addr add 10.0.3.15/24 dev eth2 && ip link set eth2 up' || { echo "second NIC"; return 1; }
   # the unit's input policy is drop and eth2 has no role: let the attacker network reach sshd, so only the guard decides
   R 'nft insert rule inet patronus input iifname eth2 tcp dport 22 accept' >/dev/null 2>&1 || true
   sleep 2; ssh_banner || { echo "no SSH banner through the attacker network before the test"; R 'ip -br addr; nft list chain inet patronus input; ss -ltn' 2>&1 | head -40; return 1; }
   rss0=$(guard_rss)
-  R 'patronus guard set enabled=1 sources=dropbear max_failures=3 ban_secs=300 tick_secs=1' || return 1
+  R 'patronus-cli guard set enabled=1 sources=dropbear max_failures=3 ban_secs=300 tick_secs=1' || return 1
   sleep 4; ssh_attack 4
   for i in $(seq 1 30); do o=$(R 'nft list set inet patronus_guard ban4' 2>&1); case "$o" in *10.0.3.2*) break;; esac; sleep 2; done
-  case "$o" in *10.0.3.2*) ;; *) echo "10.0.3.2 not in the ban set: $o"; R 'tail -5 /var/log/messages; patronus guard status'; return 1;; esac
+  case "$o" in *10.0.3.2*) ;; *) echo "10.0.3.2 not in the ban set: $o"; R 'tail -5 /var/log/messages; patronus-cli guard status'; return 1;; esac
   ssh_banner && { echo "the banned address still reaches sshd"; return 1; }
   c=$(R 'nft list table inet patronus_guard' | sed -n 's/.*counter packets \([0-9][0-9]*\).*/\1/p' | awk '{s+=$1} END {print s+0}'); [ "$c" -gt 0 ] || { echo "drop counter $c"; return 1; }
-  o=$(R 'patronus guard status'); case "$o" in *Dropbear*) ;; *) echo "status does not name the source: $o"; return 1;; esac
+  o=$(R 'patronus-cli guard status'); case "$o" in *Dropbear*) ;; *) echo "status does not name the source: $o"; return 1;; esac
   rss1=$(guard_rss); echo "GATEMETRIC guard_applyd_rss_before=$rss0 guard_applyd_rss_with_ban=$rss1" | tee -a "$RES/results.txt"
-  R 'patronus guard unban 10.0.3.2' >/dev/null || return 1; sleep 1
+  R 'patronus-cli guard unban 10.0.3.2' >/dev/null || return 1; sleep 1
   ssh_banner || { echo "no access after the unban"; return 1; }
-  R 'patronus guard set enabled=0; ip addr del 10.0.3.15/24 dev eth2; ip link set eth2 down' >/dev/null
+  R 'patronus-cli guard set enabled=0; ip addr del 10.0.3.15/24 dev eth2; ip link set eth2 down' >/dev/null
   for i in $(seq 1 15); do R 'nft list table inet patronus_guard' >/dev/null 2>&1 || return 0; sleep 2; done
   echo "the guard table is still there after switching the protection off"; return 1
 }
