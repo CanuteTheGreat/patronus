@@ -730,7 +730,14 @@ async fn post_wget(
         Ok(())
     } else {
         let e = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        anyhow::bail!("{}", if e.is_empty() { "wget failed".to_string() } else { e })
+        anyhow::bail!(
+            "{}",
+            if e.is_empty() {
+                "wget failed".to_string()
+            } else {
+                e
+            }
+        )
     }
 }
 
