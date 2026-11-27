@@ -1868,6 +1868,17 @@
         },
         "type": "object"
       },
+      "MgmtOnlyBody": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
       "ModeBody": {
         "properties": {
           "mode": {
@@ -6485,6 +6496,81 @@
           "firewall"
         ],
         "x-patronus-handler": "routes/api/firewall::put_default_deny"
+      }
+    },
+    "/api/firewall/mgmt-only": {
+      "get": {
+        "operationId": "get_api_firewall_mgmt_only",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get mgmt only (firewall/mgmt-only)",
+        "tags": [
+          "firewall"
+        ],
+        "x-patronus-handler": "routes/api/firewall::get_mgmt_only"
+      },
+      "put": {
+        "operationId": "put_api_firewall_mgmt_only",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MgmtOnlyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set mgmt only (firewall/mgmt-only)",
+        "tags": [
+          "firewall"
+        ],
+        "x-patronus-handler": "routes/api/firewall::set_mgmt_only"
       }
     },
     "/api/firewall/nat": {
