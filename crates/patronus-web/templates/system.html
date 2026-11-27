@@ -69,9 +69,9 @@ fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() :
 </script>
 
 <div class="card" id="board-settings" style="display:none">
-    <div class="card-header"><h2 class="card-title">Hardware settings</h2></div>
-    <p class="text-sm">Settings this device's image chooses for its hardware, with the reason for each default.</p>
-    <table class="lan"><thead><tr><th>Setting</th><th>Value</th><th>Why</th><th>To change</th></tr></thead><tbody id="board-settings-list"></tbody></table>
+    <div class="card-header"><h2 class="card-title">{{ "hw-title"|t }}</h2></div>
+    <p class="text-sm">{{ "hw-intro"|t }}</p>
+    <table class="lan"><thead><tr><th>{{ "hw-col-setting"|t }}</th><th>{{ "hw-col-value"|t }}</th><th>{{ "hw-col-why"|t }}</th><th>{{ "hw-col-change"|t }}</th></tr></thead><tbody id="board-settings-list"></tbody></table>
 </div>
 <script>
 // Board-level choices (e.g. a radio role that is off by default because its firmware is unreliable in it) are shown with
