@@ -118,8 +118,12 @@ def run(p, kind):
         page.reload()
         page.wait_for_selector("#svc-settings-form [name=enabled]", timeout=15000)
         check(tag + f"phone width, {scheme}: the page does not scroll sideways", no_sideways_scroll(page))
+        # an empty collection shows its "Nothing configured" note instead of a table
+        tables = page.locator("[data-coll] table").count()
         check(tag + f"phone width, {scheme}: every table sits in a scrollable, labelled region",
-              page.locator(".svc-scroll[role=region][aria-label]").count() == 4, page.locator(".svc-scroll").count())
+              page.locator("[data-coll]").count() == 4
+              and page.locator("[data-coll] .svc-scroll[role=region][aria-label][tabindex='0'] table").count() == tables,
+              tables)
     page.emulate_media(color_scheme=None)
     page.set_viewport_size({"width": 1280, "height": 1000})
     page.reload()
@@ -129,15 +133,20 @@ def run(p, kind):
     api(page, "/api/svc/revproxy/backends", "POST", {"name": "e2e-clash-be"})
     api(page, "/api/svc/revproxy/servers", "POST", {"backend": "e2e-clash-be", "name": "s", "address": "192.0.2.9", "port": 80})
     page.reload()
-    page.wait_for_selector("#svc-form-frontends [name=name]")
+    # entries are added in a dialog (Add entry); a refused entry is reported inside that dialog, next to what was typed
+    page.wait_for_selector("[data-coll=frontends] button[data-open=svc-form-frontends]")
+    page.click("[data-coll=frontends] button[data-open=svc-form-frontends]")
+    page.wait_for_selector("#svc-form-frontends [name=name]", state="visible")
     page.fill("#svc-form-frontends [name=name]", "e2e-clash")
     page.fill("#svc-form-frontends [name=port]", WEB_PORT)
     page.fill("#svc-form-frontends [name=default_backend]", "e2e-clash-be")
     page.click("#svc-form-frontends button[type=submit]")
-    page.wait_for_selector("#svc-error", state="visible", timeout=15000)
-    msg = page.locator("#svc-error").inner_text()
+    page.wait_for_selector("#svc-dlg-frontends .lan-dialog-msg", state="visible", timeout=15000)
+    msg = page.locator("#svc-dlg-frontends .lan-dialog-msg").inner_text()
     check(tag + "a listener on the web UI's port is refused on the page, with the reason",
           "Not applied" in msg and "web UI" in msg and WEB_PORT in msg, msg)
+    check(tag + "the refused entry's dialog stays open", page.locator("#svc-dlg-frontends[open]").count() == 1)
+    page.keyboard.press("Escape")
     fe = api(page, "/api/svc/revproxy")["json"]["collections"]["frontends"]
     check(tag + "the refused frontend was not stored", all(r["name"] != "e2e-clash" for r in fe), fe)
     for r in api(page, "/api/svc/revproxy")["json"]["collections"]["servers"]:
@@ -149,6 +158,11 @@ def run(p, kind):
         page.reload()
         page.wait_for_selector("#svc-settings-form [name=enabled]")
         page.locator("#svc-action-buttons button", has_text="Publish").click()
+        host, port = SERVER.rsplit(":", 1)
+        page.wait_for_selector("#svc-ask [name=name]", state="visible")
+        for k, v in [("name", "e2e-site"), ("address", host), ("port", port), ("host", "e2e.example.test"), ("public_port", "8085")]:
+            page.fill(f"#svc-ask [name={k}]", v)
+        page.click("#svc-ask button[type=submit]")
         try:
             page.wait_for_function("() => /published/.test(document.getElementById('svc-action-result').textContent)", timeout=30000)
         except Exception:
