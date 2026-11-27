@@ -208,7 +208,7 @@ that are not finished are listed separately under
   paths, query strings, ids and passwords are never stored; retention by
   rows and days, the writer and the alert thresholds are typed settings (the
   router tier ships a smaller default); repeated failed sign-ins or 5xx
-  bursts become events. [C87]
+  bursts become events. [C1210]
 
 ### Configuration you can trust
 
