@@ -582,7 +582,10 @@ pub fn absent_features(
             "udp-relay",
             "UDP broadcast relay (discovery across segments)",
         ),
-        ("lldp", "LLDP (announce this router, list switch neighbours)"),
+        (
+            "lldp",
+            "LLDP (announce this router, list switch neighbours)",
+        ),
         ("nat64", "NAT64 / DNS64"),
         ("upnp", "UPnP / NAT-PMP"),
         ("vrf", "VRFs"),

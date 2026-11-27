@@ -107,12 +107,12 @@ pub mod netflow;
 
 #[cfg(feature = "igmp")]
 pub mod igmp;
+#[cfg(feature = "lldp")]
+pub mod lldp;
 #[cfg(feature = "mdns")]
 pub mod mdns;
 #[cfg(feature = "udp-relay")]
 pub mod udprelay;
-#[cfg(feature = "lldp")]
-pub mod lldp;
 
 #[cfg(feature = "nat64")]
 pub mod nat64;
