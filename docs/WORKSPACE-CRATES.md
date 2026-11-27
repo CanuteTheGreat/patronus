@@ -27,6 +27,7 @@ claimed anywhere.
 - `patronus-saas`
 - `patronus-sdwan`
 - `patronus-secrets`
+- `patronus-security`
 - `patronus-web`
 
 ## Not shipped
@@ -56,7 +57,6 @@ their own CI jobs. The rest are experiments and models.
 - `patronus-plugin`
 - `patronus-proxy`
 - `patronus-rl-optimizer`
-- `patronus-security`
 - `patronus-self-healing`
 - `patronus-servicemesh`
 - `patronus-traffic-eng`
