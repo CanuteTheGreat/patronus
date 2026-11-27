@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -33,6 +34,19 @@ class A11yConfig(unittest.TestCase):
         for e in ALLOW:
             self.assertTrue(e.get("rule") and e.get("reason") and len(e["reason"]) > 30, e)
             self.assertIn(e.get("page"), known, e)
+
+    def test_feature_pages_are_built_into_the_gate_image(self):
+        # The gate runs against the Gentoo Docker image built with rust-ci.yml's
+        # USE_ALL; a page whose USE flag is missing there is a 404 ("page did not render").
+        wf = open(os.path.join(HERE, "..", "..", ".forgejo", "workflows", "rust-ci.yml")).read()
+        m = re.search(r'USE_ALL="([^"]*)"', wf)
+        self.assertIsNotNone(m, "USE_ALL not found in rust-ci.yml")
+        use_all = set(m.group(1).split())
+        for p in CFG["pages"]:
+            if p["path"].startswith("/svc/"):
+                self.assertIn("use", p, f"feature page {p['id']} must name its USE flag")
+            if "use" in p:
+                self.assertIn(p["use"], use_all, f"page {p['id']} needs USE={p['use']} in rust-ci.yml USE_ALL")
 
 
 if __name__ == "__main__":
