@@ -254,7 +254,7 @@
                 }
                 if (SLUG === 'revproxy' && a.name === 'publish') {
                     const v = await svcAsk('Publish a service', [
-                        {name: 'name', label: 'Name', required: true, pattern: '[A-Za-z0-9._-]+', hint: 'Letters, digits, . _ -'},
+                        {name: 'name', label: 'Name', required: true, pattern: '[A-Za-z0-9._\\-]+', hint: 'Letters, digits, . _ -'},
                         {name: 'address', label: 'LAN address of the server', placeholder: '192.168.50.20', required: true},
                         {name: 'port', label: 'Port of the service on that server', type: 'number', min: 1, max: 65535, value: '80', required: true},
                         {name: 'host', label: 'Host name clients use (optional)', placeholder: 'blog.example.org'},

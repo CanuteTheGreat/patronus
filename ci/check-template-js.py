@@ -48,12 +48,17 @@ print(f"check-template-js: {checked} inline script(s), {bad} with a syntax error
 # class ("[a-z0-9_-]") or other class syntax characters are errors, the browser logs a console error and silently skips
 # the check (found 2026-11-25 by the UX crawl on the System page's host name field). Compile every pattern the same way.
 pattern_re = re.compile(r'\bpattern="([^"]*)"')
+# the same patterns set from scripts (patAsk/svcAsk field specs, `el.pattern = '...'`): JS single-quoted literals
+js_pattern_re = re.compile(r"\bpattern\s*[:=]\s*'((?:[^'\\\n]|\\.)*)'")
 pats = []
 for dirpath, _, files in os.walk(root):
     for name in sorted(files):
         if name.endswith(".html"):
             path = os.path.join(dirpath, name)
             text = open(path, encoding="utf-8").read()
+            for m in js_pattern_re.finditer(text):
+                p = re.sub(r"\\(.)", r"\1", m.group(1))
+                pats.append((f"{path}:{text[: m.start()].count(chr(10)) + 1}", p))
             for m in pattern_re.finditer(text):
                 p = m.group(1)
                 if "{{" in p or "{%" in p:
