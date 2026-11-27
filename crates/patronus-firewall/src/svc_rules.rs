@@ -7,6 +7,8 @@
 //!   (224.0.0.0/4) upstream -> downstream (forward);
 //! - NAT64: the clients' IPv6 traffic to the NAT64 prefix into `nat64`,
 //!   translated IPv4 out of the WAN, and masquerade of the translation pool;
+//! - TFTP: the request port and the data-port range on the serving interfaces
+//!   (from the client networks, when any are listed);
 //! - L2TP: UDP 1701 on the listening interface;
 //! - IDS inline mode: forwarded traffic of the watched interface goes through
 //!   an NFQUEUE (own base chain ahead of the filter chain, `bypass` so the
@@ -91,6 +93,19 @@ async fn devices(store: &ConfigStore, spec: &str) -> Vec<String> {
         None => vec![spec.to_string()],
     };
     v.into_iter().filter(|d| safe_dev(d)).collect()
+}
+
+/// `49152-49407,50000` -> clean `["49152-49407", "50000"]`; anything else is dropped.
+fn safe_port_list(s: &str) -> Vec<String> {
+    let num = |t: &str| t.len() <= 5 && !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
+    s.split(',')
+        .map(str::trim)
+        .filter(|p| match p.split_once('-') {
+            Some((a, b)) => num(a) && num(b),
+            None => num(p),
+        })
+        .map(String::from)
+        .collect()
 }
 
 fn safe_net(s: &str, v6: bool) -> Option<String> {
@@ -469,6 +484,60 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- TFTP server: the request port and the data-port range on the listening
+    // interfaces only (a TFTP transfer continues from a fresh port on both sides,
+    // so the range is a typed setting too); limited to the client networks when
+    // any are listed.
+    let tf = settings(store, "tftp").await?;
+    if on(&tf, "enabled") {
+        let port: u32 = tf
+            .get("port")
+            .and_then(|v| v.trim().parse().ok())
+            .filter(|p| (1..=65535).contains(p))
+            .unwrap_or(69);
+        let ranges = safe_port_list(
+            tf.get("data_ports")
+                .map(String::as_str)
+                .unwrap_or("49152-49407"),
+        );
+        let mut nets: Vec<String> = Vec::new();
+        if let Ok(rows) = sqlx::query_scalar::<_, String>(
+            "SELECT cidr FROM tftp_clients WHERE enabled = 1 ORDER BY id",
+        )
+        .fetch_all(store.pool()?)
+        .await
+        {
+            nets.extend(rows.iter().filter_map(|c| safe_net(c, false)));
+        }
+        let from = if nets.is_empty() {
+            String::new()
+        } else {
+            format!("ip saddr {{ {} }} ", nets.join(", "))
+        };
+        let mut ports = vec![port.to_string()];
+        ports.extend(ranges);
+        let mut seen = Vec::new();
+        for spec in tf
+            .get("interfaces")
+            .map(String::as_str)
+            .unwrap_or("@lan")
+            .split(',')
+            .map(str::trim)
+            .filter(|x| !x.is_empty())
+        {
+            for d in devices(store, spec).await {
+                if seen.contains(&d) {
+                    continue;
+                }
+                out.filter.push(format!(
+                    "add rule {t} input iifname \"{d}\" {from}udp dport {{ {} }} accept comment \"TFTP\"",
+                    ports.join(", ")
+                ));
+                seen.push(d);
+            }
+        }
+    }
+
     // --- L2TP
     let l = settings(store, "l2tp").await?;
     if on(&l, "enabled") {
@@ -829,6 +898,36 @@ mod tests {
         );
         assert_eq!(r.nat_exempt.len(), 1);
         assert!(r.nat_exempt[0].contains("ip saddr 192.168.255.0/24 oifname \"eth0\" masquerade"));
+    }
+
+    #[tokio::test]
+    async fn tftp_opens_request_and_data_ports_on_the_serving_interfaces_only() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth0", Some("wan")).await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
+        put(&s, "tftp.enabled", "1").await;
+        let r = svc_rules(&s).await.unwrap();
+        let f = r.filter.join("\n");
+        assert!(
+            f.contains("input iifname \"eth1\" udp dport { 69, 49152-49407 } accept"),
+            "{f}"
+        );
+        assert!(!f.contains("eth0"), "{f}");
+        put(&s, "tftp.port", "6969").await;
+        put(&s, "tftp.data_ports", "50000-50010,x;drop").await;
+        sqlx::query("INSERT INTO tftp_clients (cidr, enabled, updated_at) VALUES ('10.9.0.0/24', 1, 0), ('10.8.0.0/24', 0, 0), ('bad;net', 1, 0)")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(
+            f.contains("input iifname \"eth1\" ip saddr { 10.9.0.0/24 } udp dport { 6969, 50000-50010 } accept"),
+            "{f}"
+        );
+        assert!(!f.contains("10.8.0.0") && !f.contains("drop") && !f.contains("bad"), "{f}");
+        put(&s, "tftp.enabled", "0").await;
+        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
     }
 
     #[test]

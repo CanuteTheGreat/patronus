@@ -420,6 +420,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "igmp",
         "mdns",
         "udp-relay",
+        "tftp",
         "nat64",
         "upnp",
         "vrf",
@@ -576,6 +577,10 @@ pub fn absent_features(
         (
             "udp-relay",
             "UDP broadcast relay (discovery across segments)",
+        ),
+        (
+            "tftp",
+            "TFTP server (network boot, firmware and config transfers)",
         ),
         ("nat64", "NAT64 / DNS64"),
         ("upnp", "UPnP / NAT-PMP"),
