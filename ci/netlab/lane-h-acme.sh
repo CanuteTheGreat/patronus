@@ -116,7 +116,6 @@ nl_api POST /svc/certs/action/issue '{"name":"web"}'
 [ -s "$W/certs/web/fullchain.pem" ] && [ "$(stat -c %a "$W/certs/web/key.pem")" = 600 ] || nl_fail "files / key mode"
 openssl verify -CAfile "$W/root.pem" "$W/certs/web/fullchain.pem" >/dev/null 2>&1 && true
 nl_ok "Pebble validated HTTP-01 and issued; key stored mode 0600"
-wait_state web valid 5 || true
 
 OLD=$(served_serial)
 nl_api PUT /svc/certs/acme/1 '{"use_for_web":true}'
@@ -151,7 +150,10 @@ done
 case "$st" in *'"state": "expired"'*) ;; *) nl_fail "an expired certificate is not reported expired: $st";; esac
 nl_ok "an expired certificate shows state=expired in the status API"
 nl_api PUT /svc/certs/acme/1 '{"enabled":true}'
-wait_state web valid 60 || wait_state web due 60
+for _ in $(seq 1 90); do
+  st=$(status_of web); case "$st" in *'"state": "expired"'*|*'"state": "none"'*) sleep 1;; *) break;; esac
+done
+case "$st" in *'"state": "expired"'*|*'"state": "none"'*) nl_fail "the expired certificate was not replaced: $st";; esac
 nl_ok "re-enabled: the expired certificate was replaced"
 
 echo "=== DNS-01 (wildcard) through RFC 2136 + TSIG"

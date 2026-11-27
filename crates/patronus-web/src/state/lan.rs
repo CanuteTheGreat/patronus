@@ -311,6 +311,11 @@ impl LanManager {
         if !m.action_applies(name) {
             let mut out = m.action(&self.store, name, &body).await.map_err(e)?;
             // the guest Wi-Fi share card: add the QR code of the "join this network" text
+            // a certificate was issued or replaced: the web UI picks it up now
+            #[cfg(feature = "certs")]
+            if slug == "certs" && matches!(name, "issue" | "revoke") {
+                crate::certmgr::reload_web_tls(&self.store).await;
+            }
             if slug == "guest" && name == "share" {
                 if let Some(uri) = out["uri"].as_str() {
                     out["qr_svg"] = crate::qrcode::generate_qr_code_svg(uri)
