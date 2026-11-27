@@ -581,7 +581,9 @@ ssh_attack() { for i in $(seq 1 "$1"); do ssh -p $ATKP -o StrictHostKeyChecking=
 guard_rss() { R 'for p in $(pgrep -f "patronus-applyd|patronus applyd"); do sed -n "s/^VmRSS:[[:space:]]*//p" /proc/$p/status; done | head -1'; }
 guard_bans() {
   R 'ip addr add 10.0.3.15/24 dev eth2 && ip link set eth2 up' || { echo "second NIC"; return 1; }
-  sleep 2; ssh_banner || { echo "no SSH banner through the attacker network before the test"; return 1; }
+  # the unit's input policy is drop and eth2 has no role: let the attacker network reach sshd, so only the guard decides
+  R 'nft insert rule inet patronus input iifname eth2 tcp dport 22 accept' >/dev/null 2>&1 || true
+  sleep 2; ssh_banner || { echo "no SSH banner through the attacker network before the test"; R 'ip -br addr; nft list chain inet patronus input; ss -ltn' 2>&1 | head -40; return 1; }
   rss0=$(guard_rss)
   R 'patronus guard set enabled=1 sources=dropbear max_failures=3 ban_secs=300 tick_secs=1' || return 1
   sleep 4; ssh_attack 4
