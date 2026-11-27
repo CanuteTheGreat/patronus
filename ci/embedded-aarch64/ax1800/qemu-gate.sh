@@ -578,7 +578,7 @@ ssh_banner() { # host-side: the SSH banner of the guest through the attacker net
 ssh_attack() { for i in $(seq 1 "$1"); do ssh -p $ATKP -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
     -o ConnectTimeout=10 -o BatchMode=yes -o PreferredAuthentications=password -o KexAlgorithms=curve25519-sha256 \
     ci-nosuchuser@127.0.0.1 true </dev/null >/dev/null 2>&1 || true; sleep 1; done; }
-guard_rss() { R 'for p in $(pgrep -f "patronus-applyd|patronus-cli applyd|patronus applyd"); do sed -n "s/^VmRSS:[[:space:]]*//p" /proc/$p/status; done | head -1'; }
+guard_rss() { R 'for p in $(pidof patronus-cli); do case "$(tr "\0" " " < /proc/$p/cmdline)" in *" applyd"*) sed -n "s/^VmRSS:[[:space:]]*//p" /proc/$p/status;; esac; done | head -1'; }
 guard_bans() {
   R 'ip addr add 10.0.3.15/24 dev eth2 && ip link set eth2 up' || { echo "second NIC"; return 1; }
   # the unit's input policy is drop and eth2 has no role: let the attacker network reach sshd, so only the guard decides
