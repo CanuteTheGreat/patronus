@@ -35,6 +35,7 @@ cleanup() { $DOCKER rm -fv "$C" >/dev/null 2>&1 || true
 STALE_MIN=${HWSIM_STALE_MIN:-60}; WAIT_MIN=${HWSIM_WAIT_MIN:-65}; t0=$(date +%s)
 trap cleanup EXIT
 hwsim_lock_take || exit 1
+hwsim_reclaim_leaked "$IMAGE" modctl unload
 while grep -q '^mac80211_hwsim ' /proc/modules; do
   removed=0
   for o in $($DOCKER ps -a --filter name=xbss-hwsim- --format '{{.Names}}' 2>/dev/null); do

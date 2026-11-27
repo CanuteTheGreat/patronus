@@ -47,6 +47,7 @@ cleanup() { rc=$?
   exit $rc; }
 trap cleanup EXIT
 hwsim_lock_take || exit 1
+hwsim_reclaim_leaked "$IMAGE" modctl unload
 # the module is host-global and may belong to a run in another job container (the lock is per host, but older runners
 # may not take it): wait up to WAIT_MIN for it to go away
 WAIT_MIN=${HWSIM_WAIT_MIN:-65}; tw=$(date +%s)

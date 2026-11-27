@@ -33,6 +33,34 @@ hwsim_lock_drop() {
   [ "${HWSIM_LOCK_HELD:-}" = 1 ] || return 0
   ${HWSIM_DOCKER:-docker} network rm "${HWSIM_LOCK_NAME:-patronus-hwsim-lock}" >/dev/null 2>&1; HWSIM_LOCK_HELD=; }
 
+# hwsim_reclaim_leaked IMAGE CMD...: call with the host lock HELD, before refusing or waiting because mac80211_hwsim is
+# loaded. Every user of the module loads it only while holding the lock and moves its radios into a scenario container
+# right away, so a module that is loaded while we hold the lock AND has every radio back in the host network namespace
+# (no container owns one) was left by a run that was killed before its EXIT trap ran. The dead-holder check above frees
+# that run's lock, but the module stayed, and every later run waited its 65 min and failed (xbss + band steering jobs on
+# rw-man-02/03, 2026-11-27). Such a module is unloaded with CMD (the caller's unload); one whose radios sit in some
+# container's namespace is in use and is left alone. Reads sysfs from a --net=host IMAGE container: hwsimN/ieee80211
+# lists only the phys of the reading network namespace, the hwsimN devices themselves are host-wide.
+# HWSIM_RECHECK_S (default 10): the idle state must hold for two readings this far apart. HWSIM_PROC_MODULES: for the
+# unit test (ci/hwsim-policy-test.sh, fake docker + modules file).
+hwsim_radio_state() { # IMAGE -> "radios radios_in_host_netns"
+  ${HWSIM_DOCKER:-docker} run --rm --net=host "$1" sh -c 'n=0; h=0
+    for r in /sys/devices/virtual/mac80211_hwsim/hwsim*; do [ -d "$r" ] || continue; n=$((n + 1))
+      [ -n "$(ls "$r/ieee80211" 2>/dev/null)" ] && h=$((h + 1)); done; echo "$n $h"' 2>/dev/null; }
+hwsim_reclaim_leaked() {
+  _img=$1; shift
+  grep '^mac80211_hwsim ' "${HWSIM_PROC_MODULES:-/proc/modules}" >/dev/null 2>&1 || return 0
+  _st1=$(hwsim_radio_state "$_img") || return 0
+  case "$_st1" in ""|"0 0"|*[!0-9\ ]*) return 0;; esac
+  if [ "${_st1% *}" != "${_st1#* }" ]; then
+    echo "mac80211_hwsim is loaded and $(( ${_st1% *} - ${_st1#* } )) of its ${_st1% *} radios are in a container: in use"; return 0; fi
+  sleep "${HWSIM_RECHECK_S:-10}"
+  _st2=$(hwsim_radio_state "$_img") || return 0
+  [ "$_st2" = "$_st1" ] || return 0
+  echo "mac80211_hwsim is loaded with all ${_st1% *} radios idle in the host namespace while we hold the lock: a dead run left it, unloading"
+  "$@" || { sleep 3; "$@"; } || echo "could not unload the leaked mac80211_hwsim"
+  return 0; }
+
 # --- skip policy and scenario accounting (bash; sourced by ci/netlab/wifi-hwsim.sh and xbss-hwsim.sh) -------------------
 # A Wi-Fi job that cannot load mac80211_hwsim proves nothing, so in CI it FAILS: it is routed to the hwsim-x86_64 runner
 # lane (rw-man-02/03, declared in redweek-devops runners-expected.json) whose kernel package ships the module, and a
