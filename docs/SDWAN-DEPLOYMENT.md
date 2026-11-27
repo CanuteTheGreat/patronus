@@ -1,5 +1,7 @@
 # SD-WAN Deployment Guide
 
+> **Status: design note, not a verified operating manual.** This page was written for the optional SD-WAN dashboard stack, before the current router product existed. What matches the code: the optional `patronus-dashboard` service (built with `USE=dashboard`) with a REST API under `/api/v1` (auth, sites, paths, flows, policies, edge enrolment, metrics), GraphQL under `/api/v2`, WebSocket feeds, `/health` endpoints, and Raft-style high availability configured through `PATRONUS_*` environment variables (default listen address `0.0.0.0:8443`). What does not exist as written: a `patronus-sdwan` daemon or service unit (it is a library crate with example programs), `--init-db` / migration flags, `/etc/patronus/config.yaml` as the dashboard's configuration, and any endpoint, command or file path below that is not in the list above. Treat those as design intent. The router itself is configured through its web UI, `/etc/patronus/patronus.toml` and the `patronus` command; see the [README](../README.md), [UPDATE-POLICY.md](UPDATE-POLICY.md) and [ISO-INSTALL.md](ISO-INSTALL.md).
+
 **Patronus SD-WAN** - Intelligent Multi-Path Networking
 
 ---
@@ -642,5 +644,4 @@ sudo systemctl status patronus-sdwan
 
 ---
 
-**Version**: 1.0.0
 **License**: MIT
