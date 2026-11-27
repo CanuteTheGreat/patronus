@@ -262,7 +262,7 @@
         const p0 = document.createElement('p'); p0.className = 'svc-help'; p0.id = 'tftp-root'; p0.textContent = r.root + (r.exists ? '' : ' (does not exist yet: it is created when the server is switched on)'); box.appendChild(p0);
         const t = document.createElement('table'); t.className = 'lan'; t.id = 'tftp-files-table';
         const head = document.createElement('tr');
-        for (const x of ['Name', 'Size (bytes)', 'Modified', '']) { const th = document.createElement('th'); th.textContent = x; head.appendChild(th); }
+        for (const x of ['Name', 'Size (bytes)', 'Modified', 'Actions']) { const th = document.createElement('th'); th.textContent = x; head.appendChild(th); }
         t.appendChild(head);
         for (const f of r.files) {
             const tr = document.createElement('tr'); tr.dataset.name = f.name;
