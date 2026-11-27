@@ -55,6 +55,7 @@ pub const LAN_TABLES: &[&str] = &[
     "syslog_targets",
     "igmp_interfaces",
     "mdns_interfaces",
+    "udp_relay_rules",
     "l2tp_users",
     "proxy_blocked",
     "vrf_instances",
@@ -70,6 +71,11 @@ pub const LAN_TABLES: &[&str] = &[
     "frr_ospf_interfaces",
     "wol_hosts",
     "guest_vouchers",
+    // reverse proxy (USE=reverse-proxy): frontends, backends, servers, rules
+    "revproxy_frontends",
+    "revproxy_backends",
+    "revproxy_servers",
+    "revproxy_rules",
     "edge_endpoints",
     "edge_subnets",
     // signed plugins (USE=plugins)
@@ -995,12 +1001,16 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::igmp::IgmpApplier::default()));
     #[cfg(feature = "mdns")]
     v.push(Arc::new(crate::mdns::MdnsApplier::default()));
+    #[cfg(feature = "udp-relay")]
+    v.push(Arc::new(crate::udprelay::UdpRelayApplier::default()));
     #[cfg(feature = "nat64")]
     v.push(Arc::new(crate::nat64::Nat64Applier::default()));
     #[cfg(feature = "l2tp")]
     v.push(Arc::new(crate::l2tp::L2tpApplier::default()));
     #[cfg(feature = "upnp")]
     v.push(Arc::new(crate::upnp::UpnpApplier::default()));
+    #[cfg(feature = "reverse-proxy")]
+    v.push(Arc::new(crate::revproxy::RevProxyApplier::default()));
     #[cfg(feature = "vrf")]
     v.push(Arc::new(crate::vrf::VrfApplier));
     #[cfg(feature = "segmentation")]

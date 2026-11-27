@@ -252,6 +252,82 @@ The installed system has no built-in web `admin`: sign in to the web UI with the
 The installer powers the machine off when it is done (`AUTOINSTALL-OK` on the console and in
 `/var/log/autoinstall.log`). Invalid answer files stop with `ANSWER-FILE-ERROR ...` lines and start the guided installer instead.
 
+### Bonds (LAGG / LACP), VLANs, PPPoE and a management network
+
+The box can come up on a switch trunk at its **first boot, with nobody at the console**: WAN, LAN and an optional management
+network may each sit on a plain port, a **bond** (LAGG: `802.3ad` LACP, `active-backup` or `balance-xor`) or a **VLAN tag**
+(1-4094) on either; the WAN can be DHCP, static or PPPoE, also over a VLAN. When a management network is set, the anti-lockout
+rule and the web UI move there and - by default - SSH and the web UI answer **only** on that network (a firewall rule placed ahead
+of every user rule, so an "allow LAN to the firewall" rule cannot reopen them; setting `firewall.mgmt_only` - a checkbox on the Interfaces page,
+`PUT /api/firewall/mgmt-only` and the declarative config - turns that off later).
+
+The installer does not configure these devices itself. It writes them into the first-boot bootstrap file
+`/etc/patronus/patronus.toml` (`[network]` roles, `[[network.bond]]`, `[[network.vlan]]`, `[firstboot]`); at the first boot
+`patronus apply` seeds the config store from that file once and the interfaces applier creates the bond and the VLANs, so the
+result is ordinary, editable configuration (Interfaces page, export/plan/apply). The same keys are read by the router tier's first
+boot (same binary, same bootstrap parser).
+
+```toml
+[[network.bond]]                  # one bond can carry several networks (a trunk)
+name = "bond0"
+members = ["enp1s0", "enp2s0"]
+mode = "802.3ad"                  # 802.3ad (LACP; the switch ports need LACP) | active-backup (any switch) | balance-xor
+hash = "layer2+3"                 # layer2 | layer2+3 | layer3+4 (802.3ad, balance-xor)
+lacp_rate = "fast"                # slow (default) | fast (802.3ad)
+
+[network.wan]
+iface = "bond0"                   # a port, a bond, or: bond = ["enp1s0", "enp2s0"] (+ bond_mode, bond_hash, lacp_rate, bond_name)
+vlan = 100                        # 1-4094; 0 or absent = untagged
+mode = "dhcp"                     # dhcp | static (address, gateway, dns) | pppoe (pppoe_user, pppoe_password, pppoe_service)
+
+[network.lan]
+iface = "bond0"                   # or "none" for no LAN
+vlan = 30
+address = "192.168.30.1/24"
+
+[network.mgmt]                    # optional management network
+iface = "bond0"                   # a port or a bond
+vlan = 20
+address = "10.20.0.1/24"          # mode = "static" (default) or "dhcp"; optional gateway
+only = true                       # SSH + web UI answer only here (default true)
+```
+
+After that install, `https://10.20.0.1/` answers on VLAN 20 at the first boot and `http://10.20.0.1/` redirects to it; the LAN
+and WAN VLANs do not offer SSH or the web UI. `live-installer --plan --answers FILE` prints the network part of the plan and every
+problem in plain words (exit 2), for example `LAN: enp1s0 is a member of bond bond0; use the bond (optionally with a VLAN) instead`,
+`WAN: VLAN tag 4095 must be a number from 1 to 4094 (0 = untagged)`, `Management network 192.168.1.0/24 overlaps the LAN network
+192.168.1.1/24` or `bond bond0: port eth9 does not exist on this machine`. The answer-file install refuses with the same lines
+(`ANSWER-FILE-ERROR`).
+
+In the guided installer (graphical and text, also over the serial console) the optional screen **Bonds, VLANs and management
+network** follows the LAN address screen: tick the first box, pick the bond member ports and mode (hash policy and LACP rate under
+*Show advanced options*), choose whether WAN and LAN ride on their port or the bond, their VLAN tags, PPPoE, and the management
+network (port or bond, VLAN, address, gateway, "only here"). Left unticked it changes nothing:
+
+![bonds, VLANs and management network (off)](images/installer/patronus/07c-bonds-vlans-management.png)
+
+Ticked, the rows for the bond members, the VLAN tags, PPPoE and the management network appear (the bond mode, hash policy and
+LACP rate follow once member ports are chosen):
+
+![bonds, VLANs and management network (on)](images/installer/patronus/07d-bonds-vlans-management-on.png)
+
+Both screenshots come from the VGA text-installer run of the ISO test (`qemu-test.py --flow tui-vga`, which walks this screen on
+every Patronus ISO). The review page lists the result:
+
+```
+Bond bond0 = enp1s0 + enp2s0 (802.3ad, hash layer2+3, LACP fast)
+WAN bond0.100 (VLAN 100 on bond0): DHCP
+LAN bond0.30 (VLAN 30 on bond0): 192.168.30.1/24
+Management bond0.20 (VLAN 20 on bond0): 10.20.0.1/24 (SSH + web UI only here)
+Created by the firewall at its first boot (no console needed); the installer only writes the bootstrap file
+```
+
+Proof: `tools/vmtest/scenarios/installed_lagg_vlan.py` (both inits, gated in `gentoo/live-iso/project/ci-gates.sh`) installs from
+such an answer file into a guest whose two NICs go to a Linux 802.3ad bond on a VLAN-aware bridge, and checks at the first boot that
+the web UI (443 + the 80 redirect) and SSH answer only on the management VLAN, that `/proc/net/bonding/bond0` shows the switch as LACP
+partner with both members in one aggregator, that the WAN VLAN gets its lease from a fake ISP on the tag, and that cutting one member
+keeps the box reachable. Installer unit tests: `gentoo/live-iso/common/tests/test_netvirt.py`.
+
 ## File system and disk encryption
 
 Owner rule for Patronus and Horcrux installers: **ZFS is the default root file system, XFS the automatic fallback, ext4 only a manual choice.**

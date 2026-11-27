@@ -387,7 +387,7 @@ pub struct WifiConfig {
     /// seconds between later re-checks (0 = only the first)
     #[serde(default = "default_coord_interval")]
     pub coord_interval: u32,
-    /// hours "H-H" in which a re-check may restart a radio that still has stations ("" = any time)
+    /// hours "H-H" in which a re-check may move or restart a radio, with or without stations ("" = any time)
     #[serde(default = "default_coord_quiet")]
     pub coord_quiet: String,
     /// longest a channel scan may take, seconds

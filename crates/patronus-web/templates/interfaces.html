@@ -44,7 +44,10 @@
     <h2>Interface assignments</h2>
     <p class="muted">Assign WAN / LAN / OPT roles and configure addressing. Rows without
         configuration are left exactly as the operating system set them up.
-        The anti-lockout rule (SSH + web UI) follows the LAN role (or WAN when there is no LAN).</p>
+        The anti-lockout rule (SSH + web UI) follows the MGMT role (a dedicated management network), else the LAN role
+        (or WAN when there is no LAN).</p>
+    <p id="mgmt-only-row" class="hidden"><label><input type="checkbox" id="mgmt-only"> SSH and the web UI answer only on the
+        management network (MGMT role); off = also on the other networks your firewall rules allow</label></p>
     <table id="devices">
         <thead><tr><th>Interface</th><th>Role</th><th>State</th><th>Addresses</th><th>Configuration</th><th>MAC / MTU</th><th>Traffic</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody></tbody>
@@ -263,7 +266,7 @@ function render() {
     const cl = D.client_interface;
     document.getElementById('session-line').innerHTML =
         (cl ? 'You are connected through <b>' + esc(cl.interface) + '</b>' + (cl.address ? ' (' + esc(cl.address) + ')' : '') + '. ' : '') +
-        'Anti-lockout covers: <b>' + (D.mgmt ? D.mgmt.map(esc).join(', ') : 'every interface (no LAN/WAN assigned)') + '</b>.';
+        'Anti-lockout covers: <b>' + (D.mgmt ? D.mgmt.map(esc).join(', ') : 'every interface (no MGMT/LAN/WAN assigned)') + '</b>.';
     const tb = document.querySelector('#devices tbody');
     tb.innerHTML = '';
     devs.forEach(d => {
@@ -325,7 +328,12 @@ function render() {
     document.getElementById('daemons').innerHTML = D.daemons.length ? D.daemons.map(x => esc(x.service + '[' + x.instance + ']') + ' ' + (x.running ? '<span class="badge up">running</span>' : '<span class="badge down">stopped</span>')).join(', ') : '<span class="muted">none</span>';
 
     const rs = document.getElementById('role-select');
-    let opts = '<option value="">none</option><option value="wan">WAN</option><option value="lan">LAN</option>';
+    let opts = '<option value="">none</option><option value="wan">WAN</option><option value="lan">LAN</option><option value="mgmt">MGMT (management network)</option>';
+    const hasMgmt = devs.some(d => d.config && d.config.role === 'mgmt');
+    document.getElementById('mgmt-only-row').classList.toggle('hidden', !hasMgmt);
+    if (hasMgmt) fetch('/api/firewall/mgmt-only', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(j => {
+        if (j) document.getElementById('mgmt-only').checked = !!j.enabled;
+    });
     for (let i = 1; i <= 9; i++) opts += '<option value="opt' + i + '">OPT' + i + '</option>';
     rs.innerHTML = opts;
 }
@@ -416,6 +424,11 @@ function addPppoe(ev) {
 }
 function setSystemDhcpcd() { call('PUT', '/api/interfaces/system-dhcpcd', {mode: document.getElementById('sd-mode').value, conf: document.getElementById('sd-conf').value, run_dir: document.getElementById('sd-run').value}); }
 function setDhcpClient() { call('PUT', '/api/interfaces/dhcp-client', {client: document.getElementById('dhcp-client').value}); }
+document.getElementById('mgmt-only').addEventListener('change', ev => {
+    const on = ev.target.checked;
+    if (!on && !confirm('Also allow SSH and the web UI on the other networks your firewall rules allow?')) { ev.target.checked = true; return; }
+    call('PUT', '/api/firewall/mgmt-only', {enabled: on});
+});
 
 async function loadUplinks() {
     const r = await fetch('/api/wifi/uplinks', {credentials: 'same-origin'});

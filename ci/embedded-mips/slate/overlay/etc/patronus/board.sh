@@ -5,7 +5,9 @@ WAN_IF=wl24-sta                # Wi-Fi client uplink (repeater) on the 2.4 GHz a
 LAN_IF=br-lan
 phy_of() { for p in /sys/class/ieee80211/*; do readlink -f $p/device | grep "$1" >/dev/null && basename $p && return; done; }
 PHY24=$(phy_of 18100000.wmac)  # ath9k (SoC)
-PHY5=$(phy_of 0000:00:00.0)    # ath10k QCA9887 (PCIe)
+RADIO5_PCI=0000:00:00.0        # ath10k QCA9887 (PCIe): its PCI address (kernel log tag, driver rebind)
+RADIO5_DRV_DIR=/sys/bus/pci/drivers/ath10k_pci
+PHY5=$(phy_of $RADIO5_PCI)
 OWLIB=/usr/lib/openwrt         # swconfig + its libs, copied from OpenWrt 25.12.6
 # Uplink on BOTH bands: the 5 GHz client is the preferred uplink (metric 100), the 2.4 GHz one the fallback (150).
 # Each radio runs one channel, so every AP follows the client of its own radio (wifi-follow: "sta:ap:hostapd-conf").
@@ -21,6 +23,16 @@ FREQ5="5180 5200 5220 5240 5260 5280 5300 5320 5500 5520 5540 5560 5580 5600 562
 UPLINKS="$WAN5_IF $WAN_IF"
 UPLINK_TABLES="$WAN5_IF:4241:30241 $WAN_IF:4242:30242"
 STA_MAC= STA5_MAC= AP5_MAC= AP24_MAC= MGMT_NET= GUARD_GW=
+# 5 GHz Wi-Fi uplink (typed: on|off; per unit in unit.conf, shown on System > Hardware settings with this reason).
+# Board default OFF (docs/embedded-routers.md 6h): the QCA9887's firmware stalls when its one radio is a client AND an access
+# point (beacon overruns, firmware restarts every 1-2 min in bursts, and once a firmware that answered nothing until a restart),
+# and while the AP holds a channel the client cannot join a better network on another one. The 2.4 GHz client is the uplink
+# and the 5 GHz radio serves the access point only. With UPLINK5=on, wifi-follow's radio watchdog drops the 5 GHz client when
+# its firmware restarts or wedges (RADIO_* there) and the 2.4 GHz client carries on.
+UPLINK5_DEFAULT=off
+UPLINK5=$UPLINK5_DEFAULT
+UPLINK5_REASON="Off by default on this board: the 5 GHz radio (QCA9887) cannot reliably be a Wi-Fi client and an access point at the same time; its firmware stalls and restarts, and the client can only join networks on the access point's channel. The 2.4 GHz client carries the uplink."
+UPLINK5_HOW="Set UPLINK5=on in /etc/patronus/unit.conf (or the unit's image settings) and restart; a radio watchdog then drops the 5 GHz client if its firmware fails."
 # NOR kernel slots (patronus-flash kernel ..., /usr/libexec/patronus/nor-kernel; docs/embedded-routers.md 6e). GL's U-Boot always
 # boots the uImage at KSLOT_P_ADDR (the `kernel` partition); the trial kernel and the previous kernel live in OpenWrt's unused
 # `nor_reserved` partition. Only these partitions are ever written; u-boot and art never are (KSLOT_NEVER).
@@ -40,6 +52,7 @@ KSLOT_UBOOT_PROVEN="6788d77c975e4e7c1020ea70aec0a19cc270ec899f968734854394b93027
 KSLOT_KERNEL_DIR=/usr/share/patronus/kernel   # kernels this root may install (<name>.uImage + SHA256SUMS); the root has their modules
 KSLOT_STATE=/data/kernel     # events + trial record (persistent)
 [ -f /etc/patronus/unit.conf ] && . /etc/patronus/unit.conf
+case "$UPLINK5" in on|off) ;; *) echo "board.sh: UPLINK5=$UPLINK5 is not on|off: using $UPLINK5_DEFAULT" >&2; UPLINK5=$UPLINK5_DEFAULT ;; esac
 # neither the SoC Wi-Fi radio nor a device-tree Ethernet port = not a Slate (an emulator, the QEMU gate): no switch, no Wi-Fi uplinks or APs to
 # follow (board-network bridges eth0 flat). A real unit whose radio driver failed still has its device-tree eth0 and keeps the switch setup.
 # unit.conf can force either way with NO_BOARD=0|1.

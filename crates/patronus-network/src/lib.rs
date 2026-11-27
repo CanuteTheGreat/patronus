@@ -109,6 +109,8 @@ pub mod netflow;
 pub mod igmp;
 #[cfg(feature = "mdns")]
 pub mod mdns;
+#[cfg(feature = "udp-relay")]
+pub mod udprelay;
 
 #[cfg(feature = "nat64")]
 pub mod nat64;
@@ -124,6 +126,8 @@ pub mod plugins;
 #[cfg(feature = "web-proxy")]
 pub mod proxy;
 pub mod radio;
+#[cfg(feature = "reverse-proxy")]
+pub mod revproxy;
 #[cfg(feature = "segmentation")]
 pub mod seg;
 #[cfg(feature = "upnp")]

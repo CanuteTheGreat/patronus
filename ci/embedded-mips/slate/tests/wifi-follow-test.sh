@@ -231,4 +231,87 @@ printf '#!/bin/sh\necho "$*" >> "%s/mgmt.calls"\n' "$FX" > "$W/mgmt-apply"; chmo
 for _ in 1 2 3 4 5 6; do MGMT_APPLY="$W/mgmt-apply" MGMT_EVERY=3 sh "$WF" once; done
 chk "wifi-follow: management rule re-asserted by the daemon (once per MGMT_EVERY passes)" sh -c "[ \"\$(cat '$FX/mgmt.calls' 2>/dev/null)\" = 'mgmt' ] || [ \"\$(wc -l < '$FX/mgmt.calls')\" -ge 1 ]"
 
+# ---- blacklist backoff + drop of a client that never carries traffic
+export IPCMD=$W/bin/ip HEALTH_STA=wl5-sta FOLLOW= UPLINK_TABLES= RADIO_STATE=$W/state RADIO_SETUP=$W/bin/radio-setup HEALTH_BACKOFF=60 HEALTH_BACKOFF_MAX=1800 HEALTH_DROP_AFTER=4 HEALTH_DROP_WINDOW=1800 RADIO_HOLD=3600 RADIO_HOLD_MAX=86400
+printf '#!/bin/sh\necho "$*" >> "%s/radio-setup.calls"\n' "$FX" > "$W/bin/radio-setup"; chmod +x "$W/bin/radio-setup"
+# ip stub that also records "link set"
+cat > "$W/bin/ip" <<'X'
+#!/bin/sh
+case "$1" in route) cat "$FX/route.$5" 2>/dev/null;; neigh) echo "$*" >> "$FX/neigh.flush";; link) echo "$*" >> "$FX/link.calls";; esac; exit 0
+X
+chmod +x "$W/bin/ip"
+rm -rf "$W/run/wf" "$W/state"; rm -f "$FX"/wpa_cli.calls "$FX/gw.up" "$FX"/link.calls "$FX"/radio-setup.calls
+echo "default via 10.1.1.1 dev wl5-sta proto dhcp metric 100" > "$FX/route.wl5-sta"; sta wl5-sta 5220 80 5210
+bl() { n=$(grep -c '^-p .* blacklist' "$FX/wpa_cli.calls" 2>/dev/null); echo "${n:-0}"; }
+pp() { for x; do now "$x"; sh "$WF" once; done; }
+pp 5000 5030 5033 5036
+chk "backoff: first dead streak (3 misses after the grace period) blacklists at once" test "$(bl)" = 1
+pp 5040 5065 5068 5071 5080
+chk "backoff: a second dead streak inside the 60 s gap does not blacklist again" test "$(bl)" = 1
+pp 5100
+chk "backoff: after the gap it does" test "$(bl)" = 2
+pp 5103 5130 5133 5136 5160
+chk "backoff: the gap doubled (120 s): not again 60 s later" test "$(bl)" = 2
+pp 5221
+chk "backoff: again after 120 s" test "$(bl)" = 3
+rm -f "$FX/wpa_cli.calls"; pp 5224 5250 5253 5256 5470
+chk "4th dead streak inside 30 min: no blacklist, the client is dropped (supplicant terminated, interface down)" sh -c "! grep -q blacklist $FX/wpa_cli.calls && grep -q 'terminate' $FX/wpa_cli.calls && grep -q 'link set wl5-sta down' $FX/link.calls && [ -f $W/run/wf/wl5-sta.dropped ] && [ \"\$(cat $W/state/wl5-sta.level)\" = 1 ]"
+chk "dropped: held for RADIO_HOLD (3600 s)" test "$(cut -d' ' -f2 "$W/run/wf/wl5-sta.dropped")" = $((5470 + 3600))
+pp 5500 5530 5533 5536
+chk "dropped client: no health probes, no blacklists" test "$(bl)" = 0
+nosta wl5-sta; now 6000; sh "$WF" once
+chk "inside the hold: client stays off" sh -c "[ -f $W/run/wf/wl5-sta.dropped ] && [ ! -f $FX/radio-setup.calls ]"
+now 9070; sh "$WF" once
+chk "hold over: client started again through board-network client5" sh -c "grep -qx 'client5 start' $FX/radio-setup.calls && [ ! -f $W/run/wf/wl5-sta.dropped ] && grep -q 'link set wl5-sta up' $FX/link.calls"
+
+# ---- radio watchdog: firmware restarts and a wedged firmware (kernel log from a fixture)
+DEV=0000:00:00.0
+cat > "$W/bin/dmesg" <<'X'
+#!/bin/sh
+cat "$FX/dmesg" 2>/dev/null
+X
+chmod +x "$W/bin/dmesg"; mkdir -p "$W/drv"; : > "$W/drv/unbind"; : > "$W/drv/bind"
+export DMESG=$W/bin/dmesg RADIO_DEV=$DEV RADIO_WATCH=wl5-sta RADIO_DRV_DIR=$W/drv RADIO_EVERY=1 RADIO_WINDOW=900 RADIO_CRASHES=3 RADIO_WEDGE_LINES=10 RADIO_REBIND_MIN=900 HEALTH_STA=
+crash() { echo "[ 1.0] ath10k_pci $DEV: Cannot communicate with firmware, previous wmi cmds: 36904:1, attempting restart" >> "$FX/dmesg"; echo "[ 1.1] ath10k_pci $DEV: device successfully recovered" >> "$FX/dmesg"; }
+e143() { i=0; while [ $i -lt "$1" ]; do echo "[ 2.0] ath10k_pci $DEV: failed to start hw scan: -143" >> "$FX/dmesg"; i=$((i+1)); done; }
+rm -rf "$W/run/wf" "$W/state"; rm -f "$FX"/wpa_cli.calls "$FX"/link.calls "$FX"/radio-setup.calls; : > "$FX/dmesg"
+echo "[ 0.5] ath9k 18100000.wmac: Cannot communicate with firmware" >> "$FX/dmesg"   # another radio: ignored
+sta wl5-sta 5745 80 5775
+now 7000; sh "$WF" once
+crash; now 7030; sh "$WF" once
+chk "one firmware restart: logged, client kept" sh -c "[ ! -f $W/run/wf/wl5-sta.dropped ] && [ \"\$(wc -l < $W/run/wf/radio.crashes)\" = 1 ]"
+crash; crash; now 7060; sh "$WF" once
+chk "3 restarts in 15 min: 5 GHz client dropped, the other radio's lines not counted" sh -c "[ -f $W/run/wf/wl5-sta.dropped ] && grep -q terminate $FX/wpa_cli.calls && grep -q 'link set wl5-sta down' $FX/link.calls"
+crash; crash; crash; now 7100; sh "$WF" once
+chk "already dropped: no second drop (level stays 1)" test "$(cat "$W/state/wl5-sta.level")" = 1
+now $((7060 + 3600)); sh "$WF" once; crash; crash; crash; now $((7060 + 3630)); sh "$WF" once
+chk "dropped again after its return: hold doubles (7200 s)" test "$(cut -d' ' -f2 "$W/run/wf/wl5-sta.dropped")" = $((7060 + 3630 + 7200))
+# wedge: >= RADIO_WEDGE_LINES ESHUTDOWN errors and no recovery since the last look
+rm -rf "$W/run/wf" "$W/state"; rm -f "$FX"/wpa_cli.calls "$FX"/link.calls "$FX"/radio-setup.calls; : > "$FX/dmesg"; : > "$W/drv/unbind"; : > "$W/drv/bind"
+export FOLLOW="wl5-sta:wl5-ap:ap5"
+now 8000; sh "$WF" once   # AP starts on the client's channel
+e143 12; now 8030; sh "$WF" once
+chk "wedged firmware: client dropped, device re-probed (unbind+bind), interfaces re-created by board-network radio5" sh -c "[ -f $W/run/wf/wl5-sta.dropped ] && grep -qx '$DEV' $W/drv/unbind && grep -qx '$DEV' $W/drv/bind && grep -qx 'radio5' $FX/radio-setup.calls"
+: > "$W/drv/unbind"; e143 12; now 8100; sh "$WF" once
+chk "wedged again within RADIO_REBIND_MIN: not re-probed in a loop" test ! -s "$W/drv/unbind"
+: > "$FX/dmesg"; now 8130; sh "$WF" once
+chk "kernel log ring rolled over (counters went down): no action" test ! -s "$W/drv/unbind"
+# the 5 GHz client switched off for the board (UPLINK5=off): crashes never "drop" it, a wedged radio is still re-probed (AP-only)
+rm -rf "$W/run/wf" "$W/state"; rm -f "$FX"/wpa_cli.calls "$FX"/link.calls "$FX"/radio-setup.calls; : > "$FX/dmesg"; : > "$W/drv/unbind"; : > "$W/drv/bind"
+export WAN5_IF=wl5-sta UPLINK5=off
+now 9000; sh "$WF" once; crash; crash; crash; now 9030; sh "$WF" once
+chk "UPLINK5=off: firmware restarts counted but no client drop" sh -c "[ ! -f $W/run/wf/wl5-sta.dropped ] && [ ! -f $FX/wpa_cli.calls ]"
+e143 12; now 9060; sh "$WF" once
+chk "UPLINK5=off: wedged radio re-probed so its access point returns, still no drop" sh -c "grep -qx '$DEV' $W/drv/unbind && grep -qx radio5 $FX/radio-setup.calls && [ ! -f $W/run/wf/wl5-sta.dropped ]"
+export WAN5_IF= UPLINK5=
+# the UI's board settings follow the 5 GHz client's link: republished once per change, not every pass
+rm -rf "$W/run/wf"; : > "$FX/bs.calls"
+printf '#!/bin/sh\necho "$*" >> %s/bs.calls\n' "$FX" > "$W/bin/bs"; chmod +x "$W/bin/bs"
+export WAN5_IF=wl5-sta BOARD_SETTINGS=$W/bin/bs
+rm -f "$FX/wl5-sta.link"; sh "$WF" once; sh "$WF" once
+echo "Connected to 02:00:00:00:00:01 (on wl5-sta)" > "$FX/wl5-sta.link"; sh "$WF" once; sh "$WF" once
+chk "board settings republished on each 5 GHz link change only (down, up)" test "$(grep -c write "$FX/bs.calls")" = 2
+rm -f "$FX/wl5-sta.link"; export WAN5_IF= BOARD_SETTINGS=
+export RADIO_WATCH= RADIO_DEV= DMESG=dmesg FOLLOW=
+
 [ "$fails" = 0 ] && echo "wifi-follow: all checks passed" || { echo "wifi-follow: $fails failed"; exit 1; }

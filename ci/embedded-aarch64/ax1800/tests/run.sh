@@ -243,8 +243,8 @@ CB=$A/co-board-fixed.sh AP_COORD_SCAN_FILE=$FX co plan 5 phy0 > /dev/null 2>&1; 
 fakeap=$A/fake-ap; printf '#!/bin/sh\necho "$@" >> %s/fake-ap.log\n' "$A" > "$fakeap"; chmod +x "$fakeap"
 printf 'state=ENABLED\nfreq=5220\nsecondary_channel=-1\nvht_oper_chwidth=1\nvht_oper_centr_freq_seg0_idx=42\n' > "$A/co-status"
 cocheck() { # OWN-PHY-MAC -> runs `check 5` with the fixture scan; prints restart log
-  rm -f "$A/fake-ap.log"; mkdir -p "$A/co3"; printf 'channel=0\ninterface=wl5-m\nbssid=%s\n' "$1" > "$A/co3/ap5.conf"
-  AP_BOARD=$A/co-board.sh AP_RENDER_OUT=$A/co3 AP_COORD_AP=$fakeap AP_COORD_SCAN_FILE=$FX AP_COORD_STATUS_FILE=$A/co-status sh "$CO" check 5 "${2:-}" > "$A/co-check.out" 2>&1; cat "$A/fake-ap.log" 2>/dev/null; }
+  rm -f "$A/fake-ap.log"; [ -n "${KEEPST:-}" ] || rm -f "$A"/co3/patronus-ap-coord-restart-*; mkdir -p "$A/co3"; printf 'channel=0\ninterface=wl5-m\nbssid=%s\n' "$1" > "$A/co3/ap5.conf"
+  AP_COORD_NOW=${AP_COORD_NOW:-03} AP_COORD_STATE=$A/co3 AP_BOARD=$A/co-board.sh AP_RENDER_OUT=$A/co3 AP_COORD_AP=$fakeap AP_COORD_SCAN_FILE=$FX AP_COORD_STATUS_FILE=$A/co-status sh "$CO" check 5 "${2:-}" > "$A/co-check.out" 2>&1; cat "$A/fake-ap.log" 2>/dev/null; }
 r=$(cocheck 02:cc:00:00:00:99 now); [ "$r" = "restart-band 5" ] && ok "ap-coord check: overlapping the unit with the lower key -> this (higher) unit restarts its 5 GHz radio" || { no "ap-coord check (higher key): '$r'"; cat "$A/co-check.out"; }
 r=$(cocheck 02:00:00:00:00:01 now); [ -z "$r" ] && grep -q 'lower key and moves' "$A/co-check.out" && ok "ap-coord check: the unit with the lower key stays where it is" || { no "ap-coord check (lower key): '$r'"; cat "$A/co-check.out"; }
 printf 'state=ENABLED\nfreq=5745\nsecondary_channel=1\nvht_oper_chwidth=1\nvht_oper_centr_freq_seg0_idx=155\n' > "$A/co-status"
@@ -254,6 +254,60 @@ mkdir -p "$A/bin"; printf '#!/bin/sh\necho "Station aa:bb"\n' > "$A/bin/iw"; chm
 r=$(PATH=$A/bin:$PATH AP_COORD_QUIET=1-5 AP_COORD_NOW=14 cocheck 02:cc:00:00:00:99); [ -z "$r" ] && grep -q 'moving later' "$A/co-check.out" \
   && ok "ap-coord check: stations connected + outside the quiet hours = the move waits" || { no "ap-coord quiet hours: '$r'"; cat "$A/co-check.out"; }
 r=$(PATH=$A/bin:$PATH AP_COORD_QUIET=1-5 AP_COORD_NOW=03 cocheck 02:cc:00:00:00:99); [ "$r" = "restart-band 5" ] && ok "ap-coord check: inside the quiet hours it restarts the radio" || no "ap-coord quiet window: '$r'"
+# 2.4 GHz re-check (found on a house AP: a 20 MHz unit on 11 and its peer on 6 were reported as sharing 7-10 and the
+# 2.4 GHz radio restarted every hour, dropping every client; the start-time plan itself treats 11 as free)
+S24=$A/scan24; mk24() { # FREQ [SEC]: the peer's 2.4 GHz BSS on FREQ (20 MHz; SEC above|below = HT40)
+  printf 'BSS 06:aa:bb:cc:22:22(on wl24-m)\n\tfreq: %s.0\n\tsignal: -50.00 dBm\n\tSSID: Plat 9\n' "$1" > "$S24"
+  [ -z "${2:-}" ] || printf '\tHT operation:\n\t\t * primary channel: 1\n\t\t * secondary channel offset: %s\n\t\t * STA channel width: any\n' "$2" >> "$S24"; }
+co24() { # OWN-FREQ [OWN-SECONDARY 0|1|-1] [now]: `check 24` against $S24; prints the restart log, output in co-check.out
+  rm -f "$A/fake-ap.log"; [ -n "${KEEPST:-}" ] || rm -f "$A"/co3/patronus-ap-coord-restart-*; mkdir -p "$A/co3"; rm -f "$A/co3/ap5.conf"
+  printf 'channel=0\ninterface=wl24-m\nbssid=02:cc:00:00:00:99\n' > "$A/co3/ap24.conf"
+  printf 'state=ENABLED\nfreq=%s\nsecondary_channel=%s\n' "$1" "${2:-0}" > "$A/co-status24"
+  AP_COORD_NOW=${AP_COORD_NOW:-03} AP_COORD_STATE=$A/co3 AP_BOARD=${CB24:-$A/co-board.sh} AP_RENDER_OUT=$A/co3 AP_COORD_AP=$fakeap AP_COORD_CHAN=${COCHAN:-/nonexistent} AP_COORD_SCAN_FILE=$S24 AP_COORD_STATUS_FILE=$A/co-status24 sh "$CO" check 24 "${3:-}" > "$A/co-check.out" 2>&1; cat "$A/fake-ap.log" 2>/dev/null; }
+mk24 2437; r=$(co24 2462 0 now); [ -z "$r" ] && grep -q 'no other access point shares' "$A/co-check.out" \
+  && ok "ap-coord check 24: 20 MHz on channel 11 vs a 20 MHz peer on channel 6 do not overlap (no restart)" || { no "ap-coord 24: ch11 vs ch6 restarted or flagged: '$r'"; cat "$A/co-check.out"; }
+mk24 2462; r=$(co24 2437 0 now); [ -z "$r" ] && grep -q 'no other access point shares' "$A/co-check.out" \
+  && ok "ap-coord check 24: the same holds the other way round (6 vs 11)" || { no "ap-coord 24: ch6 vs ch11: '$r'"; cat "$A/co-check.out"; }
+mk24 2437; r=$(co24 2452 0 now); [ "$r" = "restart-band 24" ] && ok "ap-coord check 24: channel 9 vs a peer on 6 (3 apart) still overlaps -> restart" || { no "ap-coord 24: ch9 vs ch6: '$r'"; cat "$A/co-check.out"; }
+mk24 2437; r=$(co24 2442 0 now); [ "$r" = "restart-band 24" ] && ok "ap-coord check 24: channel 7 vs a peer on 6 overlaps -> restart" || no "ap-coord 24: ch7 vs ch6: '$r'"
+mk24 2437; r=$(co24 2437 0 now); [ "$r" = "restart-band 24" ] && ok "ap-coord check 24: the same channel overlaps -> restart" || no "ap-coord 24: ch6 vs ch6: '$r'"
+mk24 2412 above; r=$(co24 2462 0 now); [ -z "$r" ] && ok "ap-coord check 24: a 40 MHz peer on 1+5 does not reach a 20 MHz unit on 11 (no restart)" || no "ap-coord 24: ch11 vs ht40 1+5: '$r'"
+mk24 2412 above; r=$(co24 2437 0 now); [ "$r" = "restart-band 24" ] && ok "ap-coord check 24: a 40 MHz peer on 1+5 does reach a 20 MHz unit on 6" || no "ap-coord 24: ch6 vs ht40 1+5: '$r'"
+mk24 2437; r=$(co24 2437 1 now); [ "$r" = "restart-band 24" ] && ok "ap-coord check 24: an HT40 unit counts its secondary channel (6+10 vs a peer on 6 overlaps)" || no "ap-coord 24: ht40: '$r'"
+mk24 2462; r=$(co24 2437 1 now); [ "$r" = "restart-band 24" ] && ok "ap-coord check 24: an HT40 unit on 6+10 does overlap a peer on 11" || no "ap-coord 24: ht40 6+10 vs ch11: '$r'"
+# quiet hours hold with or without stations; the first check (now) is exempt
+mkdir -p "$A/bin-nost"; printf '#!/bin/sh\nexit 0\n' > "$A/bin-nost/iw"; chmod +x "$A/bin-nost/iw"
+mk24 2437; r=$(PATH=$A/bin-nost:$PATH AP_COORD_QUIET=1-5 AP_COORD_NOW=14 co24 2442); [ -z "$r" ] && grep -q 'outside the quiet hours' "$A/co-check.out" \
+  && ok "ap-coord check: outside the quiet hours a real overlap waits even with NO station connected" || { no "ap-coord quiet, no stations: '$r'"; cat "$A/co-check.out"; }
+mk24 2437; r=$(PATH=$A/bin:$PATH AP_COORD_QUIET=1-5 AP_COORD_NOW=14 co24 2442); [ -z "$r" ] && ok "ap-coord check: outside the quiet hours a real overlap waits with stations connected" || no "ap-coord quiet, stations: '$r'"
+mk24 2437; r=$(PATH=$A/bin-nost:$PATH AP_COORD_QUIET=1-5 AP_COORD_NOW=03 co24 2442); [ "$r" = "restart-band 24" ] && ok "ap-coord check: inside the quiet hours the overlap restarts the radio" || no "ap-coord quiet window 24: '$r'"
+printf '. %s\nAP_COORD_QUIET=\n' "$A/co-board.sh" > "$A/co-board-anytime.sh"
+mk24 2437; r=$(PATH=$A/bin-nost:$PATH CB24=$A/co-board-anytime.sh AP_COORD_NOW=14 co24 2442); [ "$r" = "restart-band 24" ] && ok "ap-coord check: empty AP_COORD_QUIET = any time" || no "ap-coord quiet empty: '$r'"
+# loop guard: a restart that ended on the same channel is not repeated (same state dir, the next hourly check)
+mk24 2437; r=$(AP_COORD_EPOCH=1000000 co24 2442 0 now); [ "$r" = "restart-band 24" ] || no "ap-coord loop guard setup: '$r'"
+r=$(KEEPST=1 AP_COORD_EPOCH=1003600 co24 2442 0 now); [ -z "$r" ] && grep -q 'not moving again' "$A/co-check.out" \
+  && ok "ap-coord check: after a restart that left the radio on the same channel, the next check does not restart again" || { no "ap-coord loop guard: '$r'"; cat "$A/co-check.out"; }
+r=$(KEEPST=1 AP_COORD_EPOCH=1003600 co24 2442 0 now); [ -z "$r" ] || no "ap-coord loop guard repeat: '$r'"
+r=$(KEEPST=1 AP_COORD_EPOCH=$((1000000 + 86400 + 60)) co24 2442 0 now); [ -z "$r" ] && ok "ap-coord check: the same-channel guard does not expire" || no "ap-coord loop guard repeated: '$r'"
+# the FIRST check after a start (`now`) respects the quiet hours too (a restart at boot-time clock 14:00 would drop clients)
+mk24 2437; r=$(PATH=$A/bin-nost:$PATH AP_COORD_QUIET=1-5 AP_COORD_NOW=14 co24 2442 0 now); [ -z "$r" ] && grep -q 'outside the quiet hours' "$A/co-check.out" \
+  && ok "ap-coord check: the first check (now) outside the quiet hours does not restart either" || { no "ap-coord first check quiet: '$r'"; cat "$A/co-check.out"; }
+# guard semantics: a failed move (ap-chan picks a channel, the radio stays) is not retried; bad state / backwards clock never block for good
+mkdir -p "$A/bin-chan"; printf '%s\n' '#!/bin/sh' 'case "$1" in pick) echo 11;; move) echo "move $*" >> "$A/chan.log";; esac' > "$A/bin-chan/chan"; chmod +x "$A/bin-chan/chan"
+export A; rm -f "$A/chan.log"
+mk24 2437; r=$(COCHAN=$A/bin-chan/chan AP_COORD_EPOCH=4000000 co24 2442 0 now)
+[ -s "$A/chan.log" ] && ok "ap-coord check: with ap-chan the overlap is answered by a move" || no "ap-coord move not attempted"
+rm -f "$A/chan.log"; mk24 2437; r=$(KEEPST=1 COCHAN=$A/bin-chan/chan AP_COORD_EPOCH=4003600 co24 2442 0 now); [ ! -s "$A/chan.log" ] && [ -z "$r" ] && grep -q 'not moving again' "$A/co-check.out" \
+  && ok "ap-coord check: a move that left the radio on the same channel is not retried within 24 h" || { no "ap-coord failed move retried: '$r'"; cat "$A/co-check.out"; }
+rm -f "$A/chan.log"; mk24 2437; r=$(KEEPST=1 COCHAN=$A/bin-chan/chan AP_COORD_EPOCH=$((4000000 + 86400 + 1)) co24 2442 0 now); [ ! -s "$A/chan.log" ] \
+  && ok "ap-coord check: failed moves are not repeatedly attempted" || no "ap-coord move guard repeated"
+mk24 2437; printf 'garbage x\n' > "$A/co3/patronus-ap-coord-restart-24"; r=$(KEEPST=1 AP_COORD_EPOCH=5000000 co24 2442 0 now); [ "$r" = "restart-band 24" ] \
+  && ok "ap-coord check: an unreadable guard file is ignored" || no "ap-coord garbage guard: '$r'"
+mk24 2437; r=$(AP_COORD_EPOCH=6000000 co24 2442 0 now); r=$(KEEPST=1 AP_COORD_EPOCH=5000000 co24 2442 0 now); [ -z "$r" ] \
+  && ok "ap-coord check: clock changes do not defeat the guard" || no "ap-coord backwards clock: '$r'"
+if grep -n 'AP_COORD_LOOP_SECS' "$CO" docs/embedded-routers.md > /dev/null 2>&1; then no "ap-coord: untyped AP_COORD_LOOP_SECS knob is back"; else ok "ap-coord: no untyped loop-guard knob"; fi
+mk24 2437; r=$(AP_COORD_EPOCH=2000000 co24 2442 0 now); r=$(KEEPST=1 AP_COORD_EPOCH=2003600 co24 2452 0 now); [ "$r" = "restart-band 24" ] && ok "ap-coord check: a restart that did move the radio (7 -> 9) does not block a later real overlap" || no "ap-coord loop guard, moved: '$r'"
+mk24 2437; r=$(AP_COORD_EPOCH=3000000 co24 2442 0 now); mk24 2462; r=$(KEEPST=1 AP_COORD_EPOCH=3003600 co24 2412 0 now); [ ! -e "$A/co3/patronus-ap-coord-restart-24" ] && ok "ap-coord check: the guard is cleared once the overlap is gone" || no "ap-coord loop guard not cleared"
 AP_COORD_SCAN_FILE=$FX co plan 5 phy0 > /dev/null 2>&1; [ -s "$A/co/peers-5" ] && ok "ap-coord plan: records the peers it heard (ap-steer knows another access point exists)" || no "ap-coord plan wrote no peers-5"
 AP_COORD_SCAN_FILE=/dev/null co plan 5 phy0 > /dev/null 2>&1; [ ! -e "$A/co/peers-5" ] && ok "ap-coord plan: no peer heard = no peers file" || no "ap-coord plan left a stale peers-5"
 # the kernel can cut a scan short (iw: exit 0, no message, the cached list): the pre-start scan repeats until two in a row agree

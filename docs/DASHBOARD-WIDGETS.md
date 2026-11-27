@@ -23,7 +23,7 @@ user arranges their own dashboard:
 
 ### Where layouts live
 
-Table `dashboard_layouts(user, layout_json, updated_at)` (migration 1520).
+Table `dashboard_layouts(user, layout_json, updated_at)` (migration 1620).
 It is configuration: it is part of the export, of revisions and rollbacks, of
 backups and of GitOps, like every other table that is not listed in
 `NON_CONFIG_TABLES`. The document is

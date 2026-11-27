@@ -205,6 +205,12 @@ enum Commands {
         action: GuestCommands,
     },
 
+    /// UDP broadcast relay (USE=udp-relay)
+    UdpRelay {
+        #[command(subcommand)]
+        action: UdpRelayCommands,
+    },
+
     /// SD-WAN edge agent (join the overlay of a Patronus SD-WAN dashboard)
     Edge {
         #[command(subcommand)]
@@ -429,6 +435,21 @@ pub enum GuestCommands {
     Vouchers,
     /// Delete a voucher by id
     VoucherDelete { id: i64 },
+}
+
+#[derive(Subcommand)]
+enum UdpRelayCommands {
+    /// Run the relay (what the patronus-daemon@udp-relay service does)
+    Run {
+        /// Generated relay configuration (JSON)
+        #[arg(long)]
+        conf: PathBuf,
+        /// Where to write the counters (JSON), refreshed every 2 s
+        #[arg(long)]
+        stats: Option<PathBuf>,
+    },
+    /// Print the configuration the relay would run with, from the store
+    Show,
 }
 
 #[derive(Subcommand)]
@@ -762,6 +783,10 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "guest")]
         Commands::Guest { action } => {
             commands::guest::run(action, cli.db).await?;
+        }
+
+        Commands::UdpRelay { action } => {
+            commands::udprelay::run(action, cli.db).await?;
         }
 
         Commands::Edge { action } => {

@@ -68,6 +68,32 @@ fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() :
 }).catch(() => {});
 </script>
 
+<div class="card" id="board-settings" style="display:none">
+    <div class="card-header"><h2 class="card-title">Hardware settings</h2></div>
+    <p class="text-sm">Settings this device's image chooses for its hardware, with the reason for each default.</p>
+    <table class="lan"><thead><tr><th>Setting</th><th>Value</th><th>Why</th><th>To change</th></tr></thead><tbody id="board-settings-list"></tbody></table>
+</div>
+<script>
+// Board-level choices (e.g. a radio role that is off by default because its firmware is unreliable in it) are shown with
+// their reason and live state, so a missing uplink or radio mode is explained instead of silently absent.
+fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(f => {
+    const list = (f && f.board_settings) || [];
+    if (!list.length) return;
+    document.getElementById('board-settings').style.display = '';
+    const tb = document.getElementById('board-settings-list');
+    for (const s of list) {
+        const tr = document.createElement('tr');
+        let val = s.value + (s.default != null && s.default !== s.value ? ' (default ' + s.default + ')' : ' (default)');
+        if (s.state) val += ': ' + s.state;
+        const how = (s.how || '') + ((s.allowed || []).length ? ' Allowed: ' + s.allowed.join(', ') + '.' : '');
+        for (const v of [s.label + ' (' + s.key + ')', val, s.reason || '', how]) {
+            const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+        }
+        tb.appendChild(tr);
+    }
+}).catch(() => {});
+</script>
+
 <div class="card" id="firmware-card" style="display:none">
     <div class="card-header"><h2 class="card-title">Firmware</h2></div>
     <p class="text-sm" id="fw-state"></p>

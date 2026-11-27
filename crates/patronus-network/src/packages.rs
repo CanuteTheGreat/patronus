@@ -55,6 +55,13 @@ pub const CATALOG: &[Component] = &[
         binary: "squid",
     },
     Component {
+        id: "haproxy",
+        feature: "reverse-proxy",
+        title: "HAProxy reverse proxy / load balancer",
+        atom: "net-proxy/haproxy",
+        binary: "haproxy",
+    },
+    Component {
         id: "frr",
         feature: "dynamic-routing",
         title: "FRRouting (BGP/OSPF)",

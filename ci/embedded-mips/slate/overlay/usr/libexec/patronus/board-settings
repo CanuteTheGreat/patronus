@@ -1,0 +1,38 @@
+#!/bin/sh
+# board-settings: publish this board's hardware settings for the web UI (System > Hardware settings, /api/features
+# `board_settings`) as /run/patronus/board-settings.json (override: BOARD_SETTINGS_OUT). Each setting is a typed key from
+# board.sh (board default) / unit.conf (per-unit value) with its allowed values, the reason for the default, how to change
+# it and its live state. Run by board-network at boot and by wifi-follow when the radio watchdog drops or returns a client.
+#   board-settings [write]    write the file
+#   board-settings print      print it
+BOARD_SH=${BOARD_SH:-/etc/patronus/board.sh}
+[ -f "$BOARD_SH" ] && . "$BOARD_SH"
+OUT=${BOARD_SETTINGS_OUT:-/run/patronus/board-settings.json}
+WF_RUN=${WF_RUN:-/run/wifi-follow}
+esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+uplink5_state() {
+  [ -n "$WAN5_IF" ] || { echo "this unit has no 5 GHz client interface"; return; }
+  if [ "$UPLINK5" != on ]; then echo "off: the 5 GHz radio serves only the access point; the 2.4 GHz client is the uplink"; return; fi
+  if [ -f "$WF_RUN/$WAN5_IF.dropped" ]; then
+    why=$(cat "$WF_RUN/$WAN5_IF.why" 2>/dev/null)
+    u=$(cut -d' ' -f2 "$WF_RUN/$WAN5_IF.dropped")
+    if [ "$u" = never ]; then echo "on, but stopped by the radio watchdog until the next restart${why:+ ($why)}"
+    else echo "on, but stopped by the radio watchdog for now${why:+ ($why)}; it retries by itself"; fi
+    return
+  fi
+  if iw dev "$WAN5_IF" link 2>/dev/null | grep -q '^Connected'; then echo "on: connected"; else echo "on: not connected"; fi
+}
+render() {
+  printf '[\n'
+  if [ -n "$WAN5_IF" ]; then
+    printf '{"key":"UPLINK5","label":"5 GHz Wi-Fi uplink (client on the 5 GHz radio)","value":"%s","default":"%s","allowed":["on","off"],' \
+      "$(esc "$UPLINK5")" "$(esc "$UPLINK5_DEFAULT")"
+    printf '"reason":"%s","how":"%s","state":"%s"}\n' "$(esc "$UPLINK5_REASON")" "$(esc "$UPLINK5_HOW")" "$(esc "$(uplink5_state)")"
+  fi
+  printf ']\n'
+}
+case "${1:-write}" in
+  write) mkdir -p "$(dirname "$OUT")"; render > "$OUT.new" && chmod 644 "$OUT.new" && mv "$OUT.new" "$OUT" ;;
+  print) render ;;
+  *) echo "usage: board-settings [write|print]" >&2; exit 2 ;;
+esac

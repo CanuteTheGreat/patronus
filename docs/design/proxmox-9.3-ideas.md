@@ -186,6 +186,13 @@ Open (built by the UI design-system adoption, section H, with the screenshots as
   the Interfaces page asks `/api/wifi/uplinks` on builds without Wi-Fi client support and prints a USE-flag hint on
   the router tier (should read `/api/features` first).
 
+## Related plan: pfSense / OPNsense parity
+
+The same plan continues in [pfsense-opnsense-parity.md](pfsense-opnsense-parity.md), which reuses gaps A-H above
+instead of repeating them and adds the firewall-specific ones: installer wizard parity, HA DHCP failover, multi-WAN
+polish, IDS rulesets and policy, captive portal, certificate manager with ACME, reverse proxy, floating rules and
+interface groups, VPN VTI/mesh, small services, hardware monitoring, and OpenAPI + translations.
+
 ## Links
 
 - Proxmox VE 9.3 release notes: https://pve.proxmox.com/wiki/Roadmap

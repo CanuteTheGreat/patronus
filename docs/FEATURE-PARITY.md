@@ -7,6 +7,10 @@ stands on each hardware tier. It is generated from a code-and-CI audit, not
 from plans: a feature counts only when it is compiled into the shipped
 binaries and reachable from the web UI or CLI.
 
+A hands-on comparison against the current pfSense CE and OPNsense releases
+(installed in QEMU, every installer screen and web page inventoried) and the
+resulting gap plan is in [design/pfsense-opnsense-parity.md](design/pfsense-opnsense-parity.md).
+
 Status words:
 
 - **tested**: shipped and exercised by an automated test that CI runs
@@ -109,7 +113,7 @@ Last generated: 2026-11-17 (279 features).
 | WAN via PPPoE (pppd kernel plugin, supervised) | all | tested | missing | missing | No PPPoE on VLAN-tagged WAN check in UI docs, no MTU/MSS auto (MSS clamp IN-PROGRESS another work item), no IPv6 over PPPoE test, no multilink. PPPoE is P0 for EU/AU ISPs: add `pppoe` to router FEATURES (S; pppd + kmod-… | P0 |
 | 802.1Q VLANs | all | tested | missing | missing | Add `vlan` to ROUTER/SMALL features + kmod-8021q; also no switch-chip VLAN (DSA bridge vlan_filtering) config for LAN ports - the common router case (M). | P0 |
 | QinQ (802.1ad) stacked VLANs | pfS/OPN/OWrt/Fort | tested | missing | missing | Niche; follows VLAN gap on router tiers. | P2 |
-| LAGG / bonding (LACP 802.3ad, active-backup, balance modes) | pfS/OPN/OWrt/UniFi/Fort | tested | untested | untested | LACP peer negotiation not proven against a real LACP partner (kernel mode only); no hash-policy/failover-mode UI check. | P1 |
+| LAGG / bonding (LACP 802.3ad, active-backup, balance modes) | pfS/OPN/OWrt/UniFi/Fort | tested | untested | untested | Also at install time (answer file / guided installer, [ISO-INSTALL.md](ISO-INSTALL.md)): vmtest `installed_lagg_vlan.py` (ISO gate, both inits) proves LACP against a Linux 802.3ad partner (one aggregator, partner MAC, member cut + rejoin) with WAN/LAN/management on VLANs of the bond at the first boot. Not yet: hash-policy/failover-mode UI check on the Interfaces page, a real switch. | P1 |
 | Bridges (STP flag, member ports) | pfS/OPN/OWrt/UniFi/GL | tested | untested | untested | No bridge VLAN filtering / per-port PVID, no RSTP/priority/path-cost settings, no bridge-family firewalling. | P0 |
 | GRE / GRE-TAP / VXLAN tunnels | pfS/OPN/OWrt/Fort | tested | untested | untested | No tunnel keepalive/monitoring, no IPv6-underlay test, no multicast VXLAN. | P1 |
 | GIF / 6in4 / SIT / IPIP tunnels | pfS/OPN/OWrt | missing | missing | missing | Add `sit` (6in4, Hurricane Electric) and `ipip` kinds to overlay.rs + UI (S). | P1 |
@@ -175,7 +179,7 @@ Last generated: 2026-11-17 (279 features).
 | ACME / Let's Encrypt certificates (HTTP-01, DNS-01, wildcard, auto-renew) | pfS(acme pkg)/OPN(os-acme)/OWrt(acme)/UniFi/Fort | missing | missing | missing | Implement via lego/acme.sh dependency: `acme_certs` table, HTTP-01 through a temporary nft/redirect on :80, DNS-01 via provider hooks, renew timer in applyd, install into web TLS + HAProxy; netlab with pebble ACME test… | P0 |
 | Internal CA / certificate manager (issue server/client certs, CRL) | pfS/OPN/UniFi/Fort | partial | missing | missing | Add a `ca` Svc with CA create/import, cert issue/revoke, CRL, download (M-L). | P1 |
 | Web UI HTTPS certificate management (upload/replace, self-signed bootstrap) | all | partial | untested | untested | Tie to ACME/CA rows. | P1 |
-| HAProxy / reverse proxy with TLS offload, backends, health checks | pfS(HAProxy)/OPN(os-haproxy)/OWrt | missing | missing | missing | New Svc `haproxy`: frontends, TLS certs from ACME/CA, backends with checks (L). | P1 |
+| HAProxy / reverse proxy with TLS offload, backends, health checks | pfS(HAProxy)/OPN(os-haproxy)/OWrt | tested | missing | missing | Page `/svc/revproxy` (netlab lane-n-reverse-proxy): frontends, TLS from a PEM file, host/path rules, backends with health checks and balance algorithms, quick publish with firewall rule, live stats, `haproxy -c` before apply. Not in the embedded images (flash). Missing: certificates from the future ACME/CA manager, backend TLS verification, PROXY protocol, rate limiting, WAF. | P1 |
 | Squid / transparent web proxy (+ blocked domains, cache) | pfS(Squid)/OPN(os-squid) | tested | missing | n/a (hardware) | HTTP only (no ssl-bump), no cache stats UI, no ICAP/ClamAV. | P2 |
 | SNMP agent (v2c/v3, community, location) | pfS/OPN/OWrt/UniFi | tested | missing | missing | v3 users not covered by the page. | P2 |
 | NetFlow / IPFIX export (softflowd) | pfS/OPN/OWrt/UniFi | tested | missing | missing | Export only; no built-in collector/ntopng view (Insights does its own conntrack aggregation). | P2 |
@@ -247,7 +251,7 @@ Last generated: 2026-11-17 (279 features).
 
 | Feature | Found in | Standard | Router | Small | What is missing / notes | Impact |
 |---|---|---|---|---|---|---|
-| First-boot setup wizard (roles, LAN/WAN addressing, DHCP pool) | pfS/OPN/OWrt(no)/UniFi/GL/eero | tested | partial | partial | No wizard step for WAN type (PPPoE/VLAN), WAN speed for shaping, Wi-Fi, admin password strength; no phone/QR flow | P0 |
+| First-boot setup wizard (roles, LAN/WAN addressing, DHCP pool) | pfS/OPN/OWrt(no)/UniFi/GL/eero | tested | partial | partial | The ISO installer now sets bonds, VLAN-tagged WAN/LAN, PPPoE and a management network (SSH + web UI only there) before the first boot; the web wizard still has no step for WAN type (PPPoE/VLAN), WAN speed for shaping, Wi-Fi, admin password strength; no phone/QR flow | P0 |
 | Responsive web UI (mobile layout) | pfS(partial)/OPN/UniFi/GL/eero | untested | partial | partial | No documented mobile viewport test; no PWA manifest or service worker (only a service-worker cleanup in login.html:133) | P1 |
 | Dashboard widgets: per-user add/remove/reorder (mouse + keyboard), reset, stored in the config | pfS/OPN/UniFi/FW/GL/eero | tested | untested | partial | No live graph widgets, no gateway quality / top talkers / Wi-Fi clients widget yet (other lanes register theirs with one registry line); small tier: layout API proven on the booted image, the page itself is not browser-driven there. | P1 |
 | Console menu (text menu on tty/serial: set IPs, reset password, reboot) | pfS/OPN/OWrt(failsafe)/GL | missing | missing | missing | Add `patronus console` (interface assignment, LAN IP, admin password reset, factory reset, ping) launched from agetty/serial inittab; OpenRC+systemd units; vmtest scenario drives it over serial (M) | P0 |

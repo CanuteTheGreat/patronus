@@ -1072,20 +1072,42 @@ impl InterfacesApplier {
     /// a bridge/bond member) or keeps them down. The system dhcpcd must not
     /// manage these.
     pub fn owned_interfaces(cfg: &NetConfig, delegating: bool) -> Vec<String> {
-        cfg.interfaces
+        // a port the system manager runs DHCP on for Patronus is the manager's, not denied to it
+        let leased = |i: &crate::netconf::IfaceConfig| {
+            delegating
+                && i.enabled
+                && i.pd_downstream.is_empty()
+                && (i.ipv4_mode == V4Mode::Dhcp || i.ipv6_mode == V6Mode::Dhcp6)
+        };
+        let mut out: Vec<String> = cfg
+            .interfaces
             .iter()
             .filter(|i| {
                 i.ipv4_mode != V4Mode::Unmanaged || i.ipv6_mode != V6Mode::Unmanaged || !i.enabled
             })
-            // a port the system manager runs DHCP on for Patronus is the manager's, not denied to it
-            .filter(|i| {
-                !(delegating
-                    && i.enabled
-                    && i.pd_downstream.is_empty()
-                    && (i.ipv4_mode == V4Mode::Dhcp || i.ipv6_mode == V6Mode::Dhcp6))
-            })
+            .filter(|i| !leased(i))
             .map(|i| i.name.clone())
-            .collect()
+            .collect();
+        // bonds and bridges Patronus builds, and their member ports, are Patronus' too: without this the manager runs DHCP on
+        // a trunk's untagged side (a bond that only carries VLANs) and on member ports
+        let l2 = cfg
+            .bonds
+            .iter()
+            .filter(|b| b.enabled)
+            .flat_map(|b| std::iter::once(&b.name).chain(b.members.iter()))
+            .chain(
+                cfg.bridges
+                    .iter()
+                    .filter(|b| b.enabled)
+                    .flat_map(|b| std::iter::once(&b.name).chain(b.members.iter())),
+            );
+        for dev in l2 {
+            let delegated = cfg.interfaces.iter().any(|i| &i.name == dev && leased(i));
+            if !delegated && !out.contains(dev) {
+                out.push(dev.clone());
+            }
+        }
+        out
     }
 
     /// A port that needs Patronus' own DHCP client: prefix delegation (the system manager's config has no `ia_pd` for it and a
@@ -1645,6 +1667,44 @@ mod applier_tests {
             vec!["eth0", "eth1"]
         );
         assert_eq!(InterfacesApplier::owned_interfaces(&c, true), vec!["eth1"]);
+    }
+
+    #[test]
+    fn the_system_dhcpcd_is_kept_off_bonds_bridges_and_their_members() {
+        use crate::netconf::{BondConfig, BridgeConfig};
+        let mut c = NetConfig::default();
+        c.bonds.push(BondConfig {
+            name: "bond0".into(),
+            mode: "802.3ad".into(),
+            miimon: 100,
+            lacp_rate: Some("fast".into()),
+            xmit_hash_policy: None,
+            primary: None,
+            members: vec!["eth0".into(), "eth1".into()],
+            enabled: true,
+            description: None,
+        });
+        c.bridges.push(BridgeConfig {
+            name: "br0".into(),
+            stp: false,
+            members: vec!["eth2".into()],
+            enabled: true,
+            description: None,
+        });
+        // the trunk's VLAN carries the lease; the untagged bond itself has no row
+        c.iface_mut("bond0.100").ipv4_mode = V4Mode::Dhcp;
+        assert_eq!(
+            InterfacesApplier::owned_interfaces(&c, true),
+            vec!["bond0", "eth0", "eth1", "br0", "eth2"]
+        );
+        // a bridge the manager leases for Patronus stays the manager's; its member does not
+        c.iface_mut("br0").ipv4_mode = V4Mode::Dhcp;
+        assert_eq!(
+            InterfacesApplier::owned_interfaces(&c, true),
+            vec!["bond0", "eth0", "eth1", "eth2"]
+        );
+        c.bonds[0].enabled = false;
+        assert_eq!(InterfacesApplier::owned_interfaces(&c, true), vec!["eth2"]);
     }
 
     #[test]

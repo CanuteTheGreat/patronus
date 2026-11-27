@@ -40,6 +40,8 @@ t "early boot has no hard-coded hostname" sh -c "! grep -E '(^|[;&|] *)hostname 
 
 # 1b. wifi-follow: the AP follows the uplink client's channel (stub iw/hostapd)
 t "wifi-follow (AP follows the uplink channel)" sh "$D/tests/wifi-follow-test.sh"
+# 1c. board settings for the UI (UPLINK5: 5 GHz client off by default, typed, with its reason and live state)
+t "board-settings (System > Hardware settings JSON)" sh "$D/tests/board-settings-test.sh"
 
 # 1c. package-managed accounts (shared with the AX1800 tier)
 t "accounts-sync (package-managed accounts)" sh "$D/../../embedded-common/tests/accounts-sync.sh"
@@ -56,6 +58,7 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/usr/share/zoneinfo/Europe"; e
   echo "http 80/tcp" > "$r/etc/services"
   # ETPhoneHome (baked into every image): ELF binary + runner + the OpenRC service enabled in the default runlevel
   printf '\177ELF' > "$r/usr/sbin/etphonehome"; chmod +x "$r/usr/sbin/etphonehome"; : > "$r/usr/libexec/patronus/etph-run"; chmod +x "$r/usr/libexec/patronus/etph-run"
+  echo 'RADIO_WATCH=' > "$r/usr/libexec/patronus/wifi-follow"; : > "$r/usr/libexec/patronus/board-settings"; chmod +x "$r/usr/libexec/patronus/wifi-follow" "$r/usr/libexec/patronus/board-settings"
   : > "$r/etc/init.d/patronus-etph"; chmod +x "$r/etc/init.d/patronus-etph"; mkdir -p "$r/etc/runlevels/default"; ln -s /etc/init.d/patronus-etph "$r/etc/runlevels/default/patronus-etph"
   for b in usr/sbin/wpa_supplicant usr/sbin/dropbearmulti usr/sbin/hostapd usr/sbin/dnsmasq sbin/nft; do : > "$r/$b"; chmod +x "$r/$b"; done; ln -s dropbearmulti "$r/usr/sbin/dropbear"
   printf 'hsqs....' > "$r/usr/share/patronus-recovery/openwrt-root.squashfs"; echo "$r"; }
@@ -71,6 +74,15 @@ r=$(mkroot nowpa); rm "$r/usr/sbin/wpa_supplicant"
 tn_msg "check-rootfs: rejects an image without wpa_supplicant (no uplink)" "no network" "$D/check-rootfs.sh" "$r"
 r=$(mkroot nodb); rm "$r/usr/sbin/dropbearmulti"
 tn_msg "check-rootfs: rejects an image without dropbear (no ssh)" "no network" "$D/check-rootfs.sh" "$r"
+# 5 GHz driver/firmware (wifi5.pin): ath10k without firmware, and an upstream-driver root without firmware-5.bin, are refused
+r=$(mkroot a10k); mkdir -p "$r/lib/modules/6.12.112" "$r/lib/firmware/ath10k/QCA9887/hw1.0"; : > "$r/lib/modules/6.12.112/ath10k_core.ko"; echo x > "$r/lib/modules/6.12.112/modules.dep"
+tn_msg "check-rootfs: ath10k without QCA9887 firmware refused" "without any QCA9887" "$D/check-rootfs.sh" "$r"
+: > "$r/lib/firmware/ath10k/QCA9887/hw1.0/firmware-2.bin"; echo WIFI5_DRIVER=upstream > "$r/etc/patronus-release"
+tn_msg "check-rootfs: WIFI5_DRIVER=upstream root with only the ct firmware refused" "no QCA9887 firmware-5.bin" "$D/check-rootfs.sh" "$r"
+: > "$r/lib/firmware/ath10k/QCA9887/hw1.0/firmware-5.bin"
+t "check-rootfs: upstream ath10k root with firmware-5.bin accepted" "$D/check-rootfs.sh" "$r"
+t "wifi5.pin: upstream driver default, tar pinned by sha256" sh -c "grep -qx 'WIFI5_DRIVER=upstream' '$D/wifi5.pin' && grep -qE '^WIFI5_TAR_SHA256=[0-9a-f]{64}$' '$D/wifi5.pin'"
+t "assemble.sh records WIFI5_DRIVER in /etc/patronus-release" grep -q '^WIFI5_DRIVER=\$WIFI5_DRIVER$' "$D/assemble.sh"
 r=$(mkroot openap); mkdir -p "$r/etc/hostapd"; printf 'interface=wl5-ap\nssid=Open\nauth_algs=1\n' > "$r/etc/hostapd/ap5.conf"
 tn_msg "check-rootfs: rejects an open AP template" "open AP" "$D/check-rootfs.sh" "$r"
 t "check-rootfs: open AP accepted only with ALLOW_OPEN_AP=1" env ALLOW_OPEN_AP=1 "$D/check-rootfs.sh" "$r"

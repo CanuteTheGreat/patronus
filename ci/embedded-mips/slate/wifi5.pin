@@ -1,0 +1,17 @@
+# 5 GHz radio (QCA9887, ath10k) driver + firmware of the GL-AR750S image (docs/embedded-routers.md 6h).
+# WIFI5_DRIVER=upstream: assemble.sh replaces the stock OpenWrt root's ath10k-ct modules and ct firmware (OpenWrt's default for this
+#   board) with OpenWrt 25.12.6's own kmod-ath10k (backports, same kernel) + linux-firmware's QCA9887 firmware-5.bin (10.2.4-1.0-00047).
+#   Measured on the unit (2026-11-25): with ath10k-ct 10.1-ct-87 the radio's firmware stalled in bursts when it was client + access point
+#   (SWBA overruns, "Cannot communicate with firmware", once wedged until a restart) and its scans never found a nearby AP
+#   (5180 MHz, -42 dBm with upstream), so the client sat on a far AP at -76 dBm / MCS 0-4; upstream joined the near AP at once.
+# WIFI5_DRIVER=ct keeps the stock root's ath10k-ct (override at build time: WIFI5_DRIVER_OVERRIDE=ct).
+# tools/make-wifi5-kmods.sh builds the tar from the `pkg` lines below (apk v3 packages from downloads.openwrt.org); the tar is published
+# as the Forgejo generic package patronus-owrt-ath10k-ar750s and pinned here by sha256, assemble.sh fetches and verifies it.
+WIFI5_DRIVER=upstream
+WIFI5_KMOD_URL=https://downloads.openwrt.org/releases/25.12.6/targets/ath79/nand/kmods/6.12.112-1-59cfbc0272b0b8cdf438481b60598656
+WIFI5_FW_URL=https://downloads.openwrt.org/releases/25.12.6/packages/mips_24kc/base
+WIFI5_TAR_URL=https://git.canutethegreat.com/api/packages/CanuteTheGreat/generic/patronus-owrt-ath10k-ar750s/6.12.112-1/ath10k-qca9887-6.12.112-r2.tar
+WIFI5_TAR_SHA256=780c2a60bd756dcd83599f9ed8f496e3f4115951ebf31007eaf32d2483acced8
+# pkg <name> <version> <kmod|fw>
+pkg kmod-ath10k 6.12.112.6.18.55-r2 kmod
+pkg ath10k-firmware-qca9887 20261019-r1 fw

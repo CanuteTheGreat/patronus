@@ -17,9 +17,11 @@
         }
         .login-logo {
             display: block;
-            width: min(240px, 60vw);
-            height: auto;
-            margin: 1.5rem auto 0;
+            /* the artwork is portrait (2:3): size it by height so a phone keeps the form above the fold */
+            height: min(170px, 22vh);
+            width: auto;
+            max-width: 60vw;
+            margin: 1rem auto 0;
             border-radius: 18px; /* the artwork is on its own dark tile in both schemes */
         }
         .login-container {

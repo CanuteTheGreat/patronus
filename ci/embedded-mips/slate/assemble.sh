@@ -63,6 +63,23 @@ install -m644 "$B/libatomic.so.1" "$R/usr/lib/libatomic.so.1"
 S=$STOCK_ROOT; KV=$(ls "$S/lib/modules")
 cp -a "$S/lib/modules" "$R/lib/"; mkdir -p "$R/etc/modules.d"; cp -a "$S"/etc/modules.d/. "$R/etc/modules.d/"
 cp -a "$S/lib/firmware" "$R/lib/"
+# 5 GHz radio driver (wifi5.pin): OpenWrt's kmod-ath10k + linux-firmware QCA9887 firmware instead of the stock root's ath10k-ct
+eval "$(grep -E '^WIFI5_[A-Z0-9_]+=' "$HERE/wifi5.pin")"
+WIFI5_DRIVER=${WIFI5_DRIVER_OVERRIDE:-$WIFI5_DRIVER}
+case "$WIFI5_DRIVER" in
+upstream)
+  WT=${WIFI5_TAR:-$TMPDIR/wifi5-kmods.tar}
+  [ -f "$WT" ] || curl -fsSL -o "$WT" "$WIFI5_TAR_URL" || { echo "assemble.sh: cannot fetch $WIFI5_TAR_URL"; exit 1; }
+  echo "$WIFI5_TAR_SHA256  $WT" | sha256sum -c - >/dev/null || { echo "assemble.sh: $WT does not match wifi5.pin"; exit 1; }
+  tar tf "$WT" | grep -x "./lib/modules/$KV/ath10k_core.ko" >/dev/null || { echo "assemble.sh: wifi5 tar has no ath10k for kernel $KV"; exit 1; }
+  rm -f "$R/lib/modules/$KV/ath10k_core.ko" "$R/lib/modules/$KV/ath10k_pci.ko" "$R"/etc/modules.d/*ath10k*
+  # the ct firmware stays only when another kernel of this root still brings its own (ct) driver
+  [ -n "${EXTRA_KMOD_ROOTS:-}" ] || rm -f "$R"/lib/firmware/ath10k/QCA9887/hw1.0/firmware-2.bin "$R"/lib/firmware/ath10k/QCA9887/hw1.0/ct-firmware-*.bin
+  tar xf "$WT" -C "$R" --no-same-owner
+  echo "assemble.sh: 5 GHz driver = upstream ath10k + firmware-5.bin (wifi5.pin)" ;;
+ct) echo "assemble.sh: 5 GHz driver = stock ath10k-ct" ;;
+*) echo "assemble.sh: WIFI5_DRIVER=$WIFI5_DRIVER is not upstream|ct"; exit 2 ;;
+esac
 # modules of the other kernels this root must boot on (the NOR kernel is changed separately from the root: both directions)
 for X in ${EXTRA_KMOD_ROOTS:-}; do
   for d in "$X"/lib/modules/*; do [ -d "$d" ] || continue; k=${d##*/}; [ -e "$R/lib/modules/$k" ] && continue
@@ -198,6 +215,7 @@ PATRONUS_TIER=embedded
 ETPH=$ETPH_VERSION
 BOARD=$HW_DEVICE_OPENWRT_BOARD
 BUILD=$TAG
+WIFI5_DRIVER=$WIFI5_DRIVER
 SOURCE=patronus ${SOURCE_REV:-unknown}
 KERNEL=$HW_KERNEL_LABEL $KV (stock)
 KERNELS=$KERNELS
