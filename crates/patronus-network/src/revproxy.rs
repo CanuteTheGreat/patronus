@@ -737,6 +737,10 @@ impl Svc for RevProxySvc {
             }
             "stats" => {
                 let sup = Supervisor::detect();
+                // a stopped proxy has no admin socket: that is "no statistics", not a server error
+                if !sup.is_running(svc::DAEMON_SERVICE, INSTANCE) {
+                    return Ok(json!({"running": false, "stats": []}));
+                }
                 let sock = sock_path(&sup);
                 let csv = admin_command(&sock, "show stat")?;
                 let rows = parse_stats(&csv);

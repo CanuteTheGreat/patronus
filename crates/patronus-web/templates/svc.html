@@ -322,9 +322,12 @@
         let st = document.getElementById('rp-stats');
         if (!st) { st = document.createElement('div'); st.id = 'rp-stats'; host.after(st); }
         st.textContent = '';
+        const noStats = () => { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'No live statistics (the proxy is not running).'; st.appendChild(p); };
+        if (!(d.status && d.status.running)) { noStats(); return; }
         let r; try { r = await fetch('/api/svc/revproxy/action/stats', {method: 'POST', credentials: 'same-origin'}); } catch (_) { return; }
-        if (!r.ok) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'No live statistics (the proxy is not running).'; st.appendChild(p); return; }
+        if (!r.ok) { noStats(); return; }
         const j = await r.json();
+        if (!j.running) { noStats(); return; }
         const t = document.createElement('table'); t.className = 'lan ui-grid'; t.id = 'rp-stats-table';
         const hd = ['Proxy', 'Server', 'Status', 'Sessions', 'Total', 'Bytes in', 'Bytes out'];
         const th0 = document.createElement('thead'), tr0 = document.createElement('tr'); for (const h of hd) { const th = document.createElement('th'); th.textContent = h; tr0.appendChild(th); } th0.appendChild(tr0); t.appendChild(th0);
