@@ -2,6 +2,7 @@
 //!
 //! Provides mTLS, Zero Trust, and Policy Engine capabilities
 
+pub mod acme;
 pub mod ca;
 pub mod mtls;
 pub mod pki;
