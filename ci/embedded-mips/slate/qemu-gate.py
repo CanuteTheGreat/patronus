@@ -423,7 +423,8 @@ def guard_bans():
     try:
         c, t, _ = web("POST", "/api/firewall/rules/apply"); need(c == 200, f"apply: {c} {t[:200]}")
         need(banner(30), "no SSH banner through the WAN-side forward before the test")
-        rss = lambda: Rok("for p in $(pgrep -f 'applyd'); do sed -n 's/^VmRSS:[[:space:]]*//p' /proc/$p/status; done | head -1").strip()
+        # the applyd process itself (pidof by name: a supervise-daemon / wrapper cmdline also names applyd)
+        rss = lambda: Rok("for p in $(pidof patronus-cli); do case \"$(tr '\\0' ' ' < /proc/$p/cmdline)\" in *' applyd'*) sed -n 's/^VmRSS:[[:space:]]*//p' /proc/$p/status;; esac; done | head -1").strip()
         rss0 = rss()
         c, t, _ = web("PUT", "/api/guard/settings", {"enabled": True, "sources": ["dropbear"], "max_failures": 3, "ban_secs": 300, "tick_secs": 1}); need(c == 200, f"guard settings: {c} {t[:200]}")
         time.sleep(5)
