@@ -32,6 +32,30 @@ pub fn default_tls_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("/etc/patronus/tls"))
 }
 
+static LIVE: std::sync::OnceLock<RustlsConfig> = std::sync::OnceLock::new();
+
+/// Remember the configuration the HTTPS listeners share so a renewed
+/// certificate can be swapped in without a restart.
+pub fn register_live(cfg: &RustlsConfig) {
+    let _ = LIVE.set(cfg.clone());
+}
+
+/// Swap the certificate the listeners serve.  A pair that does not load
+/// leaves the current one in place.
+#[cfg(feature = "tls-rustls")]
+pub async fn reload(cert: &str, key: &str) -> Result<()> {
+    let cfg = LIVE.get().context("the HTTPS listeners are not running")?;
+    cfg.reload_from_pem_file(cert, key).await?;
+    Ok(())
+}
+
+#[cfg(all(feature = "tls-openssl", not(feature = "tls-rustls")))]
+pub async fn reload(cert: &str, key: &str) -> Result<()> {
+    let cfg = LIVE.get().context("the HTTPS listeners are not running")?;
+    cfg.reload_from_pem_file(cert, key)?;
+    Ok(())
+}
+
 /// Load an existing self-signed cert/key pair from `dir`, generating one
 /// if neither file exists yet.
 pub async fn ensure_self_signed_cert(dir: &Path) -> Result<RustlsConfig> {

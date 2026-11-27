@@ -7,6 +7,8 @@ use std::net::SocketAddr;
 pub mod apikeys;
 pub mod auth;
 pub mod backup_remote;
+#[cfg(feature = "certs")]
+pub mod certmgr;
 pub mod geo_centroid;
 #[cfg(feature = "ldap")]
 pub mod ldap;
@@ -91,6 +93,10 @@ fn prepare_app(state: AppState) -> axum::Router {
             }
         });
     }
+
+    // Certificate manager: issue and renew ACME certificates.
+    #[cfg(feature = "certs")]
+    certmgr::spawn_task(state.clone());
 
     // Remote / encrypted automatic backups: upload to every target that is due.
     let backup_state = state.clone();
@@ -229,7 +235,29 @@ pub fn redirect_location(host_header: &str, path_and_query: &str, https_port: u1
 
 fn redirect_app(https_port: u16) -> axum::Router {
     use axum::http::{header, HeaderMap, StatusCode, Uri};
-    axum::Router::new().fallback(move |headers: HeaderMap, uri: Uri| async move {
+    #[allow(unused_mut)]
+    let mut router = axum::Router::new();
+    // ACME HTTP-01: the CA fetches /.well-known/acme-challenge/<token> over
+    // plain HTTP; only tokens the issuing code registered are answered.
+    #[cfg(feature = "certs")]
+    {
+        router = router.route(
+            "/.well-known/acme-challenge/:token",
+            axum::routing::get(|axum::extract::Path(token): axum::extract::Path<String>| async move {
+                use axum::response::IntoResponse;
+                match patronus_security::acme::global_http01().lookup(&token) {
+                    Some(body) => (
+                        axum::http::StatusCode::OK,
+                        [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+                        body,
+                    )
+                        .into_response(),
+                    None => axum::http::StatusCode::NOT_FOUND.into_response(),
+                }
+            }),
+        );
+    }
+    router.fallback(move |headers: HeaderMap, uri: Uri| async move {
         let host = headers
             .get(header::HOST)
             .and_then(|h| h.to_str().ok())
@@ -298,6 +326,7 @@ pub async fn serve_web(
     let app = with_secure_cookies(prepare_app(state));
     let tls_config =
         tls::configured_or_self_signed(&settings.tls_cert, &settings.tls_key, tls_dir).await?;
+    tls::register_live(&tls_config);
     let (https, redirect) = listener_addrs(&settings);
     let mut bound = Bound::default();
     let mut set = tokio::task::JoinSet::new();

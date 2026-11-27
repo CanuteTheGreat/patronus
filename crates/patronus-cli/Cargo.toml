@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "udp-relay", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "reverse-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "uci-import"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "certs", "udp-relay", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "reverse-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "uci-import"]
 
 # `patronus import-uci`: OpenWrt UCI config importer (no extra dependencies;
 # its wifi-ap / dhcp-server parts are cfg-gated inside it)
@@ -66,6 +66,7 @@ syslog = ["patronus-network/syslog", "patronus-web?/syslog"]
 netflow = ["patronus-network/netflow", "patronus-web?/netflow"]
 igmp = ["patronus-network/igmp", "patronus-web?/igmp"]
 mdns = ["patronus-network/mdns", "patronus-web?/mdns"]
+certs = ["patronus-network/certs", "patronus-web?/certs"]
 udp-relay = ["patronus-network/udp-relay", "patronus-web?/udp-relay"]
 nat64 = ["patronus-network/nat64", "patronus-web?/nat64"]
 l2tp = ["patronus-network/l2tp", "patronus-web?/l2tp"]

@@ -399,6 +399,31 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- certificate manager: the CA validates an http-01 challenge on tcp/80
+    // of this router, so the port is open (from the chosen interface) while an
+    // enabled certificate uses that challenge.
+    let ce = settings(store, "certs").await?;
+    let ce_iface = ce
+        .get("challenge_iface")
+        .map(String::as_str)
+        .unwrap_or("@wan");
+    if !ce_iface.is_empty() {
+        let n: i64 = sqlx::query(
+            "SELECT COUNT(*) FROM acme_certs WHERE enabled = 1 AND challenge = 'http-01'",
+        )
+        .fetch_one(store.pool()?)
+        .await
+        .map(|r| r.get(0))
+        .unwrap_or(0);
+        if n > 0 {
+            for d in devices(store, ce_iface).await {
+                out.filter.push(format!(
+                    "add rule {t} input iifname \"{d}\" tcp dport 80 accept comment \"ACME http-01 challenge\""
+                ));
+            }
+        }
+    }
+
     // --- reverse proxy (HAProxy): every enabled frontend's port, on the interface
     // chosen for it; a listen address other than a wildcard is matched too
     let rp = settings(store, "revproxy").await?;

@@ -92,6 +92,14 @@ apt-get install -y -qq --no-install-recommends miniupnpd-nftables >/dev/null 2>&
 apt-get install -y -qq dhcpcd-base >/dev/null 2>&1 || apt-get install -y -qq dhcpcd5 >/dev/null 2>&1 || apt-get install -y -qq dhcpcd >/dev/null
 # lane N reverse proxy (lane-n-reverse-proxy*.sh): HAProxy, installed here while DNS still works
 apt-get install -y -qq --no-install-recommends haproxy >/dev/null
+# lane H certificate manager (lane-h-acme.sh): BIND as the RFC 2136 name server, dnsutils (dig), and the Pebble ACME test
+# server (pinned release binary, fetched here while DNS still works)
+apt-get install -y -qq --no-install-recommends bind9 dnsutils openssl >/dev/null
+mkdir -p /opt/pebble
+for i in 1 2 3; do
+  curl -fsSL https://github.com/letsencrypt/pebble/releases/download/v2.10.3/pebble-linux-\$(dpkg --print-architecture).tar.gz | tar -xz -C /opt/pebble --strip-components=3 && break
+  sleep 10
+done
 # wg(8) only; its "recommends" would pull wireguard-dkms + kernel headers
 apt-get install -y -qq --no-install-recommends wireguard-tools >/dev/null
 # lane F IPsec road warriors (lane-f-ipsec-rw.sh): strongSwan server + a second charon as the client
