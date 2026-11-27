@@ -3,7 +3,8 @@ use patronus_config::store::ConfigStore;
 
 // std::env::set_var is process-global; tests that set PATRONUS_LANAUDIT_TARGETS
 // must not run at the same time.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// async-aware: the tests that set env vars await while holding it (clippy await_holding_lock)
+static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 // ---- nmap XML ----
 
@@ -262,7 +263,7 @@ fn p(port: u16, service: &str) -> Port {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn full_scan_diff_events_and_prune() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     std::env::set_var("PATRONUS_LANAUDIT_TARGETS", "10.0.0.2,10.0.0.3");
     let store = ConfigStore::open_in_memory().await.unwrap();
     let s = Settings {
@@ -365,7 +366,7 @@ async fn full_scan_diff_events_and_prune() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn pdf_export_is_valid() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     std::env::set_var("PATRONUS_LANAUDIT_TARGETS", "10.0.0.9");
     let store = ConfigStore::open_in_memory().await.unwrap();
     let s = Settings::default();
