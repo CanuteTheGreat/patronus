@@ -26,7 +26,7 @@ with sync_playwright() as p:
     ctx = b.new_context(ignore_https_errors=True)
     page = ctx.new_page()
     errs = []
-    page.on("pageerror", lambda e: errs.append(str(e)))
+    page.on("pageerror", lambda e: errs.append(page.url + ": " + str(e)))
     page.goto(BASE + "/login")
     page.fill("#username", os.environ["E2E_USER"])
     page.fill("#password", os.environ["E2E_PASSWORD"])

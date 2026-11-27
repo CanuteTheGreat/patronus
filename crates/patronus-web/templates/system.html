@@ -693,7 +693,7 @@ async function fwFeedDownload() {
     <p class="hint">Spread network receive/transmit processing over all CPUs (RPS/XPS), as OpenWrt's packet_steering.</p>
     <label class="check"><input type="checkbox" id="packet-steering"
         onchange="call('PUT', '/api/system/packet-steering', {enabled: this.checked})"> Enable packet steering</label>
-    <script>fetch('/api/system/packet-steering', {credentials: 'same-origin'}).then(r => r.json()).then(r => { document.getElementById('packet-steering').checked = !!r.enabled; });</script>
+    <script>fetch('/api/system/packet-steering', {credentials: 'same-origin'}).then(r => r.json()).then(r => { document.getElementById('packet-steering').checked = !!r.enabled; }).catch(() => {});</script>
 </div>
 
 <div class="card" id="capture-card">
@@ -748,7 +748,10 @@ async function fwFeedDownload() {
 {% block extra_scripts %}
 {% include "lan_js.html" %}
 <script>
-    async function getJson(url) { const r = await fetch(url, {credentials: 'same-origin'}); return r.ok ? r.json() : null; }
+    // null on any failure: a load that a navigation away aborts (or a router that is restarting) is not a page error
+    async function getJson(url) { try { const r = await fetch(url, {credentials: 'same-origin'}); return r.ok ? await r.json() : null; } catch (_) { return null; } }
+    // page-load sections: a failed load leaves the section empty instead of an unhandled rejection
+    const quiet = (f) => () => Promise.resolve().then(f).catch(() => {});
     function cell(tr, text) { const td = document.createElement('td'); td.textContent = text; tr.appendChild(td); return td; }
     async function loadUpdates() {
         const u = await getJson('/api/system/updates');
@@ -889,7 +892,7 @@ async function fwFeedDownload() {
         if (await post('/api/system/auth-servers', body)) { ev.target.reset(); loadAuthServers(); }
         return false;
     }
-    document.addEventListener('DOMContentLoaded', () => { loadUpdates(); loadUpdateChannel(); loadEvents(); loadAuthServers(); });
+    document.addEventListener('DOMContentLoaded', () => { quiet(loadUpdates)(); quiet(loadUpdateChannel)(); quiet(loadEvents)(); quiet(loadAuthServers)(); });
 </script>
 <script>
     const fmtTs = t => t ? new Date(t * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : '';
@@ -933,7 +936,7 @@ async function fwFeedDownload() {
         loadApiKeys();
         return false;
     }
-    document.addEventListener('DOMContentLoaded', loadApiKeys);
+    document.addEventListener('DOMContentLoaded', quiet(loadApiKeys));
 </script>
 <script>
     async function loadGroups() {
@@ -987,7 +990,7 @@ async function fwFeedDownload() {
         if (j) loadGroups();
         return false;
     }
-    document.addEventListener('DOMContentLoaded', loadGroups);
+    document.addEventListener('DOMContentLoaded', quiet(loadGroups));
 </script>
 <script>
     async function loadBackupTargets() {
@@ -1022,7 +1025,7 @@ async function fwFeedDownload() {
         if (j) { ev.target.reset(); loadBackupTargets(); }
         return false;
     }
-    document.addEventListener('DOMContentLoaded', loadBackupTargets);
+    document.addEventListener('DOMContentLoaded', quiet(loadBackupTargets));
 </script>
 <script>
     function setPassword(id, name) {
@@ -1152,7 +1155,7 @@ async function fwFeedDownload() {
         const j = await post('/api/system/history/' + id + '/restore', {});
         if (j) { alert('Restored revision ' + j.restored + '.'); location.reload(); }
     }
-    document.addEventListener('DOMContentLoaded', loadHistory);
+    document.addEventListener('DOMContentLoaded', quiet(loadHistory));
     async function restoreStored(name) {
         if (!confirm('Replace the whole configuration with ' + name + ' and apply it now?')) return;
         const j = await post('/api/system/backups/' + encodeURIComponent(name) + '/restore', {});
