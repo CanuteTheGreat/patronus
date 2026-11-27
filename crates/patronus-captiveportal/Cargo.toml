@@ -5,21 +5,18 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+# the captive portal itself (USE=captive-portal); without it only the time's-up page
+portal = ["dep:patronus-network", "dep:md-5"]
+
 [dependencies]
-patronus-core = { path = "../patronus-core" }
 patronus-config = { path = "../patronus-config" }
+patronus-network = { path = "../patronus-network", optional = true, default-features = false, features = ["captive-portal"] }
 tokio.workspace = true
-async-trait.workspace = true
-anyhow.workspace = true
-thiserror.workspace = true
 tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-chrono.workspace = true
-uuid.workspace = true
 axum.workspace = true
-tower = "0.5"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
-bcrypt = "0.15"
-rand = "0.8"
-
+md-5 = { version = "0.10", optional = true }

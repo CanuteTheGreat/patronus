@@ -116,7 +116,9 @@ features_ap() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/features
   case "$f" in *'"absent":['*'"feature":"ha"'*'not included in this router-tier image'*) ;; *) echo "no absent list: $f"; return 1;; esac
   case "$f" in *'"feature":"dhcp"'*'access point'*) ;; *) echo "dhcp not explained as the main router's job: $f"; return 1;; esac
   # the guest network is the main router's job: listed with that reason, never silently missing
-  case "$f" in *'"feature":"guest"'*'access point'*) ;; *) echo "guest network not explained as the main router's job: $f"; return 1;; esac; }
+  case "$f" in *'"feature":"guest"'*'access point'*) ;; *) echo "guest network not explained as the main router's job: $f"; return 1;; esac
+  # so is the captive portal (it gates the router's forwarding; an access point only bridges)
+  case "$f" in *'"feature":"captive-portal"'*'access point'*) ;; *) echo "captive portal not explained as the main router's job: $f"; return 1;; esac; }
 ap_pages() { c=$(wapi https://127.0.0.1:$WEBP/dhcp); grep -q 'This unit is an access point' "$W/api.json" && [ "$c" = 200 ] || { echo "/dhcp: $c"; return 1; }
   c=$(wapi -X POST -d '{"start":"192.0.2.100","end":"192.0.2.150"}' https://127.0.0.1:$WEBP/api/dhcp/pools); [ "$c" = 409 ] || { echo "dhcp pool on an AP: HTTP $c"; return 1; }
   c=$(wapi https://127.0.0.1:$WEBP/svc/guest); grep -q 'This unit is an access point' "$W/api.json" && [ "$c" = 200 ] || { echo "/svc/guest: $c"; return 1; }

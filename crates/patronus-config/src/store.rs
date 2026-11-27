@@ -104,6 +104,10 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "traffic_daily",
     "system_events",
     "firewall_log",
+    // captive portal (lane x): who is logged in where and which voucher was first used
+    // when; runtime state, pruned after captive.session_retention_days
+    "cp_sessions",
+    "cp_voucher_use",
 ];
 
 /// Revisions kept by [`ConfigStore::snapshot`] (older ones are pruned).

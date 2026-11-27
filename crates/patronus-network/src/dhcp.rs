@@ -547,6 +547,9 @@ pub struct Resolved4 {
     pub router: Ipv4Addr,
     pub prefix: u8,
     pub subnet: String,
+    /// RFC 8908 captive-portal API URI handed out as DHCP option 114 (RFC 8910)
+    /// when a captive portal zone runs on this interface.
+    pub captive_api: Option<String>,
 }
 
 impl Resolved4 {
@@ -593,6 +596,7 @@ pub async fn resolve_pools(
                     router,
                     prefix: a.prefix,
                     pool: p,
+                    captive_api: None,
                 });
             }
             None => rep.warn(format!(
@@ -690,6 +694,9 @@ pub fn render_kea4(
             if let Some(d) = r.pool.domain.as_deref().or(local_domain) {
                 opts.push(json!({"name": "domain-name", "data": d}));
             }
+            if let Some(u) = &r.captive_api {
+                opts.push(json!({"name": "v4-captive-portal", "code": 114, "data": u}));
+            }
             let reservations: Vec<Value> = r
                 .pool
                 .static_mappings
@@ -782,6 +789,9 @@ fn dnsmasq_v4_lines(
     if let Some(d) = r.pool.domain.as_deref().or(local_domain) {
         v.push(format!("dhcp-option=tag:{tag},option:domain-name,{d}"));
     }
+    if let Some(u) = &r.captive_api {
+        v.push(format!("dhcp-option=tag:{tag},114,\"{u}\""));
+    }
     for m in &r.pool.static_mappings {
         let mut f = vec![m.mac.clone(), m.ip.to_string()];
         if let Some(h) = &m.hostname {
@@ -814,7 +824,15 @@ async fn plan(store: &ConfigStore, env: &LanEnv, rep: &mut ApplyReport) -> Resul
     let addrs = env.addrs()?;
     let backend = backend(store, env).await?;
     let ra_backend = ra_backend(store, env, backend).await?;
-    let v4 = resolve_pools(store, &addrs, rep).await?;
+    #[allow(unused_mut)]
+    let mut v4 = resolve_pools(store, &addrs, rep).await?;
+    #[cfg(feature = "captive-portal")]
+    {
+        let urls = crate::captive::dhcp_api_urls(store, &addrs).await;
+        for r in v4.iter_mut() {
+            r.captive_api = urls.get(&r.dev).cloned();
+        }
+    }
     let mut v6 = dhcp6::resolve(store, &addrs, rep).await?;
     if backend == Backend::Kea {
         v6.retain(|r| {

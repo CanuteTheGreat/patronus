@@ -53,6 +53,7 @@ pub fn build_router(
         .merge(api::insights::pages())
         .merge(api::packages::pages())
         .merge(api::svc::pages())
+        .merge(captive_pages())
         .merge(api::segmentation::pages())
         .merge(seg_time_pages())
         .merge(seg_dns_pages())
@@ -340,6 +341,23 @@ async fn require_session(
     }
 }
 
+#[cfg(feature = "captive-portal")]
+fn captive_pages() -> Router<AppState> {
+    api::captive::pages()
+}
+#[cfg(not(feature = "captive-portal"))]
+fn captive_pages() -> Router<AppState> {
+    Router::new()
+}
+#[cfg(feature = "captive-portal")]
+fn captive_router() -> Router<AppState> {
+    api::captive::router()
+}
+#[cfg(not(feature = "captive-portal"))]
+fn captive_router() -> Router<AppState> {
+    Router::new()
+}
+
 #[cfg(feature = "segmentation")]
 fn seg_time_pages() -> Router<AppState> {
     api::seg_time::pages()
@@ -436,7 +454,8 @@ async fn features() -> axum::Json<serde_json::Value> {
         "plugins",
         "segmentation",
         "wifi-ap",
-        "guest"
+        "guest",
+        "captive-portal"
     ];
     let role = api::wifi::role();
     let (_, tier, board) = release_info();
@@ -454,6 +473,7 @@ async fn features() -> axum::Json<serde_json::Value> {
 /// Features that are the main router's job when this unit is an access point
 /// (the System page list and the pages of left-out features explain that).
 pub(crate) const AP_ROUTER_JOBS: &[&str] = &[
+    "captive-portal",
     "dhcp",
     "dns",
     "segmentation",
@@ -596,6 +616,7 @@ pub fn absent_features(
         ("dns", "DNS resolver"),
         ("segmentation", "Device segmentation"),
         ("guest", "Guest network"),
+        ("captive-portal", "Captive portal"),
     ];
     let ap = role == api::setup::DeviceRole::Ap;
     let router_job = AP_ROUTER_JOBS;
@@ -649,6 +670,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::insight_history::router())
         .merge(api::packages::router())
         .merge(api::svc::router())
+        .merge(captive_router())
         .merge(api::segmentation::router())
         .merge(seg_time_router())
         .merge(seg_dns_router())

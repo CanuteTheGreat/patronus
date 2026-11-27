@@ -480,7 +480,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-netlabf-
       - name: Lane J + K scenarios in a capped NET_ADMIN/SYS_ADMIN container
-        run: ci/netlab/run.sh ci/netlab/lane-j-*.sh ci/netlab/lane-k-*.sh ci/netlab/lane-n-*.sh ci/netlab/lane-s-*.sh ci/netlab/lane-t-*.sh
+        run: ci/netlab/run.sh ci/netlab/lane-j-*.sh ci/netlab/lane-k-*.sh ci/netlab/lane-n-*.sh ci/netlab/lane-s-*.sh ci/netlab/lane-t-*.sh ci/netlab/lane-x-*.sh
 
   feature-matrix:
     # `cargo test --workspace` only ever compiles default features, so every
@@ -542,7 +542,7 @@ jobs:
           set -e
           # (patronus-cli is covered by the per-USE-flag builds below, which
           # end with a full build of every USE-mapped feature together.)
-          for c in patronus-network patronus-firewall patronus-core patronus-sdwan patronus-secrets; do
+          for c in patronus-network patronus-firewall patronus-core patronus-sdwan patronus-secrets patronus-captiveportal; do
             echo "::group::cargo test -p $c --all-features"
             cargo test -p "$c" --all-features
             echo "::endgroup::"

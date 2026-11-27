@@ -371,6 +371,37 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- Captive portal (lane x): clients of a zone reach the router's DHCP, DNS and the
+    // portal listeners before they sign in (`inet patronus_portal` redirects their web
+    // traffic there and gates forwarding; the main table still decides what a signed-in
+    // client may reach). Ports default to the `patronus_network::captive` defaults.
+    let cp = settings(store, "captive").await?;
+    let port = |k: &str, d: u16| -> u16 {
+        cp.get(k)
+            .and_then(|v| v.trim().parse().ok())
+            .filter(|p| *p >= 1024)
+            .unwrap_or(d)
+    };
+    let (cp_http, cp_https) = (port("http_port", 8002), port("https_port", 8003));
+    let zones = sqlx::query("SELECT interface FROM cp_zones WHERE enabled = 1 ORDER BY id")
+        .fetch_all(store.pool()?)
+        .await
+        .unwrap_or_default();
+    for z in zones {
+        let spec: String = z.get(0);
+        for d in devices(store, &spec).await {
+            out.filter.push(format!(
+                "add rule {t} input iifname \"{d}\" udp sport 68 udp dport 67 accept comment \"portal zone DHCP\""
+            ));
+            out.filter.push(format!(
+                "add rule {t} input iifname \"{d}\" meta l4proto {{ tcp, udp }} th dport 53 accept comment \"portal zone DNS\""
+            ));
+            out.filter.push(format!(
+                "add rule {t} input iifname \"{d}\" tcp dport {{ {cp_http}, {cp_https} }} accept comment \"captive portal\""
+            ));
+        }
+    }
+
     // --- OpenVPN server: the listen port, and the tunnel may reach the LAN
     let ov = settings(store, "openvpn").await?;
     if on(&ov, "enabled") {
@@ -625,6 +656,31 @@ mod tests {
             !f.contains("9999"),
             "a disabled frontend opens nothing: {f}"
         );
+    }
+
+    #[tokio::test]
+    async fn captive_portal_zone_opens_dhcp_dns_and_the_portal_ports() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth0", Some("wan")).await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        sqlx::query("INSERT INTO cp_zones (name, enabled, interface, updated_at) VALUES ('a', 0, '@lan', 0)")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
+        sqlx::query("UPDATE cp_zones SET enabled = 1")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        put(&s, "captive.https_port", "9443").await;
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(
+            f.contains("input iifname \"eth1\" tcp dport { 8002, 9443 } accept"),
+            "{f}"
+        );
+        assert!(f.contains("input iifname \"eth1\" udp sport 68 udp dport 67 accept"));
+        assert!(f.contains("input iifname \"eth1\" meta l4proto { tcp, udp } th dport 53 accept"));
+        assert!(!f.contains("eth0"));
     }
 
     #[tokio::test]

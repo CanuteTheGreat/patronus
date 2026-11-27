@@ -36,7 +36,7 @@ if [ $# -eq 0 ]; then
   set -- ci/netlab/lane-*.sh ci/netlab/journey-*.sh ci/netlab/failure-*.sh ci/netlab/upgrade-*.sh
   if [ -z "${NETLAB_ALL:-}" ]; then
     keep=()
-    for s in "$@"; do case "$s" in */lane-j-*|*/lane-k-*|*/lane-n-*|*/lane-s-*|*/lane-t-*) ;; *) keep+=("$s") ;; esac; done
+    for s in "$@"; do case "$s" in */lane-j-*|*/lane-k-*|*/lane-n-*|*/lane-s-*|*/lane-t-*|*/lane-x-*) ;; *) keep+=("$s") ;; esac; done
     set -- "${keep[@]}"
   fi
 fi
@@ -60,6 +60,7 @@ cp ci/guest-page-e2e.py "$OUT/"
 cp ci/dashboard-page-e2e.py ci/a11y/vendor/axe.min.js "$OUT/"
 # lane N reverse proxy UI scenario
 cp ci/revproxy-page-e2e.py "$OUT/"
+cp ci/captive-portal-e2e.py "$OUT/"
 # lane J XDP data plane: the shipped BPF program source
 cp crates/patronus-ebpf/src/xdp_firewall.bpf.c "$OUT/"
 OLD_ENV=
@@ -90,6 +91,8 @@ printf 'slapd slapd/password1 password Ldap-Admin-Pw-1\\nslapd slapd/password2 p
 apt-get install -y -qq slapd ldap-utils >/dev/null
 # lane N scenarios (OpenVPN, Squid, UPnP, DHCPv6-PD): installed here while DNS still works
 apt-get install -y -qq --no-install-recommends openvpn squid miniupnpc radvd isc-dhcp-server git udhcpc >/dev/null
+# lane X captive portal: the RADIUS server on the internet side
+apt-get install -y -qq --no-install-recommends freeradius >/dev/null
 apt-get install -y -qq --no-install-recommends miniupnpd-nftables >/dev/null 2>&1 || apt-get install -y -qq --no-install-recommends miniupnpd >/dev/null
 apt-get install -y -qq dhcpcd-base >/dev/null 2>&1 || apt-get install -y -qq dhcpcd5 >/dev/null 2>&1 || apt-get install -y -qq dhcpcd >/dev/null
 # lane N reverse proxy (lane-n-reverse-proxy*.sh): HAProxy, installed here while DNS still works
@@ -119,7 +122,7 @@ ip netns add probe && ip netns del probe && echo "network namespaces: ok"
 cd /t
 # scenarios share this container: leave nothing of the previous one behind
 # (lanes J/K stop their own daemons but not the lib.sh DNS/HTTP helpers)
-scrub() { pkill -f 'nl-dnsmasq.pid' 2>/dev/null || true; pkill -f '/t/(nl|lb)-[a-z0-9]+[.]py' 2>/dev/null || true; pkill -x 'suricata|watchfrr|bgpd|ospfd|zebra|staticd|mgmtd|xl2tpd|softflowd|igmpproxy|tayga|unbound|rsyslogd|patronus-web|patronus-dashboard|charon-systemd|dhcpcd|dhcpd|radvd' 2>/dev/null || true; rm -f /tmp/charon-rtr.pid /run/charon.vici /run/charon-client.vici; for n in \$(ip netns list | cut -d' ' -f1); do ip netns del "\$n" 2>/dev/null || true; done; sleep 1; }
+scrub() { pkill -f 'nl-dnsmasq.pid' 2>/dev/null || true; pkill -f '/t/(nl|lb)-[a-z0-9]+[.]py' 2>/dev/null || true; pkill -x 'suricata|watchfrr|bgpd|ospfd|zebra|staticd|mgmtd|xl2tpd|softflowd|igmpproxy|tayga|unbound|rsyslogd|patronus-web|patronus-dashboard|charon-systemd|dhcpcd|dhcpd|radvd|freeradius' 2>/dev/null || true; rm -f /tmp/charon-rtr.pid /run/charon.vici /run/charon-client.vici; for n in \$(ip netns list | cut -d' ' -f1); do ip netns del "\$n" 2>/dev/null || true; done; sleep 1; }
 # Run EVERY scenario even when one fails (one failing scenario used to hide
 # all the ones after it) and fail the job at the end listing each failure.
 failed=""; passed=0

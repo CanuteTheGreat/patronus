@@ -6,6 +6,8 @@ pub mod activity;
 pub mod apikeys;
 pub mod authservers;
 pub mod backup_targets;
+#[cfg(feature = "captive-portal")]
+pub mod captive;
 pub mod dashboard;
 pub mod device;
 pub mod firewall;

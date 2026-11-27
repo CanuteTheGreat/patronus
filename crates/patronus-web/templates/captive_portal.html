@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block title %}Captive portal - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    .cp-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .cp-muted { color: var(--muted); }
+    .cp-table td, .cp-table th { white-space: nowrap; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Captive portal</h1>
+    <p class="page-subtitle">Clients signed in on the portal zones, and the voucher rolls to print. Zones, login methods, timeouts, bandwidth, page texts and passthrough: <a href="/svc/captive">Captive portal settings</a>.</p>
+</div>
+
+<div id="cp-error" class="alert-error" role="alert" style="display:none"></div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Zones</h2></div>
+    <div id="cp-zones"><p class="empty">Loading...</p></div>
+</div>
+
+<div class="card">
+    <div class="card-header cp-actions">
+        <h2 class="card-title">Signed-in clients</h2>
+        <label class="cp-muted"><input type="checkbox" id="cp-show-ended"> show recently ended</label>
+    </div>
+    <div class="table-container" id="cp-sessions"><p class="empty">Loading...</p></div>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Voucher rolls</h2></div>
+    <div class="table-container" id="cp-rolls"><p class="empty">Loading...</p></div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+    const CAN_MODIFY = {% if can_modify %}true{% else %}false{% endif %};
+    function showError(msg) {
+        const el = document.getElementById('cp-error');
+        el.textContent = msg; el.style.display = msg ? '' : 'none';
+    }
+    async function api(method, url) {
+        const r = await fetch(url, {method, credentials: 'same-origin'});
+        let j = {}; try { j = await r.json(); } catch (_) {}
+        if (!r.ok) { showError('Not done: ' + (j.error || r.status)); return null; }
+        showError('');
+        return j;
+    }
+    function h(tag, attrs, kids) {
+        const e = document.createElement(tag);
+        for (const [k, v] of Object.entries(attrs || {})) {
+            if (k === 'text') e.textContent = v; else if (k === 'onclick') e.onclick = v; else e.setAttribute(k, v);
+        }
+        (kids || []).forEach(c => e.appendChild(c));
+        return e;
+    }
+    function when(t) { return t ? new Date(t * 1000).toLocaleString() : ''; }
+    function left(s) {
+        if (s.ended) return s.end_reason || 'ended';
+        if (s.seconds_left === null || s.seconds_left === undefined) return 'until idle or logout';
+        const m = Math.ceil(s.seconds_left / 60);
+        return m >= 120 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min';
+    }
+    function table(cols, rows) {
+        const t = h('table', {class: 'table cp-table'});
+        t.appendChild(h('thead', {}, [h('tr', {}, cols.map(c => h('th', {scope: 'col', text: c})))]));
+        const b = h('tbody');
+        rows.forEach(r => b.appendChild(h('tr', {}, r.map(c => c instanceof Node ? h('td', {}, [c]) : h('td', {text: String(c)})))));
+        t.appendChild(b);
+        return t;
+    }
+    async function load() {
+        const ended = document.getElementById('cp-show-ended').checked ? 50 : 0;
+        const d = await api('GET', '/api/captive-portal/sessions?ended=' + ended);
+        if (!d) return;
+        const zbox = document.getElementById('cp-zones');
+        zbox.textContent = '';
+        if (!d.zones.length) {
+            zbox.appendChild(h('p', {class: 'empty'}, [document.createTextNode('No zone yet. Add one on '), h('a', {href: '/svc/captive', text: 'Captive portal settings'}), document.createTextNode('.')]));
+        } else {
+            zbox.appendChild(table(['Zone', 'Interface', 'Login', 'State', 'Signed in'], d.zones.map(z => [
+                z.name, z.interface, z.login, z.enabled ? 'on' : 'off',
+                d.sessions.filter(s => !s.ended && s.zone === z.name).length])));
+        }
+        const sbox = document.getElementById('cp-sessions');
+        sbox.textContent = '';
+        if (!d.sessions.length) { sbox.appendChild(h('p', {class: 'empty', text: 'Nobody is signed in.'})); }
+        else sbox.appendChild(table(['Zone', 'Address', 'MAC', 'Login', 'User / voucher', 'Since', 'Time left', ''], d.sessions.map(s => {
+            let act = document.createTextNode('');
+            if (!s.ended && CAN_MODIFY) {
+                act = h('button', {class: 'btn btn-sm', type: 'button', 'aria-label': 'Disconnect ' + s.ip, text: 'Disconnect', onclick: async () => {
+                    if (!confirm('Sign ' + s.ip + ' out of the portal?')) return;
+                    if (await api('POST', '/api/captive-portal/sessions/' + s.id + '/disconnect')) setTimeout(load, 1500);
+                }});
+            }
+            return [s.zone, s.ip, s.mac, s.method, s.username || s.voucher || '', when(s.started), left(s), act];
+        })));
+        const r = await api('GET', '/api/captive-portal/rolls');
+        const rbox = document.getElementById('cp-rolls');
+        rbox.textContent = '';
+        if (!r || !r.length) { rbox.appendChild(h('p', {class: 'empty', text: 'No voucher rolls. Add one under Voucher rolls in the settings.'})); return; }
+        rbox.appendChild(table(['Roll', 'Zone', 'Vouchers', 'Used', 'Minutes each', ''], r.map(x => [
+            x.name, x.zone, x.codes, x.used, x.minutes,
+            h('a', {href: '/captive-portal/rolls/' + x.id + '/print', target: '_blank', rel: 'noopener', text: 'Print sheet'})])));
+    }
+    document.getElementById('cp-show-ended').addEventListener('change', load);
+    load();
+    setInterval(load, 10000);
+})();
+</script>
+{% endblock %}
