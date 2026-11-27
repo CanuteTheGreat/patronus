@@ -1,0 +1,271 @@
+<style>
+    .dnsf-scroll { overflow-x: auto; max-width: 100%; }
+    .dnsf-scroll:focus-visible { outline: 2px solid var(--accent, #4a8dff); outline-offset: 2px; }
+    table.dnsf { width: 100%; border-collapse: collapse; margin: 8px 0 12px; }
+    table.dnsf th, table.dnsf td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; font-size: 0.9em; vertical-align: top; }
+    table.dnsf td.num, table.dnsf th.num { text-align: right; white-space: nowrap; }
+    .dnsf-status { min-height: 1.4em; margin: 4px 0; font-size: 0.9em; }
+    .dnsf-note { color: var(--muted); font-size: 0.85em; margin: 4px 0 8px; }
+    .dnsf-pill { display: inline-block; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--line-strong); font-size: 0.8em; }
+    .dnsf-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .dnsf-err { color: var(--bad-fg); }
+    form.dnsf-inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin: 8px 0; }
+    form.dnsf-inline label { display: flex; flex-direction: column; font-size: 0.8em; color: var(--muted); min-width: 0; max-width: 100%; }
+    form.dnsf-inline input, form.dnsf-inline select { padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 4px; min-width: 120px; max-width: 100%; box-sizing: border-box; }
+    /* a table keeps a readable width and scrolls inside its own focusable region (never the page) */
+    table.dnsf { min-width: 600px; }
+    table.dnsf#dnsf-lists, table.dnsf#dnsf-log { min-width: 820px; }
+    table.dnsf td:first-child { min-width: 8em; }
+    table.dnsf td a { overflow-wrap: anywhere; }
+    .dnsf-swipe { display: none; }
+    @media (max-width: 720px) {
+        table.dnsf th, table.dnsf td { padding: 6px 4px; }
+        .dnsf-swipe { display: block; }
+    }
+</style>
+
+<div class="card" id="dnsf-lists-card">
+    <div class="card-header"><h2 class="card-title">Filter lists</h2></div>
+    <p class="text-sm" id="dnsf-summary">Loading&hellip;</p>
+    <p class="dnsf-status" id="dnsf-msg" role="status" aria-live="polite"></p>
+    <p class="dnsf-note dnsf-swipe">Swipe the table sideways to see every column.</p>
+    <div class="dnsf-scroll" tabindex="0" role="region" aria-label="Subscribed filter lists">
+        <table class="dnsf" id="dnsf-lists">
+            <thead><tr><th>List</th><th>Format</th><th class="num">Names loaded</th><th>Updated</th><th>Status</th><th class="num">Blocked today / 7 days</th><th><span class="sr-only">Actions</span></th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    <form class="dnsf-inline" id="dnsf-settings">
+        <label>Refresh every (hours, 1&ndash;168)
+            <input name="refresh_hours" type="number" min="1" max="168" required></label>
+        <label title="0 = the most this box can carry (its RAM decides)">Most names (0 = automatic)
+            <input name="max_domains" type="number" min="0" required></label>
+        <button class="btn btn-primary btn-sm" type="submit">Save</button>
+        <button class="btn btn-secondary btn-sm" type="button" id="dnsf-refresh-all">Refresh all now</button>
+    </form>
+    <p class="dnsf-note">Lists are downloaded when they are due (a failed download is retried after an hour and the last good copy stays in use).
+        A list that does not fit this box's name limit is not loaded, and its status says why.</p>
+</div>
+
+<div class="card" id="dnsf-catalog-card">
+    <div class="card-header"><h2 class="card-title">List catalog (free lists)</h2></div>
+    <p class="dnsf-note dnsf-swipe">Swipe the table sideways to see every column.</p>
+    <div class="dnsf-scroll" tabindex="0" role="region" aria-label="Catalog of free filter lists">
+        <table class="dnsf" id="dnsf-catalog">
+            <thead><tr><th>List</th><th>Kind</th><th class="num">Names (about)</th><th>Licence</th><th><span class="sr-only">Actions</span></th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    <form class="dnsf-inline" id="dnsf-custom">
+        <label>Your own list (URL)<input name="url" type="url" placeholder="https://example.org/list.txt" required></label>
+        <label>Name<input name="name" placeholder="my-list" required pattern="[A-Za-z0-9._\-]{1,48}"></label>
+        <label>Format
+            <select name="format"><option value="domains">Domain list</option><option value="hosts">Hosts file</option><option value="rpz">RPZ zone</option></select></label>
+        <label>Blocks subdomains too
+            <select name="subdomains"><option value="true">yes</option><option value="false">no</option></select></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add list</button>
+    </form>
+</div>
+
+<div class="card" id="dnsf-allow-card">
+    <div class="card-header"><h2 class="card-title">Allow list</h2></div>
+    <p class="dnsf-note">Names that must never be blocked, whatever list names them: a <b>domain</b> (the name and everything below it),
+        a <b>wildcard</b> such as <span class="mono">ads*.cdn.example.com</span>, or a <b>regular expression</b> matched against the whole name.</p>
+    <div class="dnsf-scroll" tabindex="0" role="region" aria-label="Allow list">
+        <table class="dnsf" id="dnsf-allow">
+            <thead><tr><th>Kind</th><th>Pattern</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    <form class="dnsf-inline" id="dnsf-allow-form">
+        <label>Kind
+            <select name="kind"><option value="domain">Domain</option><option value="wildcard">Wildcard</option><option value="regex">Regular expression</option></select></label>
+        <label>Pattern<input name="pattern" required placeholder="example.com"></label>
+        <label>Description<input name="description"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Allow</button>
+    </form>
+</div>
+
+<div class="card" id="dnsf-activity-card">
+    <div class="card-header"><h2 class="card-title">Recently blocked and query log</h2></div>
+    <div class="dnsf-scroll" tabindex="0" role="region" aria-label="Recently blocked names">
+        <table class="dnsf" id="dnsf-recent">
+            <thead><tr><th>Name</th><th>Blocked by</th><th class="num">Times</th><th>Last</th><th><span class="sr-only">Actions</span></th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    <form class="dnsf-inline" id="dnsf-log-form">
+        <label>Name contains<input name="q" placeholder="example"></label>
+        <label>Show
+            <select name="blocked"><option value="">all queries</option><option value="true">blocked only</option><option value="false">answered only</option></select></label>
+        <button class="btn btn-secondary btn-sm" type="submit">Search the log</button>
+        <button class="btn btn-danger btn-sm" type="button" id="dnsf-log-clear">Clear log</button>
+    </form>
+    <p class="dnsf-note" id="dnsf-log-note"></p>
+    <div class="dnsf-scroll" tabindex="0" role="region" aria-label="DNS query log">
+        <table class="dnsf" id="dnsf-log">
+            <thead><tr><th>Time</th><th>Client</th><th>Name</th><th>Type</th><th>Answer</th><th><span class="sr-only">Actions</span></th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+(function () {
+    const $ = (s) => document.querySelector(s);
+    const api = '/api/dns-filter';
+    let data = null;
+    function el(tag, attrs, ...kids) {
+        const e = document.createElement(tag);
+        for (const [k, v] of Object.entries(attrs || {})) {
+            if (k === 'class') e.className = v; else if (k === 'text') e.textContent = v; else e.setAttribute(k, v);
+        }
+        for (const k of kids) if (k != null) e.append(k);
+        return e;
+    }
+    function say(text, bad) {
+        const m = $('#dnsf-msg');
+        m.textContent = text || '';
+        m.className = 'dnsf-status ' + (bad ? 'bad' : 'ok');
+    }
+    async function req(method, path, body) {
+        const r = await fetch(api + path, {
+            method, credentials: 'same-origin',
+            headers: body ? {'content-type': 'application/json'} : {},
+            body: body ? JSON.stringify(body) : undefined,
+        });
+        let j = null;
+        try { j = await r.json(); } catch (_) {}
+        if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+        return j;
+    }
+    async function act(label, fn) {
+        say(label + '…');
+        document.body.style.cursor = 'progress';
+        try { await fn(); await load(); say('Done: ' + label, false); }
+        catch (e) { say('Not applied: ' + e.message, true); }
+        finally { document.body.style.cursor = ''; }
+    }
+    const fmt = (n) => Number(n || 0).toLocaleString('en-US');
+    function when(t) { return t ? new Date(t * 1000).toLocaleString() : 'never'; }
+    function size(b) { return b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : b > 1024 ? Math.round(b / 1024) + ' kB' : b + ' B'; }
+    const KIND = {ads: 'Ads and trackers', malware: 'Malware', phishing: 'Phishing', 'threat-intel': 'Threat intelligence'};
+
+    function render() {
+        const d = data;
+        const mode = d.mode === 'forwarder' ? 'dnsmasq forwarder (router)' : 'Unbound resolver (RPZ zones)';
+        $('#dnsf-summary').textContent = 'Resolver: ' + mode + '. Names loaded: ' + fmt(d.used) + ' of ' + fmt(d.cap) +
+            ' this box can carry (' + fmt(d.mem_mb) + ' MB RAM). Blocked by hand: ' + fmt(d.manual_blocked) + ' answers (' + fmt(d.manual_blocked_today) + ' today).';
+        const f = $('#dnsf-settings');
+        f.refresh_hours.value = d.settings.refresh_hours;
+        f.max_domains.value = d.settings.max_domains;
+        const tb = $('#dnsf-lists tbody'); tb.replaceChildren();
+        if (!d.lists.length) {
+            tb.append(el('tr', {}, el('td', {colspan: 7, class: 'empty', text: 'No list subscribed. Pick one from the catalog below.'})));
+        }
+        for (const l of d.lists) {
+            const s = l.status || {};
+            const st = el('td', {});
+            if (s.last_error) st.append(el('span', {class: 'dnsf-err', text: s.last_error}));
+            else if (!l.enabled) st.append(el('span', {class: 'dnsf-pill', text: 'off'}));
+            else if (s.last_ok) st.append(el('span', {class: 'ok', text: 'OK'}));
+            else st.append(el('span', {class: 'dnsf-pill', text: 'waiting for the first download'}));
+            if (l.license) { st.append(el('br')); st.append(el('a', {href: l.license_url, target: '_blank', rel: 'noopener noreferrer', text: 'Licence: ' + l.license})); }
+            const ck = el('input', {type: 'checkbox', 'aria-label': 'Enabled: ' + l.name});
+            ck.checked = l.enabled;
+            ck.addEventListener('change', () => act((ck.checked ? 'enabling ' : 'disabling ') + l.name, () => req('PUT', '/lists/' + l.id, {enabled: ck.checked})));
+            const rf = el('button', {class: 'btn btn-secondary btn-sm', type: 'button', text: 'Refresh'});
+            rf.addEventListener('click', () => act('refreshing ' + l.name, () => req('POST', '/refresh', {id: l.id})));
+            const rm = el('button', {class: 'btn btn-danger btn-sm', type: 'button', text: 'Remove'});
+            rm.addEventListener('click', () => { if (confirm('Unsubscribe from ' + l.name + '?')) act('removing ' + l.name, () => req('DELETE', '/lists/' + l.id)); });
+            const name = el('td', {}, el('b', {text: l.name}));
+            if (l.key_set === false && /<key>/.test(l.url)) {
+                name.append(el('br'));
+                const k = el('input', {type: 'password', placeholder: 'access key', 'aria-label': 'Access key for ' + l.name, autocomplete: 'off'});
+                const kb = el('button', {class: 'btn btn-secondary btn-sm', type: 'button', text: 'Save key'});
+                kb.addEventListener('click', () => act('saving the key of ' + l.name, () => req('PUT', '/lists/' + l.id, {auth_key: k.value})));
+                name.append(k, kb);
+            }
+            tb.append(el('tr', {},
+                name,
+                el('td', {text: l.format + (l.subdomains ? ' + subdomains' : '')}),
+                el('td', {class: 'num', text: s.entries ? fmt(s.used) + ' / ' + fmt(s.entries) + ' (' + size(s.bytes) + ')' : '-'}),
+                el('td', {text: when(s.last_ok)}),
+                st,
+                el('td', {class: 'num', text: fmt(l.blocked_today) + ' / ' + fmt(l.blocked_7d)}),
+                el('td', {}, el('div', {class: 'dnsf-row-actions'}, el('label', {}, ck, ' on'), rf, rm))));
+        }
+        const cb = $('#dnsf-catalog tbody'); cb.replaceChildren();
+        for (const c of d.catalog) {
+            const b = el('button', {class: 'btn btn-primary btn-sm', type: 'button', text: c.subscribed ? 'Subscribed' : 'Subscribe'});
+            b.disabled = !!c.subscribed;
+            let key = null;
+            if (c.needs_key && !c.subscribed) {
+                key = el('input', {type: 'password', placeholder: 'access key', 'aria-label': 'Access key for ' + c.name, autocomplete: 'off'});
+            }
+            b.addEventListener('click', () => act('subscribing to ' + c.name, () => req('POST', '/lists', {catalog: c.id, auth_key: key ? key.value : undefined})));
+            const desc = el('td', {}, el('b', {text: c.name}), el('br'), el('span', {class: 'text-muted', text: c.description}));
+            if (c.note) desc.append(el('br'), el('span', {class: 'dnsf-note', text: c.note}));
+            if (c.needs_key) desc.append(el('br'), el('a', {href: c.key_url, target: '_blank', rel: 'noopener noreferrer', text: 'Get a free access key'}));
+            const lic = el('td', {}, el('a', {href: c.license_url, target: '_blank', rel: 'noopener noreferrer', text: c.license}));
+            const act_td = el('td', {}, el('div', {class: 'dnsf-row-actions'}, key, b));
+            cb.append(el('tr', {}, desc,
+                el('td', {text: (KIND[c.group] || c.group) + ' · ' + c.format}),
+                el('td', {class: 'num', text: fmt(c.approx_entries) + (c.fits ? '' : ' (too big for this box)')}),
+                lic, act_td));
+        }
+        const ab = $('#dnsf-allow tbody'); ab.replaceChildren();
+        if (!d.allow.length) ab.append(el('tr', {}, el('td', {colspan: 4, class: 'empty', text: 'Nothing is allow-listed.'})));
+        for (const a of d.allow) {
+            const rm = el('button', {class: 'btn btn-danger btn-sm', type: 'button', text: 'Delete'});
+            rm.addEventListener('click', () => act('deleting the allow entry ' + a.pattern, () => req('DELETE', '/allow/' + a.id)));
+            ab.append(el('tr', {}, el('td', {text: a.kind}), el('td', {class: 'mono', text: a.pattern}), el('td', {text: a.description}), el('td', {}, rm)));
+        }
+        const rb = $('#dnsf-recent tbody'); rb.replaceChildren();
+        if (!d.recent.length) rb.append(el('tr', {}, el('td', {colspan: 5, class: 'empty', text: 'Nothing blocked yet.'})));
+        for (const r of d.recent) {
+            const al = el('button', {class: 'btn btn-secondary btn-sm', type: 'button', text: 'Allow this domain'});
+            al.addEventListener('click', () => act('allowing ' + r.domain, () => req('POST', '/allow', {kind: 'domain', pattern: r.domain, description: 'allowed from the blocked list'})));
+            rb.append(el('tr', {}, el('td', {class: 'mono', text: r.domain}), el('td', {text: r.list}), el('td', {class: 'num', text: fmt(r.hits)}), el('td', {text: when(r.last_seen)}), el('td', {}, al)));
+        }
+    }
+
+    async function loadLog() {
+        const f = $('#dnsf-log-form');
+        const q = new URLSearchParams();
+        if (f.q.value) q.set('q', f.q.value);
+        if (f.blocked.value) q.set('blocked', f.blocked.value);
+        const j = await (await fetch(api + '/log?' + q, {credentials: 'same-origin'})).json();
+        const tb = $('#dnsf-log tbody'); tb.replaceChildren();
+        $('#dnsf-log-note').textContent = (document.querySelector('input[name=log_queries]') && !document.querySelector('input[name=log_queries]').checked)
+            ? 'The query log is off: tick "Log queries" in the DNS service card above and save. Blocked names are counted either way.' : '';
+        if (!j.rows || !j.rows.length) tb.append(el('tr', {}, el('td', {colspan: 6, class: 'empty', text: 'No queries logged.'})));
+        for (const r of (j.rows || [])) {
+            const b = el('button', {class: 'btn btn-danger btn-sm', type: 'button', text: 'Block this domain'});
+            const bl = !!r.blocked_by;
+            b.addEventListener('click', () => act('blocking ' + r.qname, async () => {
+                const x = await fetch('/api/dns/blocklist', {method: 'POST', credentials: 'same-origin', headers: {'content-type': 'application/json'}, body: JSON.stringify({domain: r.qname, description: 'blocked from the query log'})});
+                if (!x.ok) { let m = 'HTTP ' + x.status; try { m = (await x.json()).error || m; } catch (_) {} throw new Error(m); }
+            }));
+            const a = el('button', {class: 'btn btn-secondary btn-sm', type: 'button', text: 'Allow this domain'});
+            a.addEventListener('click', () => act('allowing ' + r.qname, () => req('POST', '/allow', {kind: 'domain', pattern: r.qname, description: 'allowed from the query log'})));
+            tb.append(el('tr', {}, el('td', {text: when(r.ts)}), el('td', {class: 'mono', text: r.client}), el('td', {class: 'mono', text: r.qname}), el('td', {text: r.qtype}),
+                el('td', {text: bl ? 'blocked by ' + r.blocked_by : r.rcode}), el('td', {}, el('div', {class: 'dnsf-row-actions'}, bl ? a : b))));
+        }
+    }
+
+    async function load() { data = await req('GET', ''); render(); await loadLog(); }
+
+    $('#dnsf-settings').addEventListener('submit', (ev) => { ev.preventDefault(); const f = ev.target;
+        act('saving the filter settings', () => req('PUT', '/settings', {refresh_hours: Number(f.refresh_hours.value), max_domains: Number(f.max_domains.value)})); });
+    $('#dnsf-refresh-all').addEventListener('click', () => act('refreshing every list', () => req('POST', '/refresh', {})));
+    $('#dnsf-custom').addEventListener('submit', (ev) => { ev.preventDefault(); const f = ev.target;
+        act('adding ' + f.elements['name'].value, () => req('POST', '/lists', {name: f.elements['name'].value, url: f.url.value, format: f.format.value, subdomains: f.subdomains.value === 'true'})); });
+    $('#dnsf-allow-form').addEventListener('submit', (ev) => { ev.preventDefault(); const f = ev.target;
+        act('allowing ' + f.pattern.value, () => req('POST', '/allow', {kind: f.kind.value, pattern: f.pattern.value, description: f.description.value || undefined})); });
+    $('#dnsf-log-form').addEventListener('submit', (ev) => { ev.preventDefault(); loadLog(); });
+    $('#dnsf-log-clear').addEventListener('click', () => { if (confirm('Clear the query log?')) act('clearing the log', () => req('DELETE', '/log')); });
+    load().catch((e) => say('Could not load the filter lists: ' + e.message, true));
+    setInterval(() => { if (!document.hidden) load().catch(() => {}); }, 30000);
+})();
+</script>

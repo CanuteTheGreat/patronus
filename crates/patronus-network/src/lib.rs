@@ -76,6 +76,8 @@ pub mod ipsec_rw;
 
 #[cfg(feature = "dns")]
 pub mod dns;
+#[cfg(feature = "dns")]
+pub mod dnsfilter;
 
 #[cfg(feature = "dns")]
 pub mod ddns;

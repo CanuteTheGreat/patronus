@@ -104,6 +104,13 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "traffic_daily",
     "system_events",
     "firewall_log",
+    // DNS filtering (lane d): per-list refresh status, blocked-answer counters, recent blocked
+    // names, the DNS query log and the tailer position are measured data
+    "dnsf_status",
+    "dnsf_hits",
+    "dnsf_recent",
+    "dnsf_querylog",
+    "dnsf_log_pos",
 ];
 
 /// Revisions kept by [`ConfigStore::snapshot`] (older ones are pruned).
