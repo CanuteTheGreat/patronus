@@ -182,6 +182,8 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     v.push(Arc::new(crate::igmp::IgmpSvc));
     #[cfg(feature = "mdns")]
     v.push(Arc::new(crate::mdns::MdnsSvc));
+    #[cfg(feature = "certs")]
+    v.push(Arc::new(crate::certs::CertsSvc));
     #[cfg(feature = "udp-relay")]
     v.push(Arc::new(crate::udprelay::UdpRelaySvc));
     #[cfg(feature = "nat64")]
@@ -278,6 +280,7 @@ pub fn find(slug: &str) -> Option<Arc<dyn Svc>> {
 
 /// Tables owned by the feature pages (for the lane undo snapshot).
 pub const SVC_TABLES: &[&str] = &[
+    "acme_certs",
     "syslog_targets",
     "igmp_interfaces",
     "mdns_interfaces",

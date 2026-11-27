@@ -192,6 +192,13 @@ impl Http01Store {
     }
 }
 
+/// The process-wide HTTP-01 store: patronus-web's port-80 listener answers
+/// from it and the issuing code (same process) fills it.
+pub fn global_http01() -> &'static Http01Store {
+    static G: std::sync::OnceLock<Http01Store> = std::sync::OnceLock::new();
+    G.get_or_init(Http01Store::default)
+}
+
 /// Result of a successful order.  The key and account credentials are secret.
 pub struct Issued {
     pub chain_pem: String,
@@ -402,6 +409,14 @@ pub enum RenewalState {
         days_ago: i64,
     },
     NotYetValid,
+}
+
+/// Expiry (unix seconds) of the first certificate in a PEM chain.
+pub fn not_after(cert_pem: &str) -> Result<i64, AcmeError> {
+    let (_, p) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes())
+        .map_err(|e| AcmeError::Cert(format!("bad PEM: {e}")))?;
+    let cert = p.parse_x509().map_err(|e| AcmeError::Cert(format!("bad certificate: {e}")))?;
+    Ok(cert.validity().not_after.timestamp())
 }
 
 pub fn renewal_state(

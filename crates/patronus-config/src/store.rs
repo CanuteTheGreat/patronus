@@ -77,6 +77,8 @@ impl RuleOrigin {
 const KEEP_WHEN_ABSENT: &[&str] = &["web_users"];
 
 const NON_CONFIG_TABLES: &[&str] = &[
+    // certificate manager: what the last ACME attempt did (one row per certificate)
+    "acme_status",
     "schema_migrations",
     "config_revisions",
     "audit_log",

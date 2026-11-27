@@ -106,6 +106,8 @@ pub mod netflow;
 
 #[cfg(feature = "igmp")]
 pub mod igmp;
+#[cfg(feature = "certs")]
+pub mod certs;
 #[cfg(feature = "mdns")]
 pub mod mdns;
 #[cfg(feature = "udp-relay")]

@@ -34,6 +34,8 @@ syslog = []
 netflow = []
 igmp = []
 mdns = []
+# certificate manager: ACME client (HTTP-01, DNS-01 Cloudflare / RFC 2136) + renewal
+certs = ["dep:patronus-security"]
 # UDP broadcast relay: built-in engine (`patronus udp-relay run`), no external daemon
 udp-relay = []
 nat64 = []
@@ -65,6 +67,7 @@ tempfile = "3.10"
 [dependencies]
 patronus-core = { path = "../patronus-core" }
 patronus-config = { path = "../patronus-config" }
+patronus-security = { path = "../patronus-security", optional = true }
 tokio.workspace = true
 async-trait.workspace = true
 serde.workspace = true

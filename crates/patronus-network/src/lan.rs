@@ -55,6 +55,7 @@ pub const LAN_TABLES: &[&str] = &[
     "syslog_targets",
     "igmp_interfaces",
     "mdns_interfaces",
+    "acme_certs",
     "udp_relay_rules",
     "l2tp_users",
     "proxy_blocked",

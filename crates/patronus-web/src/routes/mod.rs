@@ -419,6 +419,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "netflow",
         "igmp",
         "mdns",
+        "certs",
         "udp-relay",
         "nat64",
         "upnp",
@@ -573,6 +574,7 @@ pub fn absent_features(
         ("netflow", "NetFlow export"),
         ("igmp", "IGMP proxy"),
         ("mdns", "mDNS repeater (device discovery across networks)"),
+        ("certs", "Certificates (ACME)"),
         (
             "udp-relay",
             "UDP broadcast relay (discovery across segments)",
