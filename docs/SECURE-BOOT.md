@@ -21,7 +21,7 @@ files in lockdown, so with Secure Boot on the boot menu is the plain text menu (
 The project certificate: `O=Errant Solutions, CN=Errant Solutions Secure Boot Signing 2026`,
 SHA-256 fingerprint `3A:01:89:A4:34:1D:94:13:63:03:E2:51:26:EB:6A:64:4D:C0:E6:84:9A:CE:8C:EC:E7:E8:AC:17:D2:5E:E0:CE`.
 It ships on every medium as `ENROLL_THIS_KEY_IN_MOKMANAGER.cer` and in the source tree as
-`build/live-iso/common/boot/secureboot/signing.crt`. Patronus and Horcrux use the same certificate, so enrolling it once
+`gentoo/live-iso/common/boot/secureboot/signing.crt`. Patronus and Horcrux use the same certificate, so enrolling it once
 covers both.
 
 ## First boot of the ISO with Secure Boot on (one time)
@@ -47,8 +47,8 @@ The installer (`liveinst/secureboot.py`) puts the same chain on the ESP (`EFI/BO
 `mmx64.efi`, `grub.cfg` that finds `/boot` by UUID) whenever the image is signed and the machine boots UEFI. The kernel and
 modules it copies are already signed, so the installed system boots with Secure Boot on right away.
 
-For **updates** it creates a **machine key** in `/etc/patronus/secureboot/` (`machine.key` is readable by root and
-the `portage` group only), and points Portage at it:
+For **updates** it creates a **machine key** in `/etc/secureboot/` (`machine.key` is readable by root and the `portage`
+group only, and kept out of product configuration backups), and points Portage at it:
 
 * `/etc/portage/package.use/zz-secureboot`: `secureboot` on the kernel packages (secureboot.eclass signs each new kernel
   image), `modules-sign` on every out-of-tree module package (linux-mod-r1 signs zfs etc. when they are rebuilt);
@@ -57,7 +57,7 @@ the `portage` group only), and points Portage at it:
 The machine certificate is queued with `mokutil --import`. **At the first reboot after the install MokManager appears once**
 (blue screen, "Perform MOK management"): choose **Enroll MOK**, **Continue**, **Yes**, type the **MOK password** shown on
 the installer's last page, then **Reboot**. Skipping it is safe: the system still boots the project-signed kernel, a kernel
-install prints a warning while the key is not enrolled, and `mokutil --import /etc/patronus/secureboot/machine.der` queues
+install prints a warning while the key is not enrolled, and `mokutil --import /etc/secureboot/machine.der` queues
 it again. Boot environments keep older kernels as automatic fallbacks.
 
 Multi-disk ZFS installs copy the signed ESP files to every disk (`horcrux-boot-sync`), each pointing at its own `/boot` copy.
