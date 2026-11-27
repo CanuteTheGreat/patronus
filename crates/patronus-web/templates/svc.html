@@ -246,6 +246,61 @@
         }
         renderStatus(d.status);
         if (SLUG === 'revproxy') revproxyExtras(d);
+        if (SLUG === 'tftp') tftpFiles();
+    }
+    async function tftpFiles() {
+        let box = document.getElementById('tftp-files');
+        if (!box) {
+            box = document.createElement('div'); box.id = 'tftp-files'; box.className = 'card';
+            document.getElementById('svc-status-card').before(box);
+        }
+        box.textContent = '';
+        const h = document.createElement('div'); h.className = 'card-header';
+        const h2 = document.createElement('h2'); h2.className = 'card-title'; h2.textContent = 'Files in the root directory'; h.appendChild(h2); box.appendChild(h);
+        const r = await api('POST', '/api/svc/tftp/action/files', {});
+        if (!r) return;
+        const p0 = document.createElement('p'); p0.className = 'svc-help'; p0.id = 'tftp-root'; p0.textContent = r.root + (r.exists ? '' : ' (does not exist yet: it is created when the server is switched on)'); box.appendChild(p0);
+        const t = document.createElement('table'); t.className = 'lan'; t.id = 'tftp-files-table';
+        const head = document.createElement('tr');
+        for (const x of ['Name', 'Size (bytes)', 'Modified', '']) { const th = document.createElement('th'); th.textContent = x; head.appendChild(th); }
+        t.appendChild(head);
+        for (const f of r.files) {
+            const tr = document.createElement('tr'); tr.dataset.name = f.name;
+            const c1 = document.createElement('td'); c1.textContent = f.name; tr.appendChild(c1);
+            const c2 = document.createElement('td'); c2.textContent = String(f.size); tr.appendChild(c2);
+            const c3 = document.createElement('td'); c3.textContent = new Date(f.modified * 1000).toLocaleString(); tr.appendChild(c3);
+            const c4 = document.createElement('td');
+            if (CAN_MODIFY) {
+                const db = document.createElement('button'); db.className = 'btn btn-sm btn-danger'; db.textContent = 'Delete';
+                db.setAttribute('aria-label', 'Delete ' + f.name);
+                db.onclick = async () => { if (confirm('Delete ' + f.name + '?') && await api('POST', '/api/svc/tftp/action/delete', {name: f.name})) tftpFiles(); };
+                c4.appendChild(db);
+            }
+            tr.appendChild(c4); t.appendChild(tr);
+        }
+        const scroll = document.createElement('div'); scroll.className = 'svc-scroll'; scroll.tabIndex = 0; scroll.setAttribute('role', 'region'); scroll.setAttribute('aria-label', 'Files in the root directory');
+        scroll.appendChild(t); box.appendChild(scroll);
+        if (!r.files.length) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'No files yet.'; box.appendChild(p); }
+        if (r.truncated) { const p = document.createElement('p'); p.className = 'svc-help'; p.textContent = 'Only the first files are listed.'; box.appendChild(p); }
+        if (!CAN_MODIFY) return;
+        const form = document.createElement('form'); form.className = 'lan-form'; form.id = 'tftp-upload-form';
+        const fi = document.createElement('input'); fi.type = 'file'; fi.name = 'file'; fi.required = true;
+        form.appendChild(labelFor({label: 'File to put in the root directory', help: 'at most the upload limit above; the name is kept (letters, digits and . _ + - only)'}, fi));
+        const nm = document.createElement('input'); nm.type = 'text'; nm.name = 'name';
+        form.appendChild(labelFor({label: 'Store as (optional)', help: 'a different name, or a folder such as grub/x86_64/grub.cfg'}, nm));
+        const ow = document.createElement('input'); ow.type = 'checkbox'; ow.name = 'replace';
+        form.appendChild(labelFor({label: 'Replace a file of the same name'}, ow));
+        const b = document.createElement('button'); b.className = 'btn btn-primary btn-sm'; b.type = 'submit'; b.textContent = 'Upload file'; form.appendChild(b);
+        form.onsubmit = async (ev) => {
+            ev.preventDefault();
+            const file = fi.files[0]; if (!file) return false;
+            const buf = new Uint8Array(await file.arrayBuffer());
+            let bin = ''; for (let i = 0; i < buf.length; i += 8192) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 8192));
+            const res = await api('POST', '/api/svc/tftp/action/upload', {name: nm.value.trim() || file.name, data: btoa(bin), overwrite: ow.checked});
+            if (res) tftpFiles();
+            return false;
+        };
+        box.appendChild(form);
     }
     async function revproxyExtras(d) {
         let box = document.getElementById('rp-problems');

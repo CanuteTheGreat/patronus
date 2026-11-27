@@ -205,6 +205,12 @@ enum Commands {
         action: GuestCommands,
     },
 
+    /// TFTP server (USE=tftp)
+    Tftp {
+        #[command(subcommand)]
+        action: TftpCommands,
+    },
+
     /// UDP broadcast relay (USE=udp-relay)
     UdpRelay {
         #[command(subcommand)]
@@ -435,6 +441,21 @@ pub enum GuestCommands {
     Vouchers,
     /// Delete a voucher by id
     VoucherDelete { id: i64 },
+}
+
+#[derive(Subcommand)]
+enum TftpCommands {
+    /// Run the server (what the patronus-daemon@tftp service does)
+    Run {
+        /// Generated server configuration (JSON)
+        #[arg(long)]
+        conf: PathBuf,
+        /// Where to write the counters (JSON), refreshed every 2 s
+        #[arg(long)]
+        stats: Option<PathBuf>,
+    },
+    /// Print the configuration the server would run with, from the store
+    Show,
 }
 
 #[derive(Subcommand)]
@@ -783,6 +804,10 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "guest")]
         Commands::Guest { action } => {
             commands::guest::run(action, cli.db).await?;
+        }
+
+        Commands::Tftp { action } => {
+            commands::tftp::run(action, cli.db).await?;
         }
 
         Commands::UdpRelay { action } => {

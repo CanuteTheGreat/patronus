@@ -164,6 +164,7 @@ fn svc_appliers(spec: &patronus_network::svc::Spec) -> Vec<&'static str> {
         spec.slug,
         "igmp"
             | "mdns"
+            | "tftp"
             | "nat64"
             | "l2tp"
             | "upnp"

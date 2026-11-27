@@ -111,6 +111,8 @@ pub mod igmp;
 pub mod mdns;
 #[cfg(feature = "udp-relay")]
 pub mod udprelay;
+#[cfg(feature = "tftp")]
+pub mod tftp;
 
 #[cfg(feature = "nat64")]
 pub mod nat64;

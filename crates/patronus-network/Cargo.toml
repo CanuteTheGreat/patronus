@@ -36,6 +36,8 @@ igmp = []
 mdns = []
 # UDP broadcast relay: built-in engine (`patronus udp-relay run`), no external daemon
 udp-relay = []
+# TFTP server: built-in engine (`patronus tftp run`), no external daemon
+tftp = []
 nat64 = []
 l2tp = []
 upnp = []

@@ -184,6 +184,8 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     v.push(Arc::new(crate::mdns::MdnsSvc));
     #[cfg(feature = "udp-relay")]
     v.push(Arc::new(crate::udprelay::UdpRelaySvc));
+    #[cfg(feature = "tftp")]
+    v.push(Arc::new(crate::tftp::TftpSvc));
     #[cfg(feature = "nat64")]
     v.push(Arc::new(crate::nat64::Nat64Svc));
     #[cfg(feature = "l2tp")]
@@ -282,6 +284,7 @@ pub const SVC_TABLES: &[&str] = &[
     "igmp_interfaces",
     "mdns_interfaces",
     "udp_relay_rules",
+    "tftp_clients",
     "l2tp_users",
     "proxy_blocked",
     "vrf_instances",
