@@ -868,6 +868,14 @@ mod tests {
             internet_gw: String::new(),
             dhcp_leases: None,
             iface_rows: vec![],
+            widgets: crate::dashboard::all_on(crate::dashboard::Viewer {
+                role: crate::auth::UserRole::Admin,
+                access_point: false,
+            }),
+            hidden_widgets: vec![],
+            layout_json: "{\"widgets\":[]}".to_string(),
+            refresh_seconds: 0,
+            customized: false,
             traffic: vec![],
             uplinks: vec![
                 DashUplink {
@@ -1018,8 +1026,6 @@ mod tests {
             layout_json: "{\"widgets\":[]}".to_string(),
             refresh_seconds: 0,
             customized: false,
-            uplinks: vec![],
-            uplink_events: vec![],
             traffic: vec![DashTraffic {
                 name: "enp0s1".into(),
                 rx: "1.5 KB/s".into(),
