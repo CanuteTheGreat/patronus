@@ -925,7 +925,10 @@ mod tests {
             f.contains("input iifname \"eth1\" ip saddr { 10.9.0.0/24 } udp dport { 6969, 50000-50010 } accept"),
             "{f}"
         );
-        assert!(!f.contains("10.8.0.0") && !f.contains("drop") && !f.contains("bad"), "{f}");
+        assert!(
+            !f.contains("10.8.0.0") && !f.contains("drop") && !f.contains("bad"),
+            "{f}"
+        );
         put(&s, "tftp.enabled", "0").await;
         assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
     }

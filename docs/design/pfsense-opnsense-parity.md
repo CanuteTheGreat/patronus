@@ -129,7 +129,7 @@ Status words: **present** = in the shipped binary, reachable from API/UI, covere
 | SNMP | yes | present |
 | PPPoE server | none | missing |
 | LLDP | none | missing |
-| TFTP server | none | missing (low) |
+| TFTP server | built-in engine (`tftp` Svc, lane-j-tftp, docs/TFTP.md) | present |
 | Monit-style service watchdog with alerts | supervise + notifications | partial |
 | IDS/IPS (Suricata inline, rule sets, policies) | Suricata IDS/IPS via NFQUEUE, own rules + optional `suricata-update` rules (lane-j-ids) | partial: no rule-set manager (ET Open/Abuse.ch/PT feeds selectable + scheduled download), no per-category policy (alert/drop), no alert browser with suppress/threshold |
 | Web proxy (Squid), transparent | yes (lane-n-proxy) | present |

@@ -230,6 +230,16 @@ is masked so busybox owns `/dev/log`; journald keeps a 1 MiB volatile journal an
 not forward kernel messages, so klogd runs on both. The web UI's log viewer (`/monitoring`, `$PATRONUS_SYSLOG`) and
 patronus-guard's revert log read that file. Cost: a few KiB of squashfs (o5 -> o6: +4 KiB); the NOR free space is unchanged (2304 / 448 KiB).
 
+TFTP server (feature `tftp`, AX1800 image only): the built-in engine of `patronus-cli` (docs/TFTP.md) runs as `patronus-cli tftp run`
+under the same multiplexed `patronus-daemon` service as on the standard tier (OpenRC script and systemd template come from the
+ebuild's files, `assemble.sh` installs both), as the `nobody` account with only the net-bind and raw-socket capabilities.
+It is read only by default and serves the LAN after the owner switches it on (boot images, firmware and configuration for the
+network's other devices). The QEMU gate (`qemu-gate.sh`) serves the loopback device and fetches with busybox `tftp` (the image's own
+client) on both inits, byte for byte, with a block size, refuses `../` names and uploads, and checks it again after the reboot.
+The Slate image is not changed by this feature: its CLI feature set is minimal and its NOR image is size-budgeted
+(`nor-budget.sh`), and its QEMU gate only runs on the lab rotation, so carrying the engine there needs a measured budget
+decision first (the page lists "TFTP server" under the unit's absent features).
+
 OpenRC itself costs about 0.37 MiB xz (openrc-init, supervise-daemon, librc/libeinfo, libcap) and no resident memory beyond the
 `supervise-daemon` per service (about 1 MB each, mostly shared); the rest of the RAM difference to p7 is the newer, larger binary
 (PAM, multi-call). What closed the NOR gap: no embedded recovery root on NOR, 1 MiB xz blocks for the NOR root (-5.5 %), the
@@ -567,7 +577,7 @@ on both. First real-unit install 2026-11-16 (OpenRC, from OpenWrt 25.12.6, as a 
   comes from Alpine packages (`stage-rootfs.sh`: busybox, hostapd, iw, iproute2, dropbear, mtd-utils UBI tools, nftables, PAM,
   wireless-regdb, libucontext and libmount for systemd); `patronus-cli` is one multi-call binary (`patronus-web` is a link)
   built with the stable toolchain for `aarch64-unknown-linux-musl` (14 MB stripped, features
-  `nftables,cli,dhcp-server,dns-server,uci-import,wifi-ap,web-multicall,vpn-wireguard,ntp-server,syslog`; 12.10).
+  `nftables,cli,dhcp-server,dns-server,uci-import,wifi-ap,web-multicall,vpn-wireguard,ntp-server,syslog,tftp`; 12.10).
 - OpenRC is built from source (`stage-openrc.sh`, 0.63.2, sha256-pinned): Alpine's package is built for busybox init and has
   no `openrc-init`/`openrc-shutdown`, so it cannot be PID 1. systemd 262.2 is built as for the Slate (`stage-systemd.sh`).
   systemd `dlopen()`s libmount to mount the API filesystems: without `libmount.so.1` PID 1 freezes with "Failed to mangle

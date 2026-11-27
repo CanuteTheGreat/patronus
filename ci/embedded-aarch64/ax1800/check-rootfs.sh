@@ -56,6 +56,14 @@ if has_feature vpn-wireguard; then
   [ -e "$R/lib/modules/$KV/wireguard.ko" ] || fail "vpn-wireguard: kernel module wireguard.ko missing (kmods.pin)"
   grep -qsx wireguard "$R"/etc/modules.d/* || fail "vpn-wireguard: wireguard.ko is not loaded at boot (no /etc/modules.d line)"
 fi
+if has_feature tftp; then
+  # the TFTP server is `patronus-cli tftp run` under the multiplexed daemon service of the init system in the image
+  case "$(cat "$R/etc/patronus-init" 2>/dev/null)" in
+    INIT=openrc) [ -x "$R/etc/init.d/patronus-daemon" ] || fail "tftp: no /etc/init.d/patronus-daemon (the TFTP server could not start)";;
+    INIT=systemd) [ -e "$R/usr/lib/systemd/system/patronus-daemon@.service" ] || fail "tftp: no patronus-daemon@.service (the TFTP server could not start)";;
+  esac
+  grep -q '^nobody:' "$R/etc/passwd" || fail "tftp: no nobody account to drop to"
+fi
 if has_feature syslog; then
   [ -x "$R/usr/libexec/patronus/syslogd" ] || fail "syslog: no /usr/libexec/patronus/syslogd (the Syslog page's busybox backend: remote collectors -> syslogd -R)"
   grep -q /usr/libexec/patronus/syslogd "$R/etc/init.d/patronus-syslogd" "$R/etc/systemd/system/patronus-syslogd.service" 2>/dev/null || fail "syslog: patronus-syslogd does not run the launcher (remote collectors would be ignored)"

@@ -231,10 +231,7 @@ pub async fn load(store: &ConfigStore) -> Result<TftpConf> {
     let port = s.n("port") as u16;
     let data_ports = svc::parse_ports(&s.s("data_ports"))
         .map_err(|e| invalid(format!("TFTP data ports: {e}")))?;
-    let width: u64 = data_ports
-        .iter()
-        .map(|&(a, b)| (b - a) as u64 + 1)
-        .sum();
+    let width: u64 = data_ports.iter().map(|&(a, b)| (b - a) as u64 + 1).sum();
     let max_sessions = s.n("max_sessions") as u32;
     if width < max_sessions as u64 {
         return Err(invalid(format!(
@@ -308,7 +305,11 @@ impl TftpApplier {
         Self { sup, bin }
     }
     fn patronus(&self) -> Option<PathBuf> {
-        self.bin.clone().or_else(|| which("patronus"))
+        // the router tier ships the multi-call binary as `patronus-cli` only
+        self.bin
+            .clone()
+            .or_else(|| which("patronus"))
+            .or_else(|| which("patronus-cli"))
     }
     fn conf_path(&self) -> PathBuf {
         self.sup.paths.state_dir.join("tftp.json")
@@ -478,7 +479,7 @@ pub mod files {
     /// `a/b/c.bin` -> parts, at most three, each valid.
     pub fn parts(name: &str) -> Result<Vec<String>> {
         let ps: Vec<String> = name
-            .trim()
+            
             .trim_start_matches('/')
             .split('/')
             .map(String::from)
@@ -560,7 +561,10 @@ pub mod files {
         let ps = parts(name)?;
         if !root.is_dir() {
             std::fs::create_dir_all(root).map_err(|e| {
-                Error::Service(format!("create {}: {e} (enable the server once)", root.display()))
+                Error::Service(format!(
+                    "create {}: {e} (enable the server once)",
+                    root.display()
+                ))
             })?;
         }
         no_symlinks(root, &ps)?;
@@ -593,12 +597,10 @@ pub mod files {
                 .mode(0o644)
                 .open(&tmp)
                 .map_err(|e| Error::Service(format!("write {}: {e}", tmp.display())))?;
-            f.write_all(data)
-                .and_then(|_| f.sync_all())
-                .map_err(|e| {
-                    let _ = std::fs::remove_file(&tmp);
-                    Error::Service(format!("write {}: {e}", tmp.display()))
-                })?;
+            f.write_all(data).and_then(|_| f.sync_all()).map_err(|e| {
+                let _ = std::fs::remove_file(&tmp);
+                Error::Service(format!("write {}: {e}", tmp.display()))
+            })?;
         }
         let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644));
         std::fs::rename(&tmp, &target).map_err(|e| {
@@ -669,7 +671,7 @@ pub mod proto {
             return Err("unterminated request");
         }
         let fields: Vec<&[u8]> = body[..body.len() - 1].split(|&b| b == 0).collect();
-        if fields.len() < 2 || fields.len() % 2 != 0 || fields.len() > 2 + 2 * 8 {
+        if fields.len() < 2 || !fields.len().is_multiple_of(2) || fields.len() > 2 + 2 * 8 {
             return Err("malformed request");
         }
         let text = |b: &[u8]| String::from_utf8(b.to_vec()).map_err(|_| "name is not UTF-8");
@@ -1062,7 +1064,13 @@ pub mod engine {
 
         /// Send `pkt`, then wait for the answer `want` (ACK of `block` or DATA
         /// `block`), resending on silence. Packets from other ports get ERROR 5.
-        fn exchange(&self, pkt: &[u8], block: u16, data: bool, buf: &mut [u8]) -> Result<Wait, String> {
+        fn exchange(
+            &self,
+            pkt: &[u8],
+            block: u16,
+            data: bool,
+            buf: &mut [u8],
+        ) -> Result<Wait, String> {
             for _ in 0..=self.retries {
                 self.send(pkt);
                 let deadline = Instant::now() + self.timeout;
@@ -1071,7 +1079,9 @@ pub mod engine {
                     if left.is_zero() {
                         break;
                     }
-                    let _ = self.sock.set_read_timeout(Some(left.max(Duration::from_millis(1))));
+                    let _ = self
+                        .sock
+                        .set_read_timeout(Some(left.max(Duration::from_millis(1))));
                     match self.sock.recv_from(buf) {
                         Ok((n, from)) => {
                             if from != SocketAddr::V4(self.peer) {
@@ -1090,16 +1100,21 @@ pub mod engine {
                                     .to_string();
                                     return Err(format!("client error: {msg:?}"));
                                 }
-                                Some(proto::ACK) if !data && n >= 4 => {
-                                    if u16::from_be_bytes([p[2], p[3]]) == block {
-                                        return Ok(Wait::Ack);
-                                    }
-                                    // an old duplicate ACK: ignore it (resending would double the data)
+                                // an old duplicate ACK or DATA falls through: resending on it would
+                                // double the data (the sorcerer's apprentice bug)
+                                Some(proto::ACK)
+                                    if !data
+                                        && n >= 4
+                                        && u16::from_be_bytes([p[2], p[3]]) == block =>
+                                {
+                                    return Ok(Wait::Ack);
                                 }
-                                Some(proto::DATA) if data && n >= 4 => {
-                                    if u16::from_be_bytes([p[2], p[3]]) == block {
-                                        return Ok(Wait::Data(p[4..].to_vec()));
-                                    }
+                                Some(proto::DATA)
+                                    if data
+                                        && n >= 4
+                                        && u16::from_be_bytes([p[2], p[3]]) == block =>
+                                {
+                                    return Ok(Wait::Data(p[4..].to_vec()));
                                 }
                                 _ => {}
                             }
@@ -1155,8 +1170,13 @@ pub mod engine {
     }
 
     fn serve_read(ctx: &Ctx, base: &Session, req: &Request, rel: &str) -> Outcome {
-        let fd = open_beneath(ctx.root.as_raw_fd(), rel, libc::O_RDONLY | libc::O_NONBLOCK, 0)
-            .map_err(refuse_io)?;
+        let fd = open_beneath(
+            ctx.root.as_raw_fd(),
+            rel,
+            libc::O_RDONLY | libc::O_NONBLOCK,
+            0,
+        )
+        .map_err(refuse_io)?;
         let size = fstat_regular(fd.as_raw_fd()).map_err(refuse_io)?;
         let mut file = File::from(fd);
         let neg = proto::negotiate(&req.opts, ctx.conf.blksize_max, Some(size));
@@ -1290,7 +1310,10 @@ pub mod engine {
                 Err(e) => break Err(e),
             };
             if payload.len() > neg.blksize {
-                sess.send(&proto::error(proto::E_ILLEGAL, "Block larger than negotiated"));
+                sess.send(&proto::error(
+                    proto::E_ILLEGAL,
+                    "Block larger than negotiated",
+                ));
                 break Err("block larger than negotiated".into());
             }
             total += payload.len() as u64;
@@ -1319,7 +1342,7 @@ pub mod engine {
         }
         // publish before the final ACK: the client must not see success for a
         // file that was not stored
-        let published = file.sync_all().map_err(|e| e).and_then(|_| {
+        let published = file.sync_all().and_then(|_| {
             drop(file);
             if ctx.conf.overwrite {
                 let rc = unsafe { libc::renameat(dfd, c_tmp.as_ptr(), dfd, c_leaf.as_ptr()) };
@@ -1446,7 +1469,9 @@ pub mod engine {
                 }
                 Err(_) => continue,
             };
-            let SocketAddr::V4(client) = from else { continue };
+            let SocketAddr::V4(client) = from else {
+                continue;
+            };
             let req = match proto::parse_request(&buf[..n]) {
                 Ok(r) => r,
                 Err(_) => {
@@ -1490,13 +1515,8 @@ pub mod engine {
             for k in want.iter() {
                 if !live.contains_key(k) {
                     let stop = Arc::new(AtomicBool::new(false));
-                    let (c2, s2, d, a, p) = (
-                        ctx.clone(),
-                        stop.clone(),
-                        k.0.clone(),
-                        k.1,
-                        ctx.conf.port,
-                    );
+                    let (c2, s2, d, a, p) =
+                        (ctx.clone(), stop.clone(), k.0.clone(), k.1, ctx.conf.port);
                     if std::thread::Builder::new()
                         .spawn(move || listener(c2, d, a, s2, p))
                         .is_ok()
@@ -1544,7 +1564,10 @@ pub mod engine {
             .ok_or_else(|| format!("account {user:?} does not exist"))?;
         unsafe {
             if libc::prctl(libc::PR_SET_KEEPCAPS, 1, 0, 0, 0) < 0 {
-                return Err(format!("PR_SET_KEEPCAPS: {}", std::io::Error::last_os_error()));
+                return Err(format!(
+                    "PR_SET_KEEPCAPS: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
             if libc::setgroups(0, std::ptr::null()) < 0 {
                 return Err(format!("setgroups: {}", std::io::Error::last_os_error()));
@@ -1631,10 +1654,10 @@ pub mod engine {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::result::Result;
     use crate::supervise::{InitMode, NetPaths};
     use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
     use std::sync::atomic::{AtomicU16, Ordering};
@@ -1711,15 +1734,23 @@ mod tests {
             assert!(svc::save_row(&s, c, None, &bad).await.is_err(), "{bad}");
         }
         TftpSvc
-            .put(&s, &json!({"enabled": true, "interfaces": "eth1", "root": "/srv/tftp-test"}))
+            .put(
+                &s,
+                &json!({"enabled": true, "interfaces": "eth1", "root": "/srv/tftp-test"}),
+            )
             .await
             .unwrap();
         svc::save_row(&s, c, None, &json!({"cidr": "10.9.0.0/24"}))
             .await
             .unwrap();
-        svc::save_row(&s, c, None, &json!({"cidr": "10.8.0.1/32", "enabled": false}))
-            .await
-            .unwrap();
+        svc::save_row(
+            &s,
+            c,
+            None,
+            &json!({"cidr": "10.8.0.1/32", "enabled": false}),
+        )
+        .await
+        .unwrap();
         assert!(
             svc::save_row(&s, c, None, &json!({"cidr": "10.9.0.0/24"}))
                 .await
@@ -1730,16 +1761,22 @@ mod tests {
         assert_eq!(conf.port, 69);
         assert_eq!(conf.listen, vec!["eth1"]);
         assert!(!conf.allow_write && !conf.overwrite);
-        assert_eq!(conf.clients, vec!["10.9.0.0/24"], "disabled rows are left out");
+        assert_eq!(
+            conf.clients,
+            vec!["10.9.0.0/24"],
+            "disabled rows are left out"
+        );
         assert_eq!(conf.data_ports, vec![(49152, 49407)]);
         assert_eq!(conf.run_as, "nobody");
         let r = a.render(&s).await.unwrap();
-        let back: TftpConf =
-            serde_json::from_str(r.trim_start_matches("## tftp.json\n")).unwrap();
+        let back: TftpConf = serde_json::from_str(r.trim_start_matches("## tftp.json\n")).unwrap();
         assert_eq!(back, conf);
         // cross-field checks at apply time
         TftpSvc
-            .put(&s, &json!({"max_sessions": 256, "data_ports": "50000-50009"}))
+            .put(
+                &s,
+                &json!({"max_sessions": 256, "data_ports": "50000-50009"}),
+            )
             .await
             .unwrap();
         let e = load(&s).await.unwrap_err().to_string();
@@ -1792,7 +1829,21 @@ mod tests {
             vec![0, 3, 0, 1, 0],
             rrq("a", "octet", &[])[..6].to_vec(), // not terminated
             rrq("", "octet", &[]),
-            rrq("a", "octet", &[("blksize", "8"), ("x", "1"), ("y", "1"), ("z", "1"), ("a", "1"), ("b", "1"), ("c", "1"), ("d", "1"), ("e", "1")]),
+            rrq(
+                "a",
+                "octet",
+                &[
+                    ("blksize", "8"),
+                    ("x", "1"),
+                    ("y", "1"),
+                    ("z", "1"),
+                    ("a", "1"),
+                    ("b", "1"),
+                    ("c", "1"),
+                    ("d", "1"),
+                    ("e", "1"),
+                ],
+            ),
             vec![0, 1, b'a', 0, b'o', 0, b'x', 0], // option without a value
             vec![0, 1, 0xff, 0xfe, 0, b'o', 0],
         ] {
@@ -1827,18 +1878,35 @@ mod tests {
     #[test]
     fn options_are_negotiated_within_the_limits() {
         let o = |v: &[(&str, &str)]| -> Vec<(String, String)> {
-            v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
+            v.iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect()
         };
         let n = proto::negotiate(&o(&[("blksize", "8192"), ("tsize", "0")]), 1468, Some(1000));
         assert_eq!(n.blksize, 1468);
         assert_eq!(n.reply, o(&[("blksize", "1468"), ("tsize", "1000")]));
-        let n = proto::negotiate(&o(&[("blksize", "1024"), ("timeout", "200"), ("windowsize", "8")]), 1468, None);
+        let n = proto::negotiate(
+            &o(&[("blksize", "1024"), ("timeout", "200"), ("windowsize", "8")]),
+            1468,
+            None,
+        );
         assert_eq!(n.blksize, 1024);
         assert_eq!(n.timeout_secs, Some(60));
-        assert_eq!(n.reply, o(&[("blksize", "1024"), ("timeout", "60")]), "unknown options are dropped");
-        let n = proto::negotiate(&o(&[("blksize", "4"), ("timeout", "0"), ("tsize", "x")]), 1468, None);
+        assert_eq!(
+            n.reply,
+            o(&[("blksize", "1024"), ("timeout", "60")]),
+            "unknown options are dropped"
+        );
+        let n = proto::negotiate(
+            &o(&[("blksize", "4"), ("timeout", "0"), ("tsize", "x")]),
+            1468,
+            None,
+        );
         assert_eq!(n.blksize, 512);
-        assert!(n.reply.is_empty(), "invalid values are ignored: plain transfer");
+        assert!(
+            n.reply.is_empty(),
+            "invalid values are ignored: plain transfer"
+        );
         let n = proto::negotiate(&o(&[("tsize", "4096")]), 1468, None);
         assert_eq!(n.tsize_request, Some(4096));
         let n = proto::negotiate(&o(&[("blksize", "65535")]), 65464, None);
@@ -1864,10 +1932,22 @@ mod tests {
         let root = d.path().join("tftp");
         let v = files::upload(&root, "pxelinux.0", b"abc", false).unwrap();
         assert_eq!(v["size"], 3);
-        assert!(files::upload(&root, "pxelinux.0", b"x", false).is_err(), "exists");
+        assert!(
+            files::upload(&root, "pxelinux.0", b"x", false).is_err(),
+            "exists"
+        );
         files::upload(&root, "pxelinux.0", b"abcd", true).unwrap();
         files::upload(&root, "grub/x86_64/grub.cfg", b"cfg", false).unwrap();
-        for bad in ["../x", "/etc/passwd", ".x", "a/../b", "a b", "a;b", "", "a/b/c/d", "x\n"] {
+        for bad in [
+            "../x",
+            ".x",
+            "a/../b",
+            "a b",
+            "a;b",
+            "",
+            "a/b/c/d",
+            "x\n",
+        ] {
             assert!(files::upload(&root, bad, b"x", true).is_err(), "{bad:?}");
             assert!(files::delete(&root, bad).is_err(), "{bad:?}");
         }
@@ -2013,9 +2093,10 @@ mod tests {
     /// Minimal TFTP client: (data, OACK options) or (error code, message).
     fn get(port: u16, name: &str, opts: &[(&str, &str)]) -> Result<(Vec<u8>, Opts), (u16, String)> {
         let s = udp();
-        s.send_to(&rrq(name, "octet", opts), ("127.0.0.1", port)).unwrap();
+        s.send_to(&rrq(name, "octet", opts), ("127.0.0.1", port))
+            .unwrap();
         let mut out = Vec::new();
-        let mut oack = Vec::new();
+        let mut oack: Opts = Vec::new();
         let mut buf = vec![0u8; 70000];
         let mut tid: Option<SocketAddr> = None;
         let mut blk = 0u16;
@@ -2065,14 +2146,19 @@ mod tests {
         }
     }
 
-    fn put(port: u16, name: &str, data: &[u8], opts: &[(&str, &str)]) -> Result<Opts, (u16, String)> {
+    fn put(
+        port: u16,
+        name: &str,
+        data: &[u8],
+        opts: &[(&str, &str)],
+    ) -> Result<Opts, (u16, String)> {
         let s = udp();
         let mut w = rrq(name, "octet", opts);
         w[1] = 2;
         s.send_to(&w, ("127.0.0.1", port)).unwrap();
         let mut buf = vec![0u8; 70000];
         let (n, from) = s.recv_from(&mut buf).map_err(|e| (999, format!("{e}")))?;
-        let mut oack = Vec::new();
+        let mut oack: Opts = Vec::new();
         match proto::opcode(&buf[..n]).unwrap() {
             proto::ERROR => {
                 return Err((
@@ -2099,7 +2185,7 @@ mod tests {
             .unwrap_or(512);
         let mut block = 1u16;
         let mut chunks: Vec<&[u8]> = data.chunks(bs).collect();
-        if data.len() % bs == 0 {
+        if data.len().is_multiple_of(bs) {
             chunks.push(&[]);
         }
         for c in chunks {
@@ -2129,7 +2215,10 @@ mod tests {
     fn reads_work_for_every_size_and_option() {
         let Some(srv) = start(|_| {}) else { return };
         // sizes around block boundaries (512): empty, exact multiple, one over
-        for (i, n) in [0usize, 1, 511, 512, 513, 1024, 100_000].into_iter().enumerate() {
+        for (i, n) in [0usize, 1, 511, 512, 513, 1024, 100_000]
+            .into_iter()
+            .enumerate()
+        {
             let name = format!("f{i}.bin");
             std::fs::write(srv.root.join(&name), pattern(n)).unwrap();
             let (d, o) = get(srv.port, &name, &[]).unwrap();
@@ -2142,8 +2231,14 @@ mod tests {
         // negotiated block size is clamped to the configured ceiling; tsize is answered
         let (d, o) = get(srv.port, "f6.bin", &[("blksize", "8192"), ("tsize", "0")]).unwrap();
         assert_eq!(d, pattern(100_000));
-        assert!(o.contains(&("blksize".to_string(), "1468".to_string())), "{o:?}");
-        assert!(o.contains(&("tsize".to_string(), "100000".to_string())), "{o:?}");
+        assert!(
+            o.contains(&("blksize".to_string(), "1468".to_string())),
+            "{o:?}"
+        );
+        assert!(
+            o.contains(&("tsize".to_string(), "100000".to_string())),
+            "{o:?}"
+        );
         let (d, _) = get(srv.port, "f6.bin", &[("blksize", "1024"), ("timeout", "2")]).unwrap();
         assert_eq!(d.len(), 100_000);
         // a size that is an exact multiple of the negotiated block size ends with an empty block
@@ -2187,7 +2282,8 @@ mod tests {
         }
         // netascii and mail modes are refused (binary only)
         let s = udp();
-        s.send_to(&rrq("x", "netascii", &[]), ("127.0.0.1", srv.port)).unwrap();
+        s.send_to(&rrq("x", "netascii", &[]), ("127.0.0.1", srv.port))
+            .unwrap();
         let mut b = [0u8; 600];
         let (n, _) = s.recv_from(&mut b).unwrap();
         assert_eq!(proto::opcode(&b[..n]), Some(proto::ERROR));
@@ -2208,24 +2304,44 @@ mod tests {
     fn uploads_are_off_by_default_and_safe_when_on() {
         let Some(ro) = start(|_| {}) else { return };
         let r = put(ro.port, "new.bin", b"data", &[]);
-        assert!(matches!(r, Err((2, ref m)) if m.contains("disabled")), "{r:?}");
+        assert!(
+            matches!(r, Err((2, ref m)) if m.contains("disabled")),
+            "{r:?}"
+        );
         assert!(!ro.root.join("new.bin").exists());
         assert_eq!(ro.ctx.stats.denied_write.load(Ordering::Relaxed), 1);
         drop(ro);
 
-        let Some(srv) = start(|c| c.allow_write = true) else { return };
+        let Some(srv) = start(|c| c.allow_write = true) else {
+            return;
+        };
         // new file, odd size, multi-block, with a negotiated block size
         put(srv.port, "new.bin", &pattern(5000), &[]).unwrap();
-        assert_eq!(std::fs::read(srv.root.join("new.bin")).unwrap(), pattern(5000));
-        put(srv.port, "sub/b.bin", &pattern(4096), &[("blksize", "1024"), ("tsize", "4096")]).unwrap();
-        assert_eq!(std::fs::read(srv.root.join("sub/b.bin")).unwrap(), pattern(4096));
+        assert_eq!(
+            std::fs::read(srv.root.join("new.bin")).unwrap(),
+            pattern(5000)
+        );
+        put(
+            srv.port,
+            "sub/b.bin",
+            &pattern(4096),
+            &[("blksize", "1024"), ("tsize", "4096")],
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(srv.root.join("sub/b.bin")).unwrap(),
+            pattern(4096)
+        );
         // an empty upload and an exact multiple of the block size
         put(srv.port, "empty.bin", b"", &[]).unwrap();
         assert_eq!(std::fs::read(srv.root.join("empty.bin")).unwrap().len(), 0);
         // existing files are not replaced without `overwrite`
         let r = put(srv.port, "new.bin", b"other", &[]);
         assert!(matches!(r, Err((6, _))), "{r:?}");
-        assert_eq!(std::fs::read(srv.root.join("new.bin")).unwrap(), pattern(5000));
+        assert_eq!(
+            std::fs::read(srv.root.join("new.bin")).unwrap(),
+            pattern(5000)
+        );
         // names that climb, hide, or land in a missing directory are refused
         for bad in ["../esc.bin", ".dot", "nodir/x.bin", "/etc/x", "sub"] {
             assert!(put(srv.port, bad, b"x", &[]).is_err(), "{bad}");
@@ -2238,7 +2354,12 @@ mod tests {
         assert!(put(srv.port, "ln", b"overwritten", &[]).is_err());
         assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
         // size cap (64 KiB): announced size refused up front, unannounced aborted and removed
-        let r = put(srv.port, "big1.bin", &vec![1u8; 70_000], &[("tsize", "70000")]);
+        let r = put(
+            srv.port,
+            "big1.bin",
+            &vec![1u8; 70_000],
+            &[("tsize", "70000")],
+        );
         assert!(matches!(r, Err((3, _))), "{r:?}");
         let r = put(srv.port, "big2.bin", &vec![1u8; 70_000], &[]);
         assert!(r.is_err(), "{r:?}");
@@ -2263,31 +2384,41 @@ mod tests {
         };
         std::fs::write(srv.root.join("cfg.txt"), "old").unwrap();
         put(srv.port, "cfg.txt", &pattern(3000), &[]).unwrap();
-        assert_eq!(std::fs::read(srv.root.join("cfg.txt")).unwrap(), pattern(3000));
+        assert_eq!(
+            std::fs::read(srv.root.join("cfg.txt")).unwrap(),
+            pattern(3000)
+        );
     }
 
     #[test]
     fn only_listed_client_networks_are_served() {
-        let Some(srv) = start(|c| c.clients = vec!["10.99.0.0/24".into()]) else { return };
+        let Some(srv) = start(|c| c.clients = vec!["10.99.0.0/24".into()]) else {
+            return;
+        };
         std::fs::write(srv.root.join("a.bin"), "x").unwrap();
         let r = get(srv.port, "a.bin", &[]);
         assert!(matches!(r, Err((2, _))), "{:?}", r.map(|x| x.0));
         assert_eq!(srv.ctx.stats.denied_client.load(Ordering::Relaxed), 1);
         drop(srv);
-        let Some(srv) = start(|c| c.clients = vec!["127.0.0.0/8".into()]) else { return };
+        let Some(srv) = start(|c| c.clients = vec!["127.0.0.0/8".into()]) else {
+            return;
+        };
         std::fs::write(srv.root.join("a.bin"), "x").unwrap();
         assert_eq!(get(srv.port, "a.bin", &[]).unwrap().0, b"x");
     }
 
     #[test]
     fn concurrent_transfers_are_bounded_and_a_wrong_tid_is_rejected() {
-        let Some(srv) = start(|c| c.max_sessions = 2) else { return };
+        let Some(srv) = start(|c| c.max_sessions = 2) else {
+            return;
+        };
         std::fs::write(srv.root.join("a.bin"), pattern(10_000)).unwrap();
         // two transfers started and left unanswered occupy both slots
         let mut held = Vec::new();
         for _ in 0..2 {
             let s = udp();
-            s.send_to(&rrq("a.bin", "octet", &[]), ("127.0.0.1", srv.port)).unwrap();
+            s.send_to(&rrq("a.bin", "octet", &[]), ("127.0.0.1", srv.port))
+                .unwrap();
             let mut b = [0u8; 600];
             let (_, from) = s.recv_from(&mut b).unwrap(); // block 1, never acknowledged
             held.push((s, from));
@@ -2322,7 +2453,8 @@ mod tests {
         std::fs::write(srv.root.join("a.bin"), pattern(3000)).unwrap();
         let s = udp();
         s.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
-        s.send_to(&rrq("a.bin", "octet", &[]), ("127.0.0.1", srv.port)).unwrap();
+        s.send_to(&rrq("a.bin", "octet", &[]), ("127.0.0.1", srv.port))
+            .unwrap();
         let mut b = [0u8; 700];
         let (n1, from) = s.recv_from(&mut b).unwrap();
         let first = b[..n1].to_vec();
