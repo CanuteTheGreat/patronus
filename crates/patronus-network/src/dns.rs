@@ -1022,7 +1022,23 @@ pub async fn dnsmasq_part(
     }
     // the DNS applier reports the block lists itself; the DHCP applier
     // rewrites the same file and must not repeat (or claim) those lines
-    let blocked = blocked_domains(store, env, &s, false, &mut ApplyReport::default()).await?;
+    let mut blocked = blocked_domains(store, env, &s, false, &mut ApplyReport::default()).await?;
+    let allow = crate::dnsfilter::Allow::compile(&crate::dnsfilter::list_allow(store).await?);
+    blocked.retain(|n| !allow.matches(n));
+    let prep = crate::dnsfilter::prepare(
+        store,
+        env,
+        "forwarder",
+        s.block_mode == "null",
+        false,
+        false,
+        &mut ApplyReport::default(),
+    )
+    .await?;
+    lines.extend(crate::dnsfilter::dnsmasq_lines(
+        &prep,
+        s.block_mode == "null",
+    ));
     for b in blocked {
         if s.block_mode == "null" {
             lines.push(format!("address=/{b}/#"));
@@ -1080,10 +1096,24 @@ impl DnsApplier {
         store: &ConfigStore,
         fetch: bool,
         rep: &mut ApplyReport,
-    ) -> Result<String> {
+    ) -> Result<(String, bool)> {
         let s = settings(store).await?;
         let sv = served(store, &self.env, &s, rep).await?;
-        let blocked = blocked_domains(store, &self.env, &s, fetch, rep).await?;
+        let mut blocked = blocked_domains(store, &self.env, &s, fetch, rep).await?;
+        // the allow list also lifts names of the manual list and the plain URL lists
+        let allow = crate::dnsfilter::Allow::compile(&crate::dnsfilter::list_allow(store).await?);
+        blocked.retain(|n| !allow.matches(n));
+        // catalog lists, threat-intel zones in RPZ format (one `rpz:` zone each)
+        let prep = crate::dnsfilter::prepare(
+            store,
+            &self.env,
+            "resolver",
+            s.block_mode == "null",
+            fetch,
+            fetch,
+            rep,
+        )
+        .await?;
         let dnssec = s.dnssec && (!fetch || self.ensure_anchor(rep));
         let mut hosts = list_hosts(store).await?;
         let domains = list_domains(store).await?;
@@ -1103,6 +1133,8 @@ impl DnsApplier {
             }
         }
         let conf = render_unbound(&s, &sv.addrs, &sv.nets, &hosts, &domains, &blocked, dnssec);
+        let conf = crate::dnsfilter::splice_unbound(&conf, &prep);
+        let zones_changed = prep.zones_changed;
         // per-device / per-group DNS policy views (device segmentation)
         #[cfg(feature = "segmentation")]
         {
@@ -1112,11 +1144,13 @@ impl DnsApplier {
                 domains,
                 blocked,
             };
-            crate::seg_dns::augment(store, &self.env, conf, globals, fetch, rep).await
+            crate::seg_dns::augment(store, &self.env, conf, globals, fetch, rep)
+                .await
+                .map(|c| (c, zones_changed))
         }
         #[cfg(not(feature = "segmentation"))]
         {
-            Ok(conf)
+            Ok((conf, zones_changed))
         }
     }
 
@@ -1138,6 +1172,8 @@ impl DnsApplier {
                 }
             }
             let logging = crate::seg_dns::any_logging(store).await;
+            // the DNS filter reads the same log: keep the drop-in while either needs it
+            let logging = logging || crate::dnsfilter::wants_tail(store).await;
             crate::seg_dns::systemd_querylog_dropin(logging, rep);
             if std::path::Path::new("/etc/logrotate.d").is_dir() {
                 let _ = std::fs::write(
@@ -1152,6 +1188,29 @@ impl DnsApplier {
             }
         }
         Ok(())
+    }
+
+    /// Directory + rotation for the resolver log the filter tailer reads (per-list
+    /// blocked-answer counts, query log). Best effort.
+    async fn filter_log_side_effects(&self, store: &ConfigStore) {
+        if !self.env.check_configs || !crate::dnsfilter::wants_tail(store).await {
+            return;
+        }
+        let log = std::path::Path::new(crate::dnsfilter::UNBOUND_LOG);
+        if let Some(dir) = log.parent() {
+            let _ = std::fs::create_dir_all(dir);
+            if let Ok(Some(u)) = nix::unistd::User::from_name("unbound") {
+                let _ = nix::unistd::chown(dir, Some(u.uid), Some(u.gid));
+            }
+        }
+        // systemd runs unbound in the foreground (stderr): send it to the same file
+        crate::dnsfilter::systemd_log_dropin(true);
+        if std::path::Path::new("/etc/logrotate.d").is_dir() {
+            let _ = std::fs::write(
+                "/etc/logrotate.d/patronus-unbound",
+                crate::dnsfilter::LOGROTATE_CONF,
+            );
+        }
     }
 
     pub async fn status_value(&self, store: &ConfigStore) -> Result<Value> {
@@ -1194,7 +1253,7 @@ impl Applier for DnsApplier {
                         .into(),
                 ));
             }
-            let conf = self.unbound_conf(store, true, &mut rep).await?;
+            let (conf, zones_changed) = self.unbound_conf(store, true, &mut rep).await?;
             let changed = lan::install(
                 env,
                 &ManagedFile {
@@ -1210,9 +1269,18 @@ impl Applier for DnsApplier {
             }
             #[cfg(feature = "segmentation")]
             self.segmentation_side_effects(store, &mut rep).await?;
+            self.filter_log_side_effects(store).await;
             // dnsmasq (DHCP) must give up port 53 before unbound binds it
             lan::sync_dnsmasq(store, env, &mut rep).await?;
-            lan::reconcile(env, "unbound", true, changed, UNBOUND_CONF, &mut rep)?;
+            // a refreshed list changes a zone file, not the config: reload then too
+            lan::reconcile(
+                env,
+                "unbound",
+                true,
+                changed || zones_changed,
+                UNBOUND_CONF,
+                &mut rep,
+            )?;
         } else {
             lan::reconcile(env, "unbound", false, false, UNBOUND_CONF, &mut rep)?;
             #[cfg(feature = "segmentation")]
@@ -1237,6 +1305,17 @@ impl Applier for DnsApplier {
             if mode == "forwarder" {
                 // refresh the block list cache before dnsmasq reads it
                 blocked_domains(store, env, &s, true, &mut rep).await?;
+                // catalog lists: download what is due, check them against the board's cap
+                crate::dnsfilter::prepare(
+                    store,
+                    env,
+                    "forwarder",
+                    s.block_mode == "null",
+                    true,
+                    true,
+                    &mut rep,
+                )
+                .await?;
             }
             lan::sync_dnsmasq(store, env, &mut rep).await?;
         }
@@ -1250,7 +1329,7 @@ impl Applier for DnsApplier {
         let mode = s.effective_mode(&self.env);
         let mut out = format!("# DNS mode: {mode}\n");
         if mode == "resolver" {
-            let c = self.unbound_conf(store, false, &mut rep).await?;
+            let (c, _) = self.unbound_conf(store, false, &mut rep).await?;
             out.push_str(&format!("## {UNBOUND_CONF} (unbound)\n{c}"));
         } else if let Some(d) = lan::render_dnsmasq(store, &self.env, &mut rep).await? {
             out.push_str(&format!("## {} (dnsmasq)\n{d}", lan::DNSMASQ_CONF));
@@ -1355,6 +1434,264 @@ mod tests {
             *t.services.log.lock().unwrap(),
             vec!["restart unbound".to_string()]
         );
+    }
+
+    fn write_list(t: &testutil::TestEnv, name: &str, body: &str) -> String {
+        let p = t.env.path(&format!("/srv/{name}"));
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, body).unwrap();
+        format!("file://{}", p.display())
+    }
+
+    #[tokio::test]
+    async fn catalog_lists_become_rpz_zones_with_the_allow_zone_first() {
+        use crate::dnsfilter as f;
+        let t = testutil::env(&[UNBOUND_BIN, lan::DNSMASQ_BIN]);
+        std::fs::create_dir_all(t.env.path("/var/lib/unbound")).unwrap();
+        std::fs::write(t.env.path(UNBOUND_ANCHOR), "x").unwrap();
+        let s = testutil::store().await;
+        let hosts = write_list(
+            &t,
+            "ads.hosts",
+            "0.0.0.0 ads.example.net\n0.0.0.0 t.example.net\n",
+        );
+        let rpz = write_list(
+            &t,
+            "thr.rpz",
+            "$TTL 300\n@ SOA localhost. root.localhost. 1 2 3 4 5\n NS localhost.\nbad.example.org CNAME .\n*.bad.example.org CNAME .\n",
+        );
+        let a = f::ListInput {
+            catalog: Some("stevenblack".into()),
+            url: Some(hosts.clone()),
+            ..Default::default()
+        };
+        let id = f::add_list(&s, &a).await.unwrap();
+        f::add_list(
+            &s,
+            &f::ListInput {
+                catalog: Some("hagezi-tif-mini".into()),
+                url: Some(rpz),
+                action: Some("disabled".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        f::add_allow(
+            &s,
+            &f::AllowInput {
+                kind: "domain".into(),
+                pattern: "ok.example.net".into(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        save_settings(
+            &s,
+            &DnsSettingsInput {
+                dnssec: Some(false),
+                upstreams: Some("9.9.9.9".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let ap = DnsApplier::new(t.env.clone());
+        ap.apply(&s).await.unwrap();
+        let c = read(&t, UNBOUND_CONF);
+        assert!(c.contains("module-config: \"respip iterator\""), "{c}");
+        assert_eq!(c.matches("\nrpz:\n").count(), 3, "{c}");
+        let allow_at = c.find("patronus-allow.rpz.").unwrap();
+        let first_list = c.find(&format!("patronus-list-{id}.rpz.")).unwrap();
+        assert!(
+            allow_at < first_list,
+            "the allow zone must come first:\n{c}"
+        );
+        assert!(c.contains("rpz-log-name: \"stevenblack\""));
+        assert!(c.contains("rpz-action-override: disabled"));
+        // the generated zone: names only (a hosts list), the RPZ list as downloaded
+        let z = read(&t, &format!("{}/{id}.zone", f::LISTS_DIR));
+        assert!(
+            z.contains("ads.example.net CNAME .\n") && !z.contains("*.ads.example.net"),
+            "{z}"
+        );
+        let allow = read(&t, &format!("{}/allow.zone", f::LISTS_DIR));
+        assert!(
+            allow.contains(
+                "ok.example.net CNAME rpz-passthru.\n*.ok.example.net CNAME rpz-passthru."
+            ),
+            "{allow}"
+        );
+        let st = f::statuses(&s).await.unwrap();
+        assert_eq!(st[&id].used, 2);
+        assert!(st[&id].last_error.is_empty() && st[&id].last_ok > 0 && st[&id].bytes > 0);
+        // nothing changed: no second restart; a refreshed list reloads the zone
+        let n = t.services.log.lock().unwrap().len();
+        ap.apply(&s).await.unwrap();
+        assert_eq!(
+            t.services.log.lock().unwrap().len(),
+            n,
+            "unchanged apply must not restart"
+        );
+        write_list(
+            &t,
+            "ads.hosts",
+            "0.0.0.0 ads.example.net\n0.0.0.0 t.example.net\n0.0.0.0 more.example.net\n",
+        );
+        f::request_refresh(&s, Some(id)).await.unwrap();
+        ap.apply(&s).await.unwrap();
+        assert_eq!(
+            t.services.log.lock().unwrap().len(),
+            n + 1,
+            "a refreshed zone reloads unbound"
+        );
+        assert!(read(&t, &format!("{}/{id}.zone", f::LISTS_DIR)).contains("more.example.net"));
+        // a failed download keeps the last good copy and says so
+        std::fs::remove_file(t.env.path("/srv/ads.hosts")).unwrap();
+        f::request_refresh(&s, Some(id)).await.unwrap();
+        ap.apply(&s).await.unwrap();
+        let st = f::statuses(&s).await.unwrap();
+        assert!(
+            st[&id].last_error.contains("download failed"),
+            "{:?}",
+            st[&id].last_error
+        );
+        assert_eq!(st[&id].used, 3, "the old copy stays in use");
+        // an HTML error page is not a list
+        write_list(&t, "ads.hosts", "<html>busy</html>\n");
+        f::request_refresh(&s, Some(id)).await.unwrap();
+        ap.apply(&s).await.unwrap();
+        let st = f::statuses(&s).await.unwrap();
+        assert!(
+            st[&id].last_error.contains("no domain names"),
+            "{:?}",
+            st[&id].last_error
+        );
+        assert!(read(&t, &format!("{}/{id}.zone", f::LISTS_DIR)).contains("more.example.net"));
+        // the render (dry run) names the zones without touching them
+        let r = ap.render(&s).await.unwrap();
+        assert!(r.contains("rpz:") && r.contains("patronus-allow.rpz."));
+        let _ = hosts;
+    }
+
+    #[tokio::test]
+    async fn router_tier_loads_lists_up_to_the_cap_and_skips_the_rest() {
+        use crate::dnsfilter as f;
+        let t = testutil::env(&[UNBOUND_BIN, lan::DNSMASQ_BIN]);
+        let s = testutil::store().await;
+        let small = write_list(&t, "s.txt", "a1.example.net\na2.example.net\n");
+        let big = write_list(
+            &t,
+            "b.txt",
+            "b1.example.net\nb2.example.net\nb3.example.net\n",
+        );
+        f::add_list(
+            &s,
+            &f::ListInput {
+                name: Some("small".into()),
+                url: Some(small),
+                format: Some("domains".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let big_id = f::add_list(
+            &s,
+            &f::ListInput {
+                name: Some("big".into()),
+                url: Some(big),
+                format: Some("domains".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        f::save_filter_settings(
+            &s,
+            &f::FilterSettingsInput {
+                max_domains: Some(4),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        f::add_allow(
+            &s,
+            &f::AllowInput {
+                kind: "regex".into(),
+                pattern: "^a2\\.".into(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        f::add_allow(
+            &s,
+            &f::AllowInput {
+                kind: "domain".into(),
+                pattern: "sub.a1.example.net".into(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        save_settings(
+            &s,
+            &DnsSettingsInput {
+                mode: Some("forwarder".into()),
+                upstreams: Some("9.9.9.9".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        DnsApplier::new(t.env.clone()).apply(&s).await.unwrap();
+        let c = read(&t, lan::DNSMASQ_CONF);
+        assert!(c.contains("address=/a1.example.net/\n"), "{c}");
+        assert!(
+            !c.contains("a2.example.net"),
+            "regex-allowed name must not be blocked:\n{c}"
+        );
+        assert!(
+            c.contains("server=/sub.a1.example.net/#"),
+            "allowed subdomain under a blocked name:\n{c}"
+        );
+        assert!(
+            !c.contains("b1.example.net"),
+            "a list over the cap is skipped as a whole:\n{c}"
+        );
+        assert!(c.contains("log-facility=/var/log/patronus-dnsmasq.log"));
+        let st = f::statuses(&s).await.unwrap();
+        assert!(
+            st[&big_id].last_error.starts_with("not loaded"),
+            "{:?}",
+            st[&big_id].last_error
+        );
+        assert_eq!(st[&big_id].used, 0);
+        // the manual list and the allow list: an allowed manual entry is dropped too
+        add_blocked(
+            &s,
+            &BlockInput {
+                domain: "a2.manual.example".into(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        f::add_allow(
+            &s,
+            &f::AllowInput {
+                kind: "wildcard".into(),
+                pattern: "a2.*.example".into(),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        DnsApplier::new(t.env.clone()).apply(&s).await.unwrap();
+        assert!(!read(&t, lan::DNSMASQ_CONF).contains("a2.manual.example"));
     }
 
     #[tokio::test]

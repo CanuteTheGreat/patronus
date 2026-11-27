@@ -14,6 +14,8 @@
 //! configuration. No subsystem may show fixture rows: an empty system shows
 //! an empty list (see tests/no_fixtures.rs).
 
+#[cfg(feature = "dns")]
+pub mod dnsfilter;
 pub mod firewall;
 pub mod fwfeeds;
 pub mod fwlog;
@@ -230,6 +232,9 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
         #[cfg(feature = "dns")]
         seg::spawn_dns_log_collector(store.clone());
     }
+    // DNS filter lists: scheduled refresh, per-list counters and the DNS query log
+    #[cfg(feature = "dns")]
+    dnsfilter::spawn_filter_task(store.clone(), state.lan.clone());
     // gateway / tunnel / HA / configuration events for the event log and webhooks
     telemetry::spawn_watcher(state.clone());
     // scheduled internet speed tests (off unless an interval is set)
