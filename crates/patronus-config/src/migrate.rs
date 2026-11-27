@@ -40,6 +40,7 @@ pub const LANE_RANGES: &[(&str, u32, u32)] = &[
     ("t", 1400, 1499), // guest network: vouchers (settings live in lan_settings)
     ("u", 1500, 1599), // reverse proxy / load balancer: frontends, backends, servers, rules
     ("v", 1600, 1699), // hardware + monitoring: S.M.A.R.T., UPS, dashboard layout, monitoring agents
+    ("w", 1700, 1799), // network map & discovery: seen devices, labels, class rules, share keys
 ];
 
 /// Whether `version` is recorded in `schema_migrations`, read inside the caller's transaction.

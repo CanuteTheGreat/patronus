@@ -795,6 +795,12 @@
                         </svg>
                         <span>Traffic shaping</span>
                     </a>
+                    <a href="/map" class="nav-item {% if page == "map" %}active{% endif %}">
+                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v4m0 0a2 2 0 100 4 2 2 0 000-4zm0 4v4m-6 0h12M6 16v2m12-2v2M4 20h4m8 0h4"></path>
+                        </svg>
+                        <span>Network map</span>
+                    </a>
                     <a href="/segmentation" class="nav-item {% if page == "segmentation" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h5a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm9 0a1 1 0 011-1h5a1 1 0 011 1v5a1 1 0 01-1 1h-5a1 1 0 01-1-1V5zM4 14a1 1 0 011-1h5a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1v-5zm12 3h4m-2-2v4"></path>
@@ -1054,7 +1060,7 @@
         if (!d) return;
         const have = new Set(d.features);
         const need = {'/vpn': ['wireguard', 'ipsec', 'openvpn', 'l2tp'], '/dhcp': ['dhcp'], '/dns': ['dns'], '/ntp': ['ntp'], '/ha': ['ha'], '/qos': ['qos'],
-            '/segmentation': ['segmentation'], '/segmentation/time': ['segmentation'], '/segmentation/dns': ['dns'], '/packages': ['plugins'],
+            '/map': ['netmap'], '/segmentation': ['segmentation'], '/segmentation/time': ['segmentation'], '/segmentation/dns': ['dns'], '/packages': ['plugins'],
             '/svc/syslog': ['syslog'], '/svc/netflow': ['netflow'], '/svc/igmp': ['igmp'], '/svc/mdns': ['mdns'], '/svc/udp-relay': ['udp-relay'], '/svc/nat64': ['nat64'], '/svc/l2tp': ['l2tp'],
             '/svc/ids': ['intrusion-detection'], '/svc/frr': ['dynamic-routing'], '/svc/guest': ['guest']};
         document.querySelectorAll('.sidebar-nav a.nav-item').forEach(a => {

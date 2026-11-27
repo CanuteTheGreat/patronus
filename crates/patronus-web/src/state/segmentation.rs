@@ -53,7 +53,7 @@ pub fn parse_neigh(text: &str) -> Vec<(String, String, String)> {
 
 impl LanManager {
     /// Hosts currently on the network: DHCP leases and the neighbour table.
-    async fn seg_seen(&self) -> Vec<Discovered> {
+    pub(super) async fn seg_seen(&self) -> Vec<Discovered> {
         let mut found: Vec<Discovered> = Vec::new();
         #[cfg(feature = "dhcp")]
         if let Ok(ls) =

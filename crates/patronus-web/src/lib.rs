@@ -93,6 +93,10 @@ fn prepare_app(state: AppState) -> axum::Router {
         });
     }
 
+    // Network map: device discovery every map.discovery_interval_secs (lane w).
+    #[cfg(feature = "netmap")]
+    crate::state::netmap::spawn(state.config_store.clone());
+
     // Remote / encrypted automatic backups: upload to every target that is due.
     let backup_state = state.clone();
     tokio::spawn(async move {

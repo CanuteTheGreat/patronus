@@ -15,7 +15,8 @@
   "Live traffic tests in network namespaces for each feature in the README (firewall and NAT, multi-WAN failover, VPNs, DHCP and DNS, segmentation, guest network, HA, IDS); CI fails if a README claim loses its test.",
   "Crash and reboot safety: 30 power-cut rounds without losing or corrupting a saved rule, and a regression test that the firewall comes back after a failed first start at boot.",
   "Embedded router images for the GL-AR750S and GL-AX1800, OpenRC and systemd: built, checked against the flash size, booted in a QEMU gate with the web UI, and upgraded with a bootloader rollback.",
-  "Wi-Fi features (per-device passphrases, automatic channel, band steering, Wi-Fi uplink) proven with real 802.11 associations on simulated radios."
+  "Wi-Fi features (per-device passphrases, automatic channel, band steering, Wi-Fi uplink) proven with real 802.11 associations on simulated radios.",
+  "Network map: every device on every LAN segment with live up/down (DHCP leases, the kernel neighbour table, an ICMP check, opt-in nmap and LLDP), export as PNG, SVG or Mermaid, read-only share links and a dashboard stats feed. The segmentation advisor flags a flat LAN and isolates IoT devices, cameras, printers and TVs in one step; proven with real packets in network namespaces and driven in Firefox."
  ],
  "gaps": [
   "No stable release yet (0.x versions only), and no release-to-release upgrade and rollback test of an installed appliance.",

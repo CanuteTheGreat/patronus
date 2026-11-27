@@ -90,6 +90,8 @@ const NON_CONFIG_TABLES: &[&str] = &[
     // traffic insight and uplink health history (lane s, part d): measured
     // data, large, and not something a rollback or restore may rewind
     "ins_usage",
+    // network map (lane w): every host the router has seen, refreshed every minute
+    "map_devices",
     "ins_uplink_samples",
     "ins_uplink_hourly",
     // Wi-Fi automatic channel choice (lane s): what each radio is on and why, plus its history

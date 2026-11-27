@@ -59,6 +59,7 @@ pub fn build_router(
         .merge(api::setup::pages())
         .merge(api::wifi::pages())
         .merge(api::device::pages())
+        .merge(api::netmap::pages())
         .merge(legal::pages())
         // The old "simple" pages claimed services were operational and
         // listed invented "recent activity"; keep the URLs as redirects.
@@ -192,6 +193,7 @@ fn is_public(method: &axum::http::Method, path: &str) -> bool {
         || path.starts_with("/brand/")
         || path.starts_with("/static/")
         || (method == Method::POST && path == "/api/auth/login")
+        || (method == Method::GET && api::netmap::is_public(path))
 }
 
 /// Authentication gate for the whole UI and API.
@@ -436,7 +438,8 @@ async fn features() -> axum::Json<serde_json::Value> {
         "plugins",
         "segmentation",
         "wifi-ap",
-        "guest"
+        "guest",
+        "netmap"
     ];
     let role = api::wifi::role();
     let (_, tier, board) = release_info();
@@ -596,6 +599,7 @@ pub fn absent_features(
         ("dns", "DNS resolver"),
         ("segmentation", "Device segmentation"),
         ("guest", "Guest network"),
+        ("netmap", "Network map & device discovery"),
     ];
     let ap = role == api::setup::DeviceRole::Ap;
     let router_job = AP_ROUTER_JOBS;
@@ -668,6 +672,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::device::router())
         .merge(api::activity::router())
         .merge(api::dashboard::router())
+        .merge(api::netmap::router())
 }
 
 #[cfg(test)]

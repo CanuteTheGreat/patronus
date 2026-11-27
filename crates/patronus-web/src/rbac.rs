@@ -58,7 +58,7 @@ pub fn area_for_path(path: &str) -> Option<&'static str> {
     }
     Some(match first {
         "" | "status" | "metrics" | "events" | "monitoring" | "insights" | "telemetry"
-        | "simple" | "dashboard" | "activity" => "dashboard",
+        | "simple" | "dashboard" | "activity" | "map" => "dashboard",
         "firewall" => "firewall",
         "interfaces" | "network" => "interfaces",
         "routing" | "uplinks" => "routing",

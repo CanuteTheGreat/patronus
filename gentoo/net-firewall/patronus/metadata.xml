@@ -13,6 +13,7 @@
 	<use>
 		<flag name="web">Enable web-based management interface</flag>
 		<flag name="cli">Enable command-line interface</flag>
+		<flag name="netmap">Network map: device discovery (DHCP leases, neighbour table, optional nmap/LLDP), live map with PNG/Mermaid export, read-only share links, and the flat-network segmentation advisor</flag>
 		<flag name="api">Enable REST API for automation</flag>
 		<flag name="dashboard">Install patronus-dashboard, the multi-site SD-WAN enterprise dashboard (GraphQL/REST API, 3-node HA leader election + replication)</flag>
 		<flag name="nftables">Use nftables for packet filtering (recommended)</flag>

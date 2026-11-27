@@ -37,7 +37,7 @@ IUSE="
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp +plugins
-	+segmentation wifi-ap +wifi-client +guest
+	+segmentation wifi-ap +wifi-client +guest +netmap
 	+uci-import
 	geoip geoip2
 	+aliases +insight
@@ -126,6 +126,7 @@ RDEPEND="
 	)
 	vlan? ( sys-apps/iproute2 )
 	segmentation? ( sys-apps/iproute2 net-firewall/nftables )
+	netmap? ( sys-apps/iproute2 )
 	guest? ( net-dns/dnsmasq sys-apps/iproute2 net-firewall/nftables hostapd? ( net-wireless/hostapd ) )
 	wifi-ap? ( net-wireless/hostapd net-wireless/iw )
 	wifi-client? ( net-wireless/wpa_supplicant net-wireless/iw )
@@ -263,6 +264,7 @@ src_configure() {
 		$(usex segmentation "segmentation" "")
 		$(usex wifi-ap "wifi-ap" "")
 		$(usex guest "guest" "")
+		$(usex netmap "netmap" "")
 		$(usex wifi-client "wifi-client" "")
 		$(usex uci-import "uci-import" "")
 	)
@@ -393,6 +395,7 @@ src_install() {
 		use segmentation && webfeatures+=( segmentation )
 		use wifi-ap && webfeatures+=( wifi-ap )
 		use guest && webfeatures+=( guest )
+		use netmap && webfeatures+=( netmap )
 		use wifi-client && webfeatures+=( wifi-client )
 		use syslog && webfeatures+=( syslog )
 		use netflow && webfeatures+=( netflow )

@@ -17,7 +17,7 @@ path = "src/lib.rs"
 # builds patronus-web with --no-default-features and the USE-selected list):
 # lane C interfaces (vlan, pppoe, dhcpcd) and the lane D LAN-service pages
 # (dhcp, dns, ntp).
-default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "udp-relay", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "reverse-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "threat-feeds", "journal", "tls-rustls"]
+default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "udp-relay", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "reverse-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "threat-feeds", "journal", "tls-rustls", "netmap"]
 vlan = ["patronus-network/vlan"]
 pppoe = ["patronus-network/pppoe"]
 dhcpcd = ["patronus-network/dhcpcd"]
@@ -60,6 +60,8 @@ plugins = ["patronus-network/plugins"]
 segmentation = ["patronus-network/segmentation", "dep:patronus-captiveportal"]
 wifi-ap = ["patronus-network/wifi-ap", "segmentation"]
 wifi-client = ["patronus-network/wifi-client"]
+# network map, device discovery and the segmentation advisor (lane w, docs/design/network-map.md)
+netmap = []
 # Live threat-intel feeds (patronus-ai, reqwest/OpenSSL) and journald log reading
 # (patronus-monitoring, prometheus). Both are off in the embedded router build.
 threat-feeds = ["dep:patronus-ai"]

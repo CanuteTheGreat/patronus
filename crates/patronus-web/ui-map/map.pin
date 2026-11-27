@@ -1,0 +1,9 @@
+# Shared map component (Horcrux repo, path ui-kit/map/), vendored by commit. ci/check-ui-map-pin.py checks every
+# sha256 below against the vendored file; `--upstream DIR` also checks a horcrux checkout at `commit`.
+# Bump: copy ui-kit/map/{map.js,map.css} from a horcrux commit, set `commit` and the sha256 lines.
+version = 0.1
+repo = https://github.com/CanuteTheGreat/horcrux
+path = ui-kit/map
+commit = 676d8087c6c2348cf9abcae5edd08b87d80006ce
+sha256 map.js = 0abd3294ad7d92c145add95f84a4695e39a08754821167ee5730b366c141a34f
+sha256 map.css = b8e523410358fb7d6cbd6d3cea6f0e8935084e199566ea8e6b4509b3bc527ee8

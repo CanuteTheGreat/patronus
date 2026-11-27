@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+
+{% block title %}Network map - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<link rel="stylesheet" href="/ui-map/map.css">
+<style>
+    .nm-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 14px 0; border-bottom: 1px solid var(--line); }
+    .nm-tab { padding: 8px 14px; cursor: pointer; border: 0; background: none; font-size: 0.95em; color: var(--muted); border-bottom: 2px solid transparent; }
+    .nm-tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .nm-panel[hidden] { display: none; }
+    .nm-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .nm-note { background: var(--note-bg); border: 1px solid var(--note-bd); color: var(--note-fg); padding: 10px 12px; border-radius: 6px; margin: 8px 0 14px; font-size: 0.88em; line-height: 1.45; }
+    .nm-finding { border: 1px solid var(--bad-bg); border-left: 4px solid var(--bad-fg); border-radius: 6px; padding: 10px 12px; margin: 0 0 12px; }
+    .nm-finding.medium { border-left-color: var(--warn-fg); }
+    .nm-finding h3 { margin: 0 0 6px; font-size: 1em; }
+    .nm-finding ul { margin: 6px 0 6px 18px; padding: 0; }
+    .nm-key { font-family: var(--font-mono); word-break: break-all; background: var(--surface-2); padding: 8px; border-radius: 6px; }
+    pre.nm-pre { background: var(--surface-2); padding: 8px 10px; border-radius: 6px; overflow: auto; font-size: 0.8em; }
+    button.small { padding: 3px 9px; font-size: 0.82em; border: 1px solid var(--line-strong); background: var(--card-bg); border-radius: 4px; cursor: pointer; color: inherit; }
+    button.primary { color: #fff; background: var(--b-blue); border-color: var(--accent); }
+    #nm-status { min-height: 1.2em; font-size: 0.9em; color: var(--muted); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Network map</h1>
+    <p class="page-subtitle">Every device on every segment, live up/down, built from DHCP leases, the neighbour table, probes and LLDP. Export as PNG, SVG, Mermaid or JSON.</p>
+</div>
+<p id="nm-status" role="status" aria-live="polite"></p>
+{% if can_modify %}<p><button class="small" type="button" onclick="nmDiscover()">Discover now</button></p>{% endif %}
+
+<div class="nm-tabs" role="tablist" aria-label="Network map sections">
+    <button class="nm-tab" role="tab" id="t-map" aria-controls="p-map" aria-selected="true" onclick="nmTab('map')">Map</button>
+    <button class="nm-tab" role="tab" id="t-advisor" aria-controls="p-advisor" aria-selected="false" onclick="nmTab('advisor')">Segmentation advisor</button>
+    <button class="nm-tab" role="tab" id="t-devices" aria-controls="p-devices" aria-selected="false" onclick="nmTab('devices')">Devices</button>
+    <button class="nm-tab" role="tab" id="t-rules" aria-controls="p-rules" aria-selected="false" onclick="nmTab('rules')">Class rules</button>
+    {% if is_admin %}<button class="nm-tab" role="tab" id="t-share" aria-controls="p-share" aria-selected="false" onclick="nmTab('share')">Sharing</button>{% endif %}
+    <button class="nm-tab" role="tab" id="t-settings" aria-controls="p-settings" aria-selected="false" onclick="nmTab('settings')">Settings</button>
+</div>
+
+<section class="nm-panel" id="p-map" role="tabpanel" aria-labelledby="t-map">
+    <div id="nm-map"></div>
+</section>
+
+<section class="nm-panel" id="p-advisor" role="tabpanel" aria-labelledby="t-advisor" hidden>
+    <div class="card">
+        <div class="card-header"><h2 class="card-title">Segmentation advisor</h2></div>
+        <div class="nm-note">Looks for segments where IoT devices, cameras, printers or TVs share the network with computers, phones and management consoles. The fix uses device segmentation: those devices get their own groups (no traffic between them, internet per class), trusted devices can still print and watch cameras. Nothing changes until you press Apply; System &gt; History rolls it back.</div>
+        <div id="nm-advisor"><p class="empty">Loading...</p></div>
+    </div>
+</section>
+
+<section class="nm-panel" id="p-devices" role="tabpanel" aria-labelledby="t-devices" hidden>
+    <div class="card">
+        <div class="card-header"><h2 class="card-title">Devices</h2></div>
+        <div class="nm-note">The class decides what the advisor does with a device. Set a name or class here when the automatic guess (from the host name) is wrong; your choice always wins.</div>
+        <div class="nm-wrap" tabindex="0" role="region" aria-label="Devices"><table class="lan" id="nm-devices"><thead><tr><th>Name</th><th>Status</th><th>IP</th><th>MAC</th><th>Segment</th><th>Class</th><th>Seen by</th>{% if can_modify %}<th>Change</th>{% endif %}</tr></thead><tbody><tr><td colspan="8" class="empty">Loading...</td></tr></tbody></table></div>
+    </div>
+</section>
+
+<section class="nm-panel" id="p-rules" role="tabpanel" aria-labelledby="t-rules" hidden>
+    <div class="card">
+        <div class="card-header"><h2 class="card-title">Class rules</h2></div>
+        <div class="nm-note">Your rules run before the built-in host-name patterns (lowest priority number first). Patterns use * ? and [a-f] ranges, case-insensitive; MAC rules match the lower-case address (aa:bb:cc:*).</div>
+        <div class="nm-wrap" tabindex="0" role="region" aria-label="Class rules"><table class="lan" id="nm-rules"><thead><tr><th>Priority</th><th>Field</th><th>Pattern</th><th>Class</th>{% if can_modify %}<th></th>{% endif %}</tr></thead><tbody></tbody></table></div>
+        {% if can_modify %}
+        <form class="lan-form" onsubmit="return nmAddRule(event)">
+            <label>Field <select name="field"><option value="hostname">Host name</option><option value="mac">MAC</option></select></label>
+            <label>Pattern <input name="pattern" required maxlength="64" placeholder="*doorbell*"></label>
+            <label>Class <select name="class" id="nm-rule-class"></select></label>
+            <label>Priority <input name="priority" type="number" value="100" min="0" max="100000"></label>
+            <button class="small primary" type="submit">Add rule</button>
+        </form>
+        {% endif %}
+        <details><summary>Built-in patterns</summary><div id="nm-builtin" class="nm-wrap"></div></details>
+    </div>
+</section>
+
+{% if is_admin %}
+<section class="nm-panel" id="p-share" role="tabpanel" aria-labelledby="t-share" hidden>
+    <div class="card">
+        <div class="card-header"><h2 class="card-title">Read-only sharing</h2></div>
+        <div class="nm-note">A share key opens the live map without a login (scope "view") or only the counts for a dashboard widget (scope "stats"). Only a hash is stored: copy the key when it is shown. "basic" hides MAC addresses and device details. Revoke a key at any time.</div>
+        <form class="lan-form" onsubmit="return nmAddKey(event)">
+            <label>Name <input name="name" required pattern="[a-z0-9_\-]{1,32}" placeholder="wall-tablet"></label>
+            <label>Scope <select name="scope"><option value="view">view (live map)</option><option value="stats">stats (widget)</option></select></label>
+            <label>Detail <select name="detail"><option value="basic">basic</option><option value="full">full</option></select></label>
+            <label>Expires after (days, 0 = never) <input name="expires_days" type="number" value="0" min="0" max="3650"></label>
+            <button class="small primary" type="submit">Create key</button>
+        </form>
+        <div id="nm-newkey"></div>
+        <div class="nm-wrap" tabindex="0" role="region" aria-label="Share keys"><table class="lan" id="nm-keys"><thead><tr><th>Name</th><th>Scope</th><th>Detail</th><th>Created</th><th>Expires</th><th>Last used</th><th></th></tr></thead><tbody></tbody></table></div>
+        <h3>Homepage dashboard widget</h3>
+        <pre class="nm-pre" id="nm-homepage"></pre>
+    </div>
+</section>
+{% endif %}
+
+<section class="nm-panel" id="p-settings" role="tabpanel" aria-labelledby="t-settings" hidden>
+    <div class="card">
+        <div class="card-header"><h2 class="card-title">Discovery and advisor settings</h2></div>
+        <div id="nm-tools" class="nm-note"></div>
+        <form onsubmit="return nmSaveSettings(event)">
+            <div class="nm-wrap" tabindex="0" role="region" aria-label="Settings"><table class="lan" id="nm-settings"><thead><tr><th>Setting</th><th>Value</th><th>Default</th><th>What it does</th></tr></thead><tbody></tbody></table></div>
+            {% if can_modify %}<button class="small primary" type="submit">Save settings</button>{% endif %}
+        </form>
+    </div>
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/ui-map/map.js"></script>
+<script>
+    const CAN_MODIFY = {{ can_modify }};
+    const SEGMENTATION = {{ segmentation }};
+    let CLASSES = ['computer', 'phone', 'printer', 'camera', 'iot', 'media', 'infra', 'unknown'];
+    const $ = (id) => document.getElementById(id);
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]); }
+    function say(msg) { $('nm-status').textContent = msg; }
+    async function api(method, url, body) {
+        const r = await fetch(url, { method, credentials: 'same-origin', headers: body ? {'content-type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined });
+        let j = {};
+        try { j = await r.json(); } catch (_) {}
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        return j;
+    }
+    function nmTab(t) {
+        for (const b of document.querySelectorAll('.nm-tab')) b.setAttribute('aria-selected', b.id === 't-' + t ? 'true' : 'false');
+        for (const p of document.querySelectorAll('.nm-panel')) p.hidden = p.id !== 'p-' + t;
+        if (t === 'advisor') loadAdvisor();
+        if (t === 'devices') loadDevices();
+        if (t === 'rules') loadRules();
+        if (t === 'share') loadKeys();
+        if (t === 'settings') loadSettings();
+        if (location.hash !== '#' + t) history.replaceState(null, '', '#' + t);
+    }
+    const map = UiMap.mount($('nm-map'), { src: '/api/map/graph', emptyTitle: 'No devices yet', emptyText: 'Devices appear within a minute of being seen on a LAN-side segment.' });
+    async function nmDiscover() {
+        say('Discovering...');
+        try { const r = await api('POST', '/api/map/discover'); say(r.sightings + ' sightings recorded.'); map.reload(); } catch (e) { say('Discovery failed: ' + e.message); }
+    }
+
+    async function loadAdvisor() {
+        const box = $('nm-advisor');
+        try {
+            const a = await api('GET', '/api/segmentation/advisor');
+            if (!a.findings.length) { box.innerHTML = '<p class="ok">No flat segments found: untrusted devices do not share a group with trusted ones.</p>'; return; }
+            box.innerHTML = '';
+            a.findings.forEach((f, i) => {
+                const p = a.plans[i];
+                const d = document.createElement('div');
+                d.className = 'nm-finding ' + f.severity;
+                d.innerHTML = '<h3>' + esc(f.title) + ' <span class="badge">' + esc(f.severity) + '</span></h3><p>' + esc(f.detail) + '</p>'
+                    + '<strong>Plan for ' + esc(p.segment) + '</strong><ul>'
+                    + (p.enable_isolation ? '<li>Switch device isolation on for ' + esc(p.segment) + ' (everyone else stays in the group "home", as today)</li>' : '')
+                    + p.groups.map(g => '<li>Group <b>' + esc(g.name) + '</b> (' + esc(g.class) + '): no traffic between its members, internet ' + esc(g.internet) + (g.exists ? ' (exists)' : ' (new)') + '</li>').join('')
+                    + p.moves.map(m => '<li>Move ' + esc(m.name) + ' (' + esc(m.mac) + ') to ' + esc(m.group) + '</li>').join('')
+                    + p.services.map(s => '<li>Allow home to open ' + esc(s.proto) + ' ' + esc(s.ports) + ' on ' + esc(s.dst) + '</li>').join('')
+                    + p.links.map(l => '<li>Link ' + esc(l[0]) + ' and ' + esc(l[1]) + ' (casting and discovery keep working)</li>').join('')
+                    + '</ul><details><summary>VLAN plan (for VLAN-capable switches and access points)</summary><ul>'
+                    + p.vlan_plan.map(v => '<li>VLAN ' + esc(v[1]) + ': ' + esc(v[0]) + ' (' + esc(v[2]) + ')</li>').join('') + '</ul></details>'
+                    + '<p>' + p.notes.map(esc).join('<br>') + '</p>';
+                if (CAN_MODIFY && SEGMENTATION) {
+                    const b = document.createElement('button');
+                    b.className = 'small primary'; b.type = 'button'; b.textContent = 'Apply this plan';
+                    b.onclick = async () => {
+                        if (!confirm('Isolate the listed devices on ' + p.segment + '? Undo with System > History.')) return;
+                        b.disabled = true; say('Applying...');
+                        try { const r = await api('POST', '/api/segmentation/advisor/apply', { segment: p.segment }); say('Applied: ' + r.plan.moves.length + ' device(s) isolated' + (r.skipped && r.skipped.length ? ', ' + r.skipped.length + ' skipped (no address yet)' : '') + '.'); loadAdvisor(); map.reload(); }
+                        catch (e) { say('Not applied: ' + e.message); b.disabled = false; }
+                    };
+                    d.appendChild(b);
+                } else if (!SEGMENTATION) {
+                    d.insertAdjacentHTML('beforeend', '<p class="empty">Applying needs device segmentation (USE=segmentation), which this build leaves out.</p>');
+                }
+                box.appendChild(d);
+            });
+        } catch (e) { box.innerHTML = '<p class="alert-error">' + esc(e.message) + '</p>'; }
+    }
+
+    async function loadDevices() {
+        const tb = $('nm-devices').querySelector('tbody');
+        try {
+            const v = await api('GET', '/api/map/devices');
+            if (!v.length) { tb.innerHTML = '<tr><td colspan="8" class="empty">No devices seen yet.</td></tr>'; return; }
+            tb.innerHTML = v.map(d => '<tr><td>' + esc(d.name) + '</td><td class="' + (d.status === 'up' ? 'ok' : 'bad') + '">' + esc(d.status) + '</td><td class="mono">' + esc(d.ip) + '</td><td class="mono">' + esc(d.mac) + (d.private_mac ? ' <small>(private)</small>' : '') + '</td><td>' + esc(d.segment) + '</td><td>' + esc(d.class) + ' <small>(' + esc(d.class_source) + ')</small></td><td>' + esc(d.sources) + '</td>'
+                + (CAN_MODIFY ? '<td><form class="lan-form" onsubmit="return nmLabel(event, \'' + esc(d.mac) + '\')"><label>Name <input name="name" value="' + esc(d.label || '') + '" maxlength="64" aria-label="Name for ' + esc(d.mac) + '"></label><label>Class <select name="class" aria-label="Class for ' + esc(d.mac) + '"><option value="">automatic</option>' + CLASSES.map(c => '<option' + (d.class_source === 'label' && d.class === c ? ' selected' : '') + '>' + c + '</option>').join('') + '</select></label><button class="small" type="submit">Save</button></form></td>' : '') + '</tr>').join('');
+        } catch (e) { tb.innerHTML = '<tr><td colspan="8" class="alert-error">' + esc(e.message) + '</td></tr>'; }
+    }
+    async function nmLabel(ev, mac) {
+        ev.preventDefault();
+        const f = ev.target;
+        try { await api('PUT', '/api/map/devices/' + encodeURIComponent(mac), { name: f.name.value, class: f.class.value }); say('Saved ' + mac + '.'); loadDevices(); map.reload(); } catch (e) { say('Not saved: ' + e.message); }
+        return false;
+    }
+
+    async function loadRules() {
+        try {
+            const r = await api('GET', '/api/map/rules');
+            CLASSES = r.classes;
+            const sel = $('nm-rule-class');
+            if (sel) sel.innerHTML = CLASSES.map(c => '<option>' + c + '</option>').join('');
+            $('nm-rules').querySelector('tbody').innerHTML = r.rules.length ? r.rules.map(x => '<tr><td>' + x.priority + '</td><td>' + esc(x.field) + '</td><td class="mono">' + esc(x.pattern) + '</td><td>' + esc(x.class) + '</td>' + (CAN_MODIFY ? '<td><button class="small" type="button" onclick="nmDelRule(' + x.id + ')">Delete</button></td>' : '') + '</tr>').join('') : '<tr><td colspan="5" class="empty">No rules of your own yet.</td></tr>';
+            $('nm-builtin').innerHTML = '<table class="lan"><tbody>' + r.builtin.map(b => '<tr><td class="mono">' + esc(b[0]) + '</td><td>' + esc(b[1]) + '</td></tr>').join('') + '</tbody></table>';
+        } catch (e) { say(e.message); }
+    }
+    async function nmAddRule(ev) {
+        ev.preventDefault();
+        const f = ev.target;
+        try { await api('POST', '/api/map/rules', { field: f.field.value, pattern: f.pattern.value, class: f.class.value, priority: Number(f.priority.value) }); f.pattern.value = ''; loadRules(); map.reload(); } catch (e) { say('Not added: ' + e.message); }
+        return false;
+    }
+    async function nmDelRule(id) { if (!confirm('Delete this rule?')) return; try { await api('DELETE', '/api/map/rules/' + id); loadRules(); } catch (e) { say(e.message); } }
+
+    function ts(t) { return t ? new Date(t * 1000).toLocaleString() : '-'; }
+    async function loadKeys() {
+        try {
+            const v = await api('GET', '/api/map/keys');
+            $('nm-keys').querySelector('tbody').innerHTML = v.length ? v.map(k => '<tr><td>' + esc(k.name) + '</td><td>' + esc(k.scope) + '</td><td>' + esc(k.detail) + '</td><td>' + ts(k.created_at) + '</td><td>' + (k.expires_at ? ts(k.expires_at) : 'never') + '</td><td>' + ts(k.last_used) + '</td><td><button class="small" type="button" onclick="nmDelKey(' + k.id + ')">Revoke</button></td></tr>').join('') : '<tr><td colspan="7" class="empty">No share keys.</td></tr>';
+            $('nm-homepage').textContent = '- Network:\n    widget:\n      type: customapi\n      url: ' + location.origin + '/api/map/stats\n      headers:\n        X-Map-Key: <a stats or view key>\n      mappings:\n        - field: devices\n          label: Devices\n        - field: up\n          label: Up\n        - field: down\n          label: Down\n        - field: findings\n          label: Findings';
+        } catch (e) { say(e.message); }
+    }
+    async function nmAddKey(ev) {
+        ev.preventDefault();
+        const f = ev.target;
+        try {
+            const r = await api('POST', '/api/map/keys', { name: f.name.value, scope: f.scope.value, detail: f.detail.value, expires_days: Number(f.expires_days.value) });
+            const link = location.origin + r.live_path;
+            $('nm-newkey').innerHTML = '<p><strong>Copy this key now, it is not shown again:</strong></p><p class="nm-key">' + esc(r.key) + '</p>' + (f.scope.value === 'view' ? '<p>Live view: <a href="' + esc(link) + '" target="_blank" rel="noopener">' + esc(link) + '</a></p>' : '');
+            f.name.value = '';
+            loadKeys();
+        } catch (e) { say('Not created: ' + e.message); }
+        return false;
+    }
+    async function nmDelKey(id) { if (!confirm('Revoke this key? Everything using it stops working.')) return; try { await api('DELETE', '/api/map/keys/' + id); loadKeys(); } catch (e) { say(e.message); } }
+
+    async function loadSettings() {
+        try {
+            const s = await api('GET', '/api/map/settings');
+            $('nm-tools').textContent = 'nmap ' + (s.nmap_installed ? 'is installed (probe = nmap available).' : 'is not installed (probe = nmap needs net-analyzer/nmap).') + ' lldpctl ' + (s.lldpctl_installed ? 'is installed: LLDP neighbours are shown.' : 'is not installed (LLDP needs net-misc/lldpd).');
+            $('nm-settings').querySelector('tbody').innerHTML = s.settings.map(x => '<tr><td class="mono">map.' + esc(x.key) + '</td><td><input name="' + esc(x.key) + '" value="' + esc(s.values[x.key]) + '" aria-label="map.' + esc(x.key) + '"' + (CAN_MODIFY ? '' : ' disabled') + '></td><td class="mono">' + esc(x.default) + '</td><td>' + esc(x.help) + '</td></tr>').join('');
+        } catch (e) { say(e.message); }
+    }
+    async function nmSaveSettings(ev) {
+        ev.preventDefault();
+        const o = {};
+        for (const i of ev.target.querySelectorAll('input[name]')) o[i.name] = i.value;
+        try { await api('PUT', '/api/map/settings', o); say('Settings saved.'); loadSettings(); map.reload(); } catch (e) { say('Not saved: ' + e.message); }
+        return false;
+    }
+    function fromHash() {
+        const h = (location.hash || '').replace('#', '');
+        if (['map', 'advisor', 'devices', 'rules', 'share', 'settings'].includes(h) && $('t-' + h)) nmTab(h);
+    }
+    window.addEventListener('hashchange', fromHash);
+    fromHash();
+</script>
+{% endblock %}

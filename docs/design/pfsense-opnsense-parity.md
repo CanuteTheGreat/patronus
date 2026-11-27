@@ -195,7 +195,9 @@ From the live catalogs (pfSense CE 2.9.2: about 70 packages; OPNsense 26.7: abou
 Declarative config with GitOps and generations, Linux VRF, device segmentation with per-device Wi-Fi
 credentials, built-in Wi-Fi AP with channel coordination and steering, NAT64, signed plugins, OpenRC and
 systemd builds, an embedded router tier on real AP/router hardware, OpenWrt UCI import, Prometheus metrics,
-eBPF/XDP fast path.
+eBPF/XDP fast path. A live network map with device discovery (leases, neighbour table, ICMP, opt-in nmap,
+LLDP), PNG/SVG/Mermaid export, read-only share links and a flat-network segmentation advisor that applies
+the fix through device segmentation (both list ARP/DHCP tables only; docs/design/network-map.md).
 
 ## 11. Priority: what a pfSense/OPNsense switcher misses first
 

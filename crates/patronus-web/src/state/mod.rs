@@ -23,6 +23,8 @@ pub mod insight;
 pub mod interfaces;
 pub mod lan;
 pub mod monitoring;
+#[cfg(feature = "netmap")]
+pub mod netmap;
 pub mod network;
 pub mod routing;
 #[cfg(feature = "segmentation")]

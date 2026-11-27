@@ -162,6 +162,16 @@ that are not finished are listed separately under
   the admin UI, revoking a device cuts its running connections, and the
   state survives a reboot. Wired devices behind an unmanaged switch cannot be
   isolated from each other (docs/segmentation.md). [C62]
+- Network map (USE=netmap): every device on every LAN-side segment with live
+  up/down, discovered from DHCP leases and the kernel neighbour table (plus an
+  optional ICMP check, an opt-in nmap sweep and LLDP neighbours), classified
+  by host name, your rules or your labels, drawn as a map you can export as
+  PNG, SVG, Mermaid or JSON. A segmentation advisor flags a flat network
+  (IoT devices, cameras, printers or TVs next to computers and management
+  consoles) and applies the fix in one step with device segmentation (own
+  groups, trusted devices can still print, watch cameras and cast); read-only
+  share keys open a live view without a login and feed dashboard widgets such
+  as Homepage (docs/design/network-map.md). [C1700]
 - DNS rebinding protection (Unbound `private-address`, dnsmasq
   `stop-dns-rebind`) strips private addresses from public answers, with an
   exception list; it is on for a new install and stays off for a store that
