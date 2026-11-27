@@ -177,3 +177,11 @@ wait-minutes =
         [one] { $n } minute
        *[other] { $n } minutes
     }
+
+nav-reverse-proxy = Reverse proxy
+hw-title = Hardware settings
+hw-intro = Settings this device's image chooses for its hardware, with the reason for each default.
+hw-col-setting = Setting
+hw-col-value = Value
+hw-col-why = Why
+hw-col-change = To change
