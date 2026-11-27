@@ -587,6 +587,33 @@ fn openssh_tail(t: &str) -> Option<(&str, IpAddr)> {
     Some((user, ip.parse().ok()?))
 }
 
+/// OpenSSH 9.8+ (`PerSourcePenalties`, on by default): after a failed authentication sshd
+/// refuses the source's next connections for a while BEFORE they reach authentication, and
+/// logs `drop connection #N from [<ip>]:<port> on [<ip>]:<port> penalty: failed authentication`
+/// instead of another `Failed password`. A guesser hammering the port then shows up only in
+/// these lines, so each one counts as a failure. The address is the peer of a completed TCP
+/// handshake (not forgeable). Other penalty kinds (no authentication attempted, MaxStartups,
+/// LoginGraceTime) are not password guesses and are not counted.
+fn openssh_penalty(line: &str) -> Option<Attempt> {
+    const K: &str = "drop connection #";
+    let i = line.find(K)?;
+    if !tag_ok(&line[..i]) {
+        return None;
+    }
+    let rest = line[i + K.len()..]
+        .trim_end()
+        .strip_suffix(" penalty: failed authentication")?;
+    let (n, rest) = rest.split_once(" from ")?;
+    n.parse::<u64>().ok()?;
+    let (from, on) = rest.split_once(" on ")?;
+    addr_port(on)?;
+    Some(Attempt {
+        source: "sshd",
+        addr: addr_port(from)?.to_canonical(),
+        user: String::new(),
+    })
+}
+
 /// `<ip>:<port>` or `[<ip>]:<port>` at the very end (Dropbear).
 fn dropbear_addr(t: &str) -> Option<IpAddr> {
     addr_port(t.trim_end().rsplit_once(" from ")?.1)
@@ -639,6 +666,9 @@ pub fn parse_line_with(line: &str, extra_tags: &[String]) -> Option<Attempt> {
             });
         }
     }
+    if let Some(a) = openssh_penalty(line) {
+        return Some(a);
+    }
     const DROPBEAR: &[&str] = &[
         "Bad password attempt for ",
         "Login attempt for nonexistent user",
@@ -675,14 +705,29 @@ const OPENVPN_PHRASES: &[&str] = &[
 ];
 
 /// The address in the first token of an OpenVPN message: `<ip>:<port>`, `[<ip>]:<port>`,
-/// optionally behind `<common name>/` and `[AF_INET]`.
+/// optionally behind `<common name>/` and `[AF_INET]`, or (OpenVPN 2.7) behind the
+/// transport: `udp4:<ip>:<port>`, `tcp6-server:[<ip>]:<port>`. A v4-mapped v6 peer of a
+/// dual-stack socket is its v4 address.
 fn openvpn_addr(tok: &str) -> Option<IpAddr> {
     let t = tok.rsplit_once('/').map_or(tok, |x| x.1);
     let t = t
         .strip_prefix("[AF_INET6]")
         .or_else(|| t.strip_prefix("[AF_INET]"))
         .unwrap_or(t);
-    addr_port(t)
+    let t = match t.split_once(':') {
+        Some((proto, rest)) if openvpn_proto(proto) => rest,
+        _ => t,
+    };
+    addr_port(t).map(|a| a.to_canonical())
+}
+
+/// `udp`, `udp4`, `udp6`, `tcp4-server`, `tcp6-client`, ... (OpenVPN 2.7 peer prefixes).
+fn openvpn_proto(p: &str) -> bool {
+    let p = p
+        .strip_suffix("-server")
+        .or_else(|| p.strip_suffix("-client"))
+        .unwrap_or(p);
+    matches!(p, "udp" | "udp4" | "udp6" | "tcp" | "tcp4" | "tcp6")
 }
 
 fn parse_openvpn(line: &str, extra: &[String]) -> Option<Attempt> {
@@ -2030,6 +2075,9 @@ mod tests {
             ("2026-11-25T10:00:01-08:00 rtr sshd[9]: Failed keyboard-interactive/pam for bob from 2001:db8::5 port 22 ssh2", "2001:db8::5", "bob"),
             ("Nov 25 10:00:01 rtr sshd[812]: error: maximum authentication attempts exceeded for root from 203.0.113.9 port 50122 ssh2 [preauth]", "203.0.113.9", "root"),
             ("sshd-session[1]: Failed password for invalid user  from 192.0.2.8 port 1 ", "192.0.2.8", ""),
+            // OpenSSH 9.8+ PerSourcePenalties: later guesses are refused before authentication
+            ("drop connection #0 from [192.168.50.10]:41000 on [192.168.50.1]:22 penalty: failed authentication\r", "192.168.50.10", ""),
+            ("Nov 27 02:54:30 rtr sshd[77]: drop connection #12 from [2001:db8::5]:4000 on [2001:db8::1]:22 penalty: failed authentication", "2001:db8::5", ""),
         ];
         for (l, a, u) in cases {
             let got = parse_line(l).unwrap_or_else(|| panic!("no match: {l}"));
@@ -2037,6 +2085,32 @@ mod tests {
             assert_eq!(got.addr, ip(a), "{l}");
             assert_eq!(got.user, u, "{l}");
         }
+    }
+
+    #[test]
+    fn openssh_penalties_that_are_not_guesses_do_not_count() {
+        for l in [
+            // no authentication attempted / too slow: scanners, not guesses
+            "sshd[77]: drop connection #1 from [192.0.2.9]:4000 on [192.0.2.1]:22 penalty: connections without attempting authentication",
+            "sshd[77]: drop connection #1 from [192.0.2.9]:4000 on [192.0.2.1]:22 penalty: exceeded LoginGraceTime",
+            "sshd[77]: srclimit_penalise: 192.0.2.9/32: activating ipv4 penalty of 20 seconds for penalty: failed authentication",
+            // the phrase inside something an attacker controls, or from another daemon
+            "sshd[77]: Invalid user drop connection #0 from [203.0.113.66]:1 on [192.0.2.1]:22 penalty: failed authentication",
+            "Nov 27 rtr other[1]: drop connection #0 from [203.0.113.66]:1 on [192.0.2.1]:22 penalty: failed authentication",
+        ] {
+            assert_eq!(parse_line(l), None, "{l}");
+        }
+    }
+
+    #[test]
+    fn openssh_10_server_log() {
+        // OpenSSH 10.2 (`sshd -E`, CRLF line ends) answering four password guesses from one client:
+        // the first is a Failed password, the next three are refused by its own penalty.
+        let got: Vec<Attempt> = OPENSSH10_LOG.lines().filter_map(parse_line).collect();
+        assert_eq!(got.len(), 4, "{got:?}");
+        assert!(got
+            .iter()
+            .all(|a| a.source == "sshd" && a.addr == ip("192.168.50.10")));
     }
 
     #[test]
@@ -2057,6 +2131,8 @@ mod tests {
     }
 
     const OPENVPN_LOG: &str = include_str!("../tests/fixtures/openvpn-2.6-server.txt");
+    const OPENVPN27_LOG: &str = include_str!("../tests/fixtures/openvpn-2.7-server.txt");
+    const OPENSSH10_LOG: &str = include_str!("../tests/fixtures/openssh-10.2-sshd-E.txt");
     const CHARON_LOG: &str = include_str!("../tests/fixtures/charon-6.0-responder.txt");
 
     fn feed_all(p: &mut LineParser, text: &str) -> Vec<Attempt> {
@@ -2076,6 +2152,17 @@ mod tests {
     }
 
     #[test]
+    fn openvpn_27_server_log() {
+        // OpenVPN 2.7.0 server: a good client, tls-crypt garbage (forgeable, not counted) and
+        // two certificates from another CA (counted).
+        let got = feed_all(&mut LineParser::default(), OPENVPN27_LOG);
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!(got
+            .iter()
+            .all(|a| a.source == "openvpn" && a.addr == ip("198.51.100.10")));
+    }
+
+    #[test]
     fn openvpn_messages() {
         let cases = [
             "2026-11-26 06:44:54 10.77.0.3:48076 VERIFY ERROR: depth=0, error=unable to get local issuer certificate: CN=bad, serial=1",
@@ -2085,6 +2172,11 @@ mod tests {
             "Nov 26 06:44:54 rtr ovpn-office[812]: [UNDEF]/192.0.2.5:5 Auth Username/Password verification failed for peer",
             "Nov 26 06:44:54 rtr openvpn[812]: [2001:db8::7]:4000 VERIFY ERROR: depth=1",
             "2026-11-26 06:44:54 [AF_INET6]2001:db8::7:4000 VERIFY ERROR: depth=1",
+            // OpenVPN 2.7 names the transport in front of the peer
+            "2026-11-27 02:58:30 udp4:198.51.100.10:45905 VERIFY ERROR: depth=0, error=unable to get local issuer certificate: CN=alice, serial=1",
+            "2026-11-27 02:58:30 udp6:[2001:db8::7]:4000 VERIFY ERROR: depth=0, error=unable to get local issuer certificate: CN=alice",
+            "Nov 27 02:58:30 rtr openvpn[9]: bob/tcp4-server:192.0.2.5:1194 TLS Auth Error: Auth Username/Password verification failed for peer",
+            "2026-11-27 02:58:30 udp6:[::ffff:192.0.2.6]:4000 VERIFY ERROR: depth=0",
         ];
         for (l, a) in cases.iter().zip([
             "10.77.0.3",
@@ -2094,6 +2186,10 @@ mod tests {
             "192.0.2.5",
             "2001:db8::7",
             "2001:db8::7",
+            "198.51.100.10",
+            "2001:db8::7",
+            "192.0.2.5",
+            "192.0.2.6",
         ]) {
             let got = parse_line(l).unwrap_or_else(|| panic!("no match: {l}"));
             assert_eq!((got.source, got.addr), ("openvpn", ip(a)), "{l}");
