@@ -273,6 +273,11 @@ that are not finished are listed separately under
   exports flow records (v5, v9 or IPFIX) to a collector. [C47]
 - IGMP proxy (USE=igmp): igmpproxy forwards multicast streams from the WAN to
   LAN interfaces, with the firewall rules it needs generated for it. [C48]
+- TFTP server (USE=tftp): a built-in TFTP server (RFC 1350 with block-size, timeout and
+  transfer-size negotiation) for network boot, firmware and configuration transfers: read
+  only by default, confined to one directory (no `..`, no symlinks, no hidden names), run by
+  an unprivileged account, answering only the chosen interfaces and client networks, with a
+  file manager on its page and the firewall rules generated for it. [C1337]
 - NAT64 / DNS64 (USE=nat64): IPv6-only clients reach IPv4-only servers through
   tayga, and Unbound answers AAAA queries for IPv4-only names with addresses
   in the NAT64 prefix. [C49]

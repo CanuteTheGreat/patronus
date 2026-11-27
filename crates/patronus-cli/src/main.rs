@@ -735,8 +735,22 @@ fn restore_default_sigpipe() {
 #[cfg(not(unix))]
 fn restore_default_sigpipe() {}
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+/// The entry point decides before any async runtime exists: `patronus tftp run ...` (the supervised
+/// TFTP daemon) must be a single-threaded process when it drops privileges, because capabilities
+/// and the uid change are per thread and a runtime's idle worker threads would keep the permitted
+/// capabilities of the root process. Everything else runs on the same multi-thread runtime as before.
+fn main() -> anyhow::Result<()> {
+    #[cfg(feature = "tftp")]
+    if let Some(code) = commands::tftp::daemon_from_args() {
+        std::process::exit(code);
+    }
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(real_main())
+}
+
+async fn real_main() -> anyhow::Result<()> {
     restore_default_sigpipe();
     // Multi-call (embedded tier, feature `web-multicall`): invoked as
     // `patronus-web` (a link to this binary) it is the web UI server, so the

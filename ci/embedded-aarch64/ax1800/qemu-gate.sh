@@ -342,6 +342,32 @@ syslog_tcp_refused() { c=$(api POST /api/svc/syslog/targets '{"host":"10.0.2.2",
   [ "$c" = 400 ] && grep -F 'UDP only' "$W/api.json" >/dev/null || { echo "TCP collector: HTTP $c $(cat "$W/api.json")"; return 1; }
   R '! grep -q 6514 /etc/patronus/syslogd-remote.conf'; }
 
+# TFTP server (feature tftp, the built-in engine under the multiplexed patronus-daemon service of this init system): switched
+# on through the web API serving the loopback device (the guest's own busybox `tftp` is the real client, and traffic to the
+# guest's own address would arrive on lo, so lo is what the server serves here; the LAN-facing behaviour, the firewall rule
+# and the per-interface scope are proven on the x86 tier by ci/netlab/lane-j-tftp.sh). The daemon must run unprivileged
+# (user nobody), serve a file uploaded through the API byte for byte (also with a negotiated block size), refuse names
+# that climb out of the root and uploads (read only by default).
+tftp_enable() { login || return 1
+  c=$(api PUT /api/svc/tftp '{"enabled":true,"interfaces":"lo"}'); [ "$c" = 200 ] || { echo "PUT tftp: $c $(cat "$W/api.json")"; return 1; }
+  head -c 3000 /dev/urandom > "$W/tftp-src.bin"
+  c=$(api POST /api/svc/tftp/action/upload "{\"name\":\"ci-gate.bin\",\"data\":\"$(base64 -w0 "$W/tftp-src.bin")\"}"); [ "$c" = 200 ] || { echo "upload: $c $(cat "$W/api.json")"; return 1; }
+  i=0; while :; do o=$(R 'ps -o user,args | grep "[t]ftp run"' 2>&1) && break; i=$((i+1)); [ $i -ge 10 ] && { echo "no tftp daemon: $o"; R 'ls /etc/init.d | grep patronus-daemon; tail -8 /var/log/messages'; return 1; }; sleep 3; done
+  case "$o" in nobody*) ;; *) echo "the daemon does not run as nobody: $o"; return 1;; esac; }
+tftp_fetch() { want=$(sha256sum "$W/tftp-src.bin" | cut -d' ' -f1); i=0
+  while :; do R 'rm -f /tmp/tf.out; tftp -g -r ci-gate.bin -l /tmp/tf.out 127.0.0.1' >/dev/null 2>&1 && break
+    i=$((i+1)); [ $i -ge 10 ] && { echo "tftp fetch failed"; R 'ps -o user,args | grep "[t]ftp"; tail -8 /var/log/messages'; return 1; }; sleep 3; done
+  got=$(R 'sha256sum /tmp/tf.out' | cut -d' ' -f1); [ "$got" = "$want" ] || { echo "fetched file differs: $got, want $want"; return 1; }
+  R 'rm -f /tmp/tf.out; tftp -g -b 1400 -r ci-gate.bin -l /tmp/tf.out 127.0.0.1' >/dev/null 2>&1 || { echo "tftp fetch with a negotiated block size failed"; return 1; }
+  got=$(R 'sha256sum /tmp/tf.out' | cut -d' ' -f1); [ "$got" = "$want" ] || { echo "fetched file (blksize 1400) differs"; return 1; }; }
+tftp_jail() {
+  R 'rm -f /tmp/tf.out; tftp -g -r ../../../etc/passwd -l /tmp/tf.out 127.0.0.1 >/dev/null 2>&1; ! test -s /tmp/tf.out' || { echo "a name with ../ was served"; return 1; }
+  R 'rm -f /tmp/tf.out; tftp -g -r /etc/passwd -l /tmp/tf.out 127.0.0.1 >/dev/null 2>&1; ! test -s /tmp/tf.out' || { echo "/etc/passwd was served"; return 1; }
+  R 'echo x > /tmp/up.src; tftp -p -r up.bin -l /tmp/up.src 127.0.0.1 >/dev/null 2>&1; ! test -e /var/lib/patronus/tftp/up.bin' || { echo "an upload was stored although the server is read only"; return 1; }
+  c=$(api GET /api/svc/tftp); case "$(cat "$W/api.json")" in *'"reads_ok":'*'"mode":"read only"'*|*'"mode":"read only"'*'"reads_ok":'*) ;; *) echo "status: $(head -c 700 "$W/api.json")"; return 1;; esac; }
+tftp_off() { c=$(api PUT /api/svc/tftp '{"enabled":false}'); [ "$c" = 200 ] || { echo "disable: $c"; return 1; }
+  i=0; while R 'ps -o args | grep "[t]ftp run"' >/dev/null 2>&1; do i=$((i+1)); [ $i -ge 10 ] && { echo "the daemon still runs"; return 1; }; sleep 2; done; }
+
 # firmware upload from the web UI: status shows the running build; a file that is not an image for this board is
 # refused by patronus-flash's own guards (400) and not kept; nothing gets staged
 fw_web() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/system/firmware); g=$(cat "$W/api.json")
@@ -554,6 +580,11 @@ if has_feature syslog; then
   check "Syslog page: the test message arrives at the collector" syslog_test_msg
   check "Syslog page: a TCP collector is refused (busybox forwards over UDP only), nothing written" syslog_tcp_refused
 else echo "SKIP: Syslog (not in FEATURES=$FEATURES)" | tee -a "$RES/results.txt"; fi
+if has_feature tftp; then
+  check "TFTP server page: switched on through the web API (serving lo), the daemon runs as nobody under the init system, a file is uploaded through the API" tftp_enable
+  check "TFTP server: busybox tftp fetches the uploaded file byte for byte, also with a negotiated block size" tftp_fetch
+  check "TFTP server: ../ and absolute names are refused, an upload is refused (read only), counters are in the status" tftp_jail
+else echo "SKIP: TFTP server (not in FEATURES=$FEATURES)" | tee -a "$RES/results.txt"; fi
 check "features: role ap, Wi-Fi backend, \"not available\" list with reasons" features_ap
 check "AP role: router-only pages explain the main router, their APIs refuse changes (409); Wi-Fi page served" ap_pages
 check "dashboard widgets + system activity: both APIs answer 200 on the booted image, a layout round-trips, an unknown widget id is 400" dash_activity
@@ -657,6 +688,10 @@ if has_feature vpn-wireguard; then
 fi
 if has_feature ntp-server; then
   check "boot 2: NTP server still on (chrony.conf persisted), answers on the LAN" ntp_query
+fi
+if has_feature tftp; then
+  check "boot 2: the TFTP server is back after the reboot (the stored settings, the file, the unprivileged daemon)" tftp_fetch
+  check "TFTP server: switched off through the web API, the daemon is gone" tftp_off
 fi
 if has_feature syslog; then
   kill $SLP 2>/dev/null; syslog_listen 300
