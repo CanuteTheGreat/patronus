@@ -4,6 +4,6 @@
 version = 0.1
 repo = https://github.com/CanuteTheGreat/horcrux
 path = ui-kit/map
-commit = 965133def8b8ca50f7333632352aceb0608ffe3b
-sha256 map.js = e5147536a0eaa7ee70181e8d5f0b573774abc18947a53cb9a965590871b39ac0
+commit = 4cb6a69c58734c710e9e1afeb77bdfe5a6e0c876
+sha256 map.js = b40aee4434d980faa89f70a87ca7a8ba0816a636e8905cd7037767f08d0f276c
 sha256 map.css = f91be32ffd2797971974aa811037c901bb3b9e53365c801c5207960a295bca7f

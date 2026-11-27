@@ -185,7 +185,7 @@
         const tb = $('nm-devices').querySelector('tbody');
         try {
             const v = await api('GET', '/api/map/devices');
-            if (!v.length) { tb.innerHTML = '<tr><td colspan="8" class="empty">No devices seen yet.</td></tr>'; return; }
+            if (!v.length) { tb.innerHTML = '<tr><td colspan="8" class="empty">Devices appear here within a minute of being seen on a LAN-side segment.</td></tr>'; return; }
             tb.innerHTML = v.map(d => '<tr><td>' + esc(d.name) + '</td><td class="' + (d.status === 'up' ? 'ok' : 'bad') + '">' + esc(d.status) + '</td><td class="mono">' + esc(d.ip) + '</td><td class="mono">' + esc(d.mac) + (d.private_mac ? ' <small>(private)</small>' : '') + '</td><td>' + esc(d.segment) + '</td><td>' + esc(d.class) + ' <small>(' + esc(d.class_source) + ')</small></td><td>' + esc(d.sources) + '</td>'
                 + (CAN_MODIFY ? '<td><form class="lan-form" onsubmit="return nmLabel(event, \'' + esc(d.mac) + '\')"><label>Name <input name="name" value="' + esc(d.label || '') + '" maxlength="64" aria-label="Name for ' + esc(d.mac) + '"></label><label>Class <select name="class" aria-label="Class for ' + esc(d.mac) + '"><option value="">automatic</option>' + CLASSES.map(c => '<option' + (d.class_source === 'label' && d.class === c ? ' selected' : '') + '>' + c + '</option>').join('') + '</select></label><button class="small" type="submit">Save</button></form></td>' : '') + '</tr>').join('');
         } catch (e) { tb.innerHTML = '<tr><td colspan="8" class="alert-error">' + esc(e.message) + '</td></tr>'; }
@@ -203,7 +203,7 @@
             CLASSES = r.classes;
             const sel = $('nm-rule-class');
             if (sel) sel.innerHTML = CLASSES.map(c => '<option>' + c + '</option>').join('');
-            $('nm-rules').querySelector('tbody').innerHTML = r.rules.length ? r.rules.map(x => '<tr><td>' + x.priority + '</td><td>' + esc(x.field) + '</td><td class="mono">' + esc(x.pattern) + '</td><td>' + esc(x.class) + '</td>' + (CAN_MODIFY ? '<td><button class="small" type="button" onclick="nmDelRule(' + x.id + ')">Delete</button></td>' : '') + '</tr>').join('') : '<tr><td colspan="5" class="empty">No rules of your own yet.</td></tr>';
+            $('nm-rules').querySelector('tbody').innerHTML = r.rules.length ? r.rules.map(x => '<tr><td>' + x.priority + '</td><td>' + esc(x.field) + '</td><td class="mono">' + esc(x.pattern) + '</td><td>' + esc(x.class) + '</td>' + (CAN_MODIFY ? '<td><button class="small" type="button" onclick="nmDelRule(' + x.id + ')">Delete</button></td>' : '') + '</tr>').join('') : '<tr><td colspan="5" class="empty">Only the built-in patterns apply until you add a rule below.</td></tr>';
             $('nm-builtin').innerHTML = '<table class="lan"><tbody>' + r.builtin.map(b => '<tr><td class="mono">' + esc(b[0]) + '</td><td>' + esc(b[1]) + '</td></tr>').join('') + '</tbody></table>';
         } catch (e) { say(e.message); }
     }
