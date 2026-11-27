@@ -1749,3 +1749,6 @@ same AQL/ATF patches). The line is configuration (`KERNEL_LINE` in `kernel.pin`)
 - Slate (GL-AR750S): the kernel lives in NOR, the Patronus root in UBI on NAND, and `patronus-guard` rolls back only the root, so a kernel change is not atomic and an
   old/new mismatch strands the unit (no network, guard cannot revert the kernel). Since 6e the root carries the modules of both kernels and the kernel goes through
   `patronus-flash kernel-rehearse` / `kernel <kver>`: a U-Boot trial with automatic fallback, commit after a confirmed boot, the previous kernel kept (proof and limits in 6e).
+
+## Default editor on the embedded tier (owner 2026-11-27)
+Patronus defaults to vim on every tier. The standard tier carries `app-editors/vim` in the base set and `/etc/default-editor.conf` (`EDITOR_CHOICE=vim`, `default-editor apply` writes `/etc/env.d/99editor`). The embedded images (GL-AX1800, GL-AR750S) have a 7 MB squashfs on 128 MB NAND: vim and its runtime tree do not fit that budget, so they ship busybox `vi` (the same modal editor, already in the image) as `EDITOR`/`VISUAL` through `/etc/profile.d/10-editor.sh`. nano is never installed. `check-rootfs.sh` and `ci/embedded-common/tests/editor-profile.sh` gate it.

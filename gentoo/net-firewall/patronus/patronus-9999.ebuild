@@ -77,6 +77,7 @@ REQUIRED_USE="
 # kernels without CONFIG_NF_CONNTRACK_PROCFS (no /proc/net/nf_conntrack).
 # (No comments inside RDEPEND: Portage would parse '#' as an atom.)
 RDEPEND="
+	app-editors/vim
 	acct-user/patronus
 	sys-auth/pambase
 	sys-libs/pam

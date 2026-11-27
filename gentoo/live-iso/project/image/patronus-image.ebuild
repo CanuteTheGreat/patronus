@@ -35,6 +35,7 @@ RESTRICT="strip mirror"
 QA_PREBUILT="usr/bin/patronus-cli usr/bin/patronus-web usr/bin/patronus-install"
 
 RDEPEND="
+	app-editors/vim
 	acct-user/patronus
 	acct-group/patronus
 	sec-keys/openpgp-keys-errantsolutions

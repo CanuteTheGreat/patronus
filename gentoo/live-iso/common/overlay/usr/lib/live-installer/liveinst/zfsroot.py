@@ -33,6 +33,11 @@ def passphrase_problem(p):
 
 
 RAID_LEVELS = ("single", "mirror", "stripe", "raidz1", "raidz2")
+# menu labels of the layouts (installer TUI/GUI); MIN_DISKS below is the disk count each one needs
+RAID_LABELS = {"single": "single disk", "mirror": "mirror (RAID1, 2+ disks, survives all but one failing)",
+               "stripe": "stripe (2+ disks, NO redundancy: one failed disk loses the pool)",
+               "raidz1": "RAID-Z1 (3+ disks, survives one failing)", "raidz2": "RAID-Z2 (4+ disks, survives two failing)"}
+POOL_NAME_MAX = 64
 MIN_DISKS = {"single": 1, "mirror": 2, "stripe": 2, "raidz1": 3, "raidz2": 4}
 
 
@@ -65,7 +70,25 @@ def raid_problem(raid, ndisks):
     return None
 
 
-def pool_args(encrypt, devs, mirror, target, keyformat="passphrase"):
+def pool_name(c):
+    """the root pool's name: answer-file key disk.zfs_pool / the installer's Advanced field, default POOL"""
+    return (c.get("zfs_pool") or POOL).strip()
+
+
+def pool_name_problem(name):
+    """zpool(8) naming rules (pure): a letter first, then letters, digits, _ - . : ; not a vdev keyword"""
+    if not name:
+        return "the ZFS pool name is empty"
+    if len(name) > POOL_NAME_MAX:
+        return f"the ZFS pool name is longer than {POOL_NAME_MAX} characters"
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]*", name):
+        return f"ZFS pool name {name!r}: start with a letter, then only letters, digits, _ - . :"
+    if name in ("mirror", "raidz", "draid", "spare", "log", "cache", "special", "dedup") or re.fullmatch(r"(raidz|draid)\d*|c\d.*", name):
+        return f"ZFS pool name {name!r} is reserved by zpool (a vdev keyword)"
+    return None
+
+
+def pool_args(encrypt, devs, mirror, target, keyformat="passphrase", pool=POOL):
     """argv of `zpool create` (pure: unit tested). `mirror` = layout name or the old bool."""
     a = ["zpool", "create", "-f", "-o", "ashift=12", "-o", "autotrim=on",
          "-O", "compression=zstd", "-O", "acltype=posixacl", "-O", "xattr=sa", "-O", "relatime=on",
@@ -74,7 +97,7 @@ def pool_args(encrypt, devs, mirror, target, keyformat="passphrase"):
         a += ["-O", f"encryption={ENC_ALGO}", "-O", f"keyformat={keyformat}", "-O", f"keylocation=file://{KEY_FILE}"]
         if keyformat == "passphrase":
             a += ["-O", "pbkdf2iters=1000000"]
-    a += ["-R", target, POOL] + vdev_args(mirror, devs)
+    a += ["-R", target, pool] + vdev_args(mirror, devs)
     return a
 
 
@@ -97,6 +120,44 @@ def datasets(with_docker=False, product="horcrux"):
     return d
 
 
+HOSTID_DRACUT_CONF = ('# written by live-installer: the initramfs imports the root pool with the host id the pool was created with\n'
+                      '# (/etc/hostid of the installed system); without it zpool status says "Mismatch between pool hostid and system hostid"\n'
+                      'install_items+=" /etc/hostid "\n')
+
+
+def _initramfs_hostid(inst, img):
+    """bytes of /etc/hostid inside the initramfs image `img` (path inside the target), b'' when absent"""
+    import subprocess
+    r = subprocess.run(["chroot", inst.target, "lsinitrd", "-f", "etc/hostid", img], capture_output=True)
+    return r.stdout if r.returncode == 0 else b""
+
+
+def ensure_initramfs_hostid(inst):
+    """After every step that builds an initramfs (T2, TPM seal, hibernate swap): the newest kernel's initramfs holds the same
+    /etc/hostid as the installed system, i.e. the one the pool was created with. When it does not (the plain case: the image's
+    initramfs is copied as built), rebuild it once; fail the install when it still differs, a pool the initramfs cannot import
+    cleanly would report a hostid mismatch on every boot."""
+    from . import zfsswap
+    from .system import InstallError
+    want = open(f"{inst.target}/etc/hostid", "rb").read() if os.path.exists(f"{inst.target}/etc/hostid") else b""
+    if len(want) != 4 or want == b"\0\0\0\0":
+        raise InstallError("internal: the installed system has no usable /etc/hostid (the pool was created with the live system's)")
+    kver = zfsswap._newest_kver(inst)
+    img = f"/boot/initramfs-{kver}.img"
+    if _initramfs_hostid(inst, img) != want:
+        inst.log(f"initramfs {kver} lacks the pool's host id: rebuilding it")
+        gcc = f"{inst.target}/usr/lib/gcc"
+        chost = sorted(os.listdir(gcc))[0] if os.path.isdir(gcc) and os.listdir(gcc) else "x86_64-pc-linux-gnu"
+        inst.run(["dracut", "--force", "--no-hostonly", "--kver", kver, img, kver], chroot=True, env={"CHOST": chost})
+        listing = []
+        inst.run(["lsinitrd", img], chroot=True, line_cb=lambda l: listing.append(l))
+        if not re.search(r"zfs\.ko", "".join(listing)):
+            raise InstallError(f"the rebuilt initramfs {img} has no zfs.ko: the root pool could not be imported")
+        if _initramfs_hostid(inst, img) != want:
+            raise InstallError(f"the initramfs {img} does not carry the installed system's /etc/hostid: the pool would report a hostid mismatch")
+    inst.log("initramfs host id = system host id = pool host id")
+
+
 def mkpool(inst):
     c = inst.c
     devs = [inst.layout(d)[4] for d in c["disks"]]
@@ -112,10 +173,11 @@ def mkpool(inst):
             else:
                 f.write(c["zfs_passphrase"])       # no trailing newline: the key is exactly what the user typed
     try:
-        inst.run(pool_args(enc, devs, c.get("zfs_raid", "single"), inst.target, "hex" if c.get("zfs_keymode") == "tpm" else "passphrase"))
+        inst.run(pool_args(enc, devs, c.get("zfs_raid", "single"), inst.target, "hex" if c.get("zfs_keymode") == "tpm" else "passphrase",
+                           pool_name(c)))
         if enc:
             # from now on the key is asked for (initramfs prompt); the file URL must not outlive the install
-            inst.run(["zfs", "set", "keylocation=prompt", POOL])
+            inst.run(["zfs", "set", "keylocation=prompt", pool_name(c)])
     finally:
         if os.path.exists(KEY_FILE):
             try:
@@ -125,10 +187,11 @@ def mkpool(inst):
             finally:
                 os.unlink(KEY_FILE)
     docker = "docker" in inst.p.get("services", [])
+    pool = pool_name(inst.c)
     for name, props in datasets(docker, inst.p.get("name", "horcrux")):
-        argv = ["zfs", "create"] + [x for p in props for x in ("-o", p)] + [f"{POOL}/{name}"]
+        argv = ["zfs", "create"] + [x for p in props for x in ("-o", p)] + [f"{pool}/{name}"]
         inst.run(argv)
-    inst.run(["zpool", "set", f"bootfs={POOL}/ROOT/{BE}", POOL])
+    inst.run(["zpool", "set", f"bootfs={pool}/ROOT/{BE}", pool])
 
 
 def mount(inst):
@@ -136,7 +199,7 @@ def mount(inst):
     # the BE mounted on top of them hid them, and the desktop user's home was created in the BE's own /home (hidden by the empty home dataset
     # at every boot: GNOME could not start). Unmount them first, mount the BE, then mount_rest() mounts the shared datasets above it.
     inst.run(["zfs", "umount", "-a"], check=False)
-    inst.run(["zfs", "mount", f"{POOL}/ROOT/{BE}"])
+    inst.run(["zfs", "mount", f"{pool_name(inst.c)}/ROOT/{BE}"])
 
 
 def mount_rest(inst):
@@ -145,7 +208,7 @@ def mount_rest(inst):
     home = f"{inst.target}/home"
     if os.system(f"findmnt -n -o FSTYPE {home} | grep -q zfs") != 0:
         from .system import InstallError
-        raise InstallError(f"{POOL}/home is not mounted at {home}: the user's home would be created in the boot environment and hidden at boot")
+        raise InstallError(f"{pool_name(inst.c)}/home is not mounted at {home}: the user's home would be created in the boot environment and hidden at boot")
 
 
 ZRAM_CONF = """# written by the Horcrux installer: compressed RAM swap instead of swap on ZFS (unsafe) or a disk partition
@@ -155,7 +218,7 @@ zram_max_mb={max_mb}
 """
 
 BE_CONF = """# horcrux-be (boot environments)
-POOL="rpool"
+POOL="{pool}"
 KEEP="5"
 AUTO_SNAPSHOT="yes"
 TIMEOUT="5"
@@ -193,7 +256,7 @@ def configure(inst, cmdline_extra="", kernel_glob="*"):
     configure_zram(inst)
     # systemd: the image's zram-swap.service (the same script as OpenRC's zram-swap, reads /etc/conf.d/zram-swap) is the one zram swap,
     # enabled by cfg_finish_config
-    inst.write("/etc/horcrux/be.conf", BE_CONF.format(cmdline=cmdline_extra.strip(), kglob=kernel_glob))
+    inst.write("/etc/horcrux/be.conf", BE_CONF.format(pool=pool_name(inst.c), cmdline=cmdline_extra.strip(), kglob=kernel_glob))
     inst.write("/etc/portage/bashrc", PORTAGE_BASHRC)
     inst.write("/etc/kernel/postinst.d/90-horcrux-be", "#!/bin/sh\nexec horcrux-be sync\n", 0o755)
     # the boot-time import of the other pools/datasets: zfs-import/zfs-mount (OpenRC) or zfs-import-cache/zfs-mount + zfs.target (systemd);
@@ -238,7 +301,7 @@ def write_grubcfg(inst, extra_cmdline=""):
     from .system import fsuuid
     inst.run(["horcrux-be", "init", "--be", BE, "--boot-uuid", fsuuid(L[2])], chroot=True)
     cfg = open(f"{inst.target}/boot/grub/grub.cfg").read()
-    if f"root=ZFS={POOL}/ROOT/{BE}" not in cfg:
+    if f"root=ZFS={pool_name(inst.c)}/ROOT/{BE}" not in cfg:
         from .system import InstallError
         raise InstallError("grub.cfg has no ZFS boot environment entry")
     mirror_boot(inst)
@@ -269,7 +332,7 @@ def finish(inst):
     inst.run(["swapoff", "-a"], check=False)
     inst.run(["cryptsetup", "close", "hxswap"], check=False)      # the hibernation swap mapping (zfsswap.py), if any
     inst.run(["zfs", "umount", "-a"], check=False)
-    inst.run(["zpool", "export", POOL], check=False)
+    inst.run(["zpool", "export", pool_name(inst.c)], check=False)
 
 
 def pool_import_key_note():

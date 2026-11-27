@@ -420,7 +420,7 @@ cat certs/patronus.crt certs/patronus.key > certs/patronus.pem
 
 # 2. Configure environment
 cp .env.example .env
-nano .env  # Edit configuration
+vim .env  # Edit configuration
 
 # 3. Start cluster
 docker-compose -f docker-compose.ha.yml up -d

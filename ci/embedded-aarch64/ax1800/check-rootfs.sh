@@ -15,6 +15,10 @@ sh=${r##*:}
 grep -q '^root:[^:!*]' "$R/etc/shadow" 2>/dev/null || [ -s "$R/root/.ssh/authorized_keys" ] || fail "root has neither a password nor an authorized key"
 grep -q '^nobody:' "$R/etc/passwd" || fail "no nobody user"
 [ -s "$R/etc/services" ] || fail "no /etc/services (busybox wget/nc: bad port 'http')"
+# default editor (owner 2026-11-27: vim, never nano): vim does not fit the NAND budget, so busybox vi is the editor; the profile must exist, the applet must be linked, no nano
+[ -s "$R/etc/profile.d/10-editor.sh" ] || fail "no /etc/profile.d/10-editor.sh (EDITOR/VISUAL would be unset)"
+[ -e "$R/usr/bin/vi" ] || [ -e "$R/bin/vi" ] || [ -L "$R/usr/bin/vi" ] || [ -L "$R/bin/vi" ] || fail "no vi applet link: the default editor does not exist"
+[ ! -e "$R/usr/bin/nano" ] && [ ! -e "$R/bin/nano" ] || fail "nano is installed in the embedded image"
 for f in usr/sbin/patronus-flash usr/libexec/patronus/fwcheck.sh usr/libexec/patronus/upgrade-install usr/libexec/patronus/ubi-data usr/sbin/patronus-init usr/libexec/patronus/early usr/libexec/patronus/ath11k-caldata usr/libexec/patronus/ap \
          usr/libexec/patronus/ap-guest usr/libexec/patronus/ap-coord usr/libexec/patronus/ap-steer usr/libexec/patronus/ap-chan usr/libexec/patronus/ap-addr usr/libexec/patronus/leds usr/libexec/patronus/restart-schedule \
          usr/libexec/patronus/scheduled-restart usr/libexec/patronus/board-network etc/patronus/board.sh etc/patronus-init etc/pam.d/patronus \

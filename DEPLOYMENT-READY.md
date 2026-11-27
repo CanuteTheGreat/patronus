@@ -179,7 +179,7 @@ emerge -av net-firewall/patronus
 ```bash
 # Configure
 cp /etc/patronus/patronus.toml.example /etc/patronus/patronus.toml
-nano /etc/patronus/patronus.toml
+vim /etc/patronus/patronus.toml
 
 # Initialize secrets
 patronus secrets init

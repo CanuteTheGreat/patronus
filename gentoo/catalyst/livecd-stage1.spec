@@ -27,7 +27,6 @@ livecd/packages:
     app-admin/syslog-ng
     app-arch/unzip
     app-editors/vim
-    app-editors/nano
     app-misc/livecd-tools
     app-misc/screen
     app-misc/tmux

@@ -62,7 +62,6 @@ stage3/packages:
     # Utilities
     app-admin/sudo
     app-editors/vim
-    app-editors/nano
     sys-process/htop
     sys-apps/pciutils
     sys-apps/usbutils

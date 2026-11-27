@@ -193,7 +193,7 @@ emerge -av net-firewall/patronus
 cp /etc/patronus/patronus.toml.example /etc/patronus/patronus.toml
 
 # Edit configuration
-nano /etc/patronus/patronus.toml
+vim /etc/patronus/patronus.toml
 
 # Initialize secrets encryption
 patronus secrets init

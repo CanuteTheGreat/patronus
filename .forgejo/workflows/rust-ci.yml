@@ -253,6 +253,8 @@ jobs:
         run: gentoo/live-iso/sync-common.sh --check && (cd gentoo/live-iso/common && python3 -m unittest discover -s tests) && (cd gentoo/live-iso/project/tests && python3 -m unittest discover -p 'test_*.py')
       - name: Headless-first image (no desktop/personal package in the image inputs, headless gates on every architecture)
         run: ci/check-headless-image.sh
+      - name: Default editor is vim on every tier, never nano (owner 2026-11-27)
+        run: python3 ci/check-default-editor.py && sh ci/embedded-common/tests/editor-profile.sh
       - name: Shared build cache (rw-build-cache)
         continue-on-error: true
         run: |
