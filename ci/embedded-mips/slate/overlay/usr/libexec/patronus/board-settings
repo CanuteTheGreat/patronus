@@ -22,13 +22,29 @@ uplink5_state() {
   fi
   if iw dev "$WAN5_IF" link 2>/dev/null | grep -q '^Connected'; then echo "on: connected"; else echo "on: not connected"; fi
 }
+mgmt_state() {
+  [ "$MGMT_FAILOVER" = on ] || { echo "off: the reserved address stays with ${WAN_IF:-the primary uplink} and goes away with it"; return; }
+  if [ -f "$WF_RUN/mgmt.on" ]; then
+    echo "on: ACTIVE: $(cut -d' ' -f2 "$WF_RUN/mgmt.on") is carried by $(cut -d' ' -f1 "$WF_RUN/mgmt.on") while ${WAN_IF:-the primary uplink} is down"; return
+  fi
+  a=$(cat "$WF_RUN/mgmt.addr" 2>/dev/null)
+  if [ "$UPLINK5" = on ]; then echo "on: ready${a:+ ($a on ${WAN_IF:-the primary uplink})}; moves to the other uplink if the primary loses its Wi-Fi link"
+  else echo "on, but idle: needs a second uplink (UPLINK5=on)"; fi
+}
 render() {
   printf '[\n'
   if [ -n "$WAN5_IF" ]; then
     printf '{"key":"UPLINK5","label":"5 GHz Wi-Fi uplink (client on the 5 GHz radio)","value":"%s","default":"%s","allowed":["on","off"],' \
       "$(esc "$UPLINK5")" "$(esc "$UPLINK5_DEFAULT")"
-    printf '"reason":"%s","how":"%s","state":"%s"}\n' "$(esc "$UPLINK5_REASON")" "$(esc "$UPLINK5_HOW")" "$(esc "$(uplink5_state)")"
+    printf '"reason":"%s","how":"%s","state":"%s"}' "$(esc "$UPLINK5_REASON")" "$(esc "$UPLINK5_HOW")" "$(esc "$(uplink5_state)")"
+    [ -n "$WAN_IF" ] && printf ',\n'
   fi
+  if [ -n "$WAN_IF" ]; then
+    printf '{"key":"MGMT_FAILOVER","label":"Management address failover (address follows a surviving Wi-Fi uplink)","value":"%s","default":"%s","allowed":["on","off"],' \
+      "$(esc "$MGMT_FAILOVER")" "$(esc "$MGMT_FAILOVER_DEFAULT")"
+    printf '"reason":"%s","how":"%s","state":"%s"}' "$(esc "$MGMT_FAILOVER_REASON")" "$(esc "$MGMT_FAILOVER_HOW")" "$(esc "$(mgmt_state)")"
+  fi
+  printf '\n'
   printf ']\n'
 }
 case "${1:-write}" in

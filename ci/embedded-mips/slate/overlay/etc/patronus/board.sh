@@ -33,6 +33,15 @@ UPLINK5_DEFAULT=off
 UPLINK5=$UPLINK5_DEFAULT
 UPLINK5_REASON="Off by default on this board: the 5 GHz radio (QCA9887) cannot reliably be a Wi-Fi client and an access point at the same time; its firmware stalls and restarts, and the client can only join networks on the access point's channel. The 2.4 GHz client carries the uplink."
 UPLINK5_HOW="Set UPLINK5=on in /etc/patronus/unit.conf (or the unit's image settings) and restart; a radio watchdog then drops the 5 GHz client if its firmware fails."
+# Management address failover (typed: on|off; per unit in unit.conf; docs/embedded-routers.md 6i). The primary client's address (the
+# upstream reservation the house reaches the unit by) moves to a surviving uplink within seconds when the primary loses its Wi-Fi
+# link (e.g. the upstream access point restarts that radio) and moves back when the primary is up again. It needs a second
+# connected uplink (UPLINK5=on): with one uplink there is nothing to move to.
+MGMT_FAILOVER_DEFAULT=on
+MGMT_FAILOVER=$MGMT_FAILOVER_DEFAULT
+MGMT_FAILOVER_AFTER=4          # seconds the primary must be down before its address moves (typed number, 1-600)
+MGMT_FAILOVER_REASON="On by default: with two Wi-Fi uplinks the unit's reserved address belongs to one of them, and it would vanish with that uplink (an upstream access point restarting a radio takes it away for ~35 s) although the other uplink is up. The address is carried by the surviving uplink and announced with gratuitous ARP."
+MGMT_FAILOVER_HOW="Set MGMT_FAILOVER=off (or MGMT_FAILOVER_AFTER=<seconds>) in /etc/patronus/unit.conf (or the unit's image settings) and restart. It only acts while a second uplink is connected (UPLINK5=on)."
 # NOR kernel slots (patronus-flash kernel ..., /usr/libexec/patronus/nor-kernel; docs/embedded-routers.md 6e). GL's U-Boot always
 # boots the uImage at KSLOT_P_ADDR (the `kernel` partition); the trial kernel and the previous kernel live in OpenWrt's unused
 # `nor_reserved` partition. Only these partitions are ever written; u-boot and art never are (KSLOT_NEVER).
@@ -53,6 +62,8 @@ KSLOT_KERNEL_DIR=/usr/share/patronus/kernel   # kernels this root may install (<
 KSLOT_STATE=/data/kernel     # events + trial record (persistent)
 [ -f /etc/patronus/unit.conf ] && . /etc/patronus/unit.conf
 case "$UPLINK5" in on|off) ;; *) echo "board.sh: UPLINK5=$UPLINK5 is not on|off: using $UPLINK5_DEFAULT" >&2; UPLINK5=$UPLINK5_DEFAULT ;; esac
+case "$MGMT_FAILOVER" in on|off) ;; *) echo "board.sh: MGMT_FAILOVER=$MGMT_FAILOVER is not on|off: using $MGMT_FAILOVER_DEFAULT" >&2; MGMT_FAILOVER=$MGMT_FAILOVER_DEFAULT ;; esac
+case "$MGMT_FAILOVER_AFTER" in ''|*[!0-9]*) MGMT_FAILOVER_AFTER=4 ;; *) [ "$MGMT_FAILOVER_AFTER" -ge 1 ] && [ "$MGMT_FAILOVER_AFTER" -le 600 ] || MGMT_FAILOVER_AFTER=4 ;; esac
 # neither the SoC Wi-Fi radio nor a device-tree Ethernet port = not a Slate (an emulator, the QEMU gate): no switch, no Wi-Fi uplinks or APs to
 # follow (board-network bridges eth0 flat). A real unit whose radio driver failed still has its device-tree eth0 and keeps the switch setup.
 # unit.conf can force either way with NO_BOARD=0|1.

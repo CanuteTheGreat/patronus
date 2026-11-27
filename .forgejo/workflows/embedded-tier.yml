@@ -40,6 +40,30 @@ jobs:
       - name: Device-profile tooling (schema, tier minimums, Slate golden values, TOML fallback parser)
         run: sh ci/hw-profile/tests/run.sh
 
+  slate-mgmt-failover:
+    # Management address failover (docs/embedded-routers.md 6i): the real wifi-follow in network namespaces, the primary uplink
+    # loses its link, the reserved address must answer on the other uplink within seconds, and move back. The red run
+    # (MGMT_FAILOVER=off) must stay unreachable, proving the test sees the bug. Privileged throwaway container on the runner's docker.
+    name: Slate management address failover (netns, real wifi-follow)
+    runs-on: linux-any
+    timeout-minutes: 15
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 1g --memory-swap 1g --cpus 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Failover on, then the red run with failover off
+        run: |
+          set -e
+          tar c ci/embedded-mips/slate | docker run -i --rm --privileged --memory 512m debian:bookworm-slim sh -c '
+            set -e
+            apt-get update -qq >/dev/null
+            apt-get install -y -qq --no-install-recommends iproute2 nftables netcat-openbsd python3 util-linux procps >/dev/null
+            mkdir /w && tar x -C /w && cd /w
+            MODE=off sh ci/embedded-mips/slate/tests/netns-mgmt-failover.sh
+            MODE=on sh ci/embedded-mips/slate/tests/netns-mgmt-failover.sh
+          '
+
   slate-nor-kernel:
     # The NOR kernel trial + rollback (patronus-flash kernel, docs/embedded-routers.md 6e): fake MTD partitions, every
     # power-on runs GL's own U-Boot hush/test/run (pinned source, tests/uboot-sim), power cuts at every flash erase.

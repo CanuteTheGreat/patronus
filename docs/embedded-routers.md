@@ -430,6 +430,33 @@ Host tests: `tests/wifi-follow-test.sh` (backoff, drop/return/hold doubling, res
 `UPLINK5=off`), `tests/board-settings-test.sh` (JSON, typed key, fallback on a bad value, escaping), `tests/run.sh` (check-rootfs,
 pin). On a unit: the A/B phases above and a 12 h soak.
 
+### 6i. Management address failover between the two Wi-Fi uplinks (2026-11-27)
+
+With both clients in one upstream subnet (6d) the unit's reserved address (the upstream DHCP reservation of the 2.4 GHz client, the
+one the house reaches the unit by) belonged to ONE uplink and vanished with it: when the upstream access point restarted its
+2.4 GHz radio (~35 s) the unit answered "No route to host" although the 5 GHz client was up and serving.
+
+`wifi-follow` now carries the address over (`mgmt_failover`, every pass, `POLL` 3 s):
+
+- primary = `WAN_IF`. While it is associated and holds an address, that address is remembered (`/run/wifi-follow/mgmt.addr`, and
+  `/data/wifi-follow/mgmt.addr` so a reboot knows it before the first lease).
+- the primary not associated for `MGMT_FAILOVER_AFTER` s (default 4) and another client associated, with an address and its
+  source-routing table: the address is added to that client as a /32 alias, announced with gratuitous ARP (`MGMT_GARP` frames, repeated
+  every `MGMT_GARP_EVERY` passes while moved), and an `ip rule from <addr>` one pref below that client's own source rule sends the
+  replies out of it. The firewall's boot management rule already covers every uplink.
+- the primary associated again with its address: the alias and the rule go, the primary announces itself, state files are removed.
+- the carrier itself lost: the alias is dropped and the next surviving uplink is looked for; nothing to move to = nothing happens.
+
+Typed settings (`board.sh` defaults, per unit in `unit.conf`, shown with reason, default and live state on System > Hardware
+settings): `MGMT_FAILOVER=on|off` (default on; idle without a second connected uplink, i.e. with the board default `UPLINK5=off`)
+and `MGMT_FAILOVER_AFTER` (seconds, 1-600). The tuning knobs `MGMT_GARP`, `MGMT_GARP_EVERY` are env/unit.conf values of `wifi-follow`.
+
+Proof: `tests/netns-mgmt-failover.sh` runs the real `wifi-follow` in network namespaces (house bridge, two clients in one subnet,
+firewall with the boot rule): both up -> primary answers; primary link lost -> the address answers on the other uplink's MAC in 3-5 s
+and the other uplink's own address keeps working; primary back -> back on its MAC, alias and rule gone; the other uplink down ->
+nothing moves; only the backup returns -> carried again. `MODE=off` is the red run (stays unreachable). CI job
+`slate-mgmt-failover` (embedded-tier.yml); host tests `tests/board-settings-test.sh`.
+
 ## 6a. Local web UI (the LuCI equivalent)
 
 **Yes: the Slate keeps a local web UI, and it is the real Patronus UI**, not a lite copy. Decision rule that was applied: try the straight port first; fall back to a `web-lite` only if it missed the 16 MiB slot or a 25-30 MB RSS cap. It met both, so no second UI exists to maintain.

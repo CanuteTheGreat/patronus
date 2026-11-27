@@ -72,6 +72,16 @@ RADIO_SETUP=${RADIO_SETUP:-/usr/libexec/patronus/board-network}   # `<RADIO_SETU
 DMESG=${DMESG:-dmesg}
 BOARD_SETTINGS=${BOARD_SETTINGS:-/usr/libexec/patronus/board-settings}   # republished for the UI on every drop/return
 WPA_PIDDIR=${WPA_PIDDIR:-/run}
+# management address failover (docs 6i): the primary uplink's address (WAN_IF: the one the upstream DHCP reservation and the
+# house name point at) follows a surviving uplink while the primary is down, and returns when it is back.
+#  MGMT_FAILOVER=on|off  (board.sh default on; only acts when a second client exists and is connected)
+#  MGMT_FAILOVER_AFTER   seconds the primary must be down (not associated) before its address moves (default 4)
+#  MGMT_GARP             gratuitous ARPs per announcement (default 3); repeated every MGMT_GARP_EVERY passes while moved
+MGMT_FAILOVER=${MGMT_FAILOVER:-on}
+MGMT_FAILOVER_AFTER=${MGMT_FAILOVER_AFTER:-4}
+MGMT_GARP=${MGMT_GARP:-3}
+MGMT_GARP_EVERY=${MGMT_GARP_EVERY:-5}
+MGMT_STATE=${MGMT_STATE:-/data/wifi-follow}
 
 now() { if [ -n "$NOW" ]; then $NOW; else cut -d. -f1 /proc/uptime; fi; }
 log() { echo "wifi-follow: $*"; logger -t wifi-follow "$*" 2>/dev/null; }
@@ -430,12 +440,84 @@ mgmt_pass() {
   return 0
 }
 
+# ---- management address failover ----------------------------------------------------------------------------------------------
+# The primary uplink (WAN_IF) holds the unit's reserved address; with two clients in one upstream subnet that address goes away
+# with its uplink (house AP restarts a radio ~35 s: "No route to host" although the other uplink is up and serving). While the
+# primary is not associated for MGMT_FAILOVER_AFTER s and another client is, the primary's last address is added to that client as
+# a /32 alias, announced with gratuitous ARP (the upstream router and the house learn the new MAC at once), and replies for it
+# leave by that client (ip rule one pref below the client's own source rule). When the primary has its address again the alias
+# goes, the primary announces itself and the rules return. State in $RUN/mgmt.* (live) and $MGMT_STATE/mgmt.addr (last address).
+sta_up() { $IW dev "$1" link 2>/dev/null | grep -q '^Connected'; }
+sta_addr() { $IPCMD -4 -o addr show dev "$1" scope global 2>/dev/null | awk '$4 !~ /\/32$/ {print $4; exit}' | sed 's#/.*##'; }
+garp() { # <if> <addr>
+  $ARPING -U -q -c "$MGMT_GARP" -w 2 -I "$1" -s "$2" "$2" >/dev/null 2>&1
+}
+pref_of() { for u in $UPLINK_TABLES; do [ "${u%%:*}" = "$1" ] && echo "${u##*:}" && return; done; }
+table_of() { for u in $UPLINK_TABLES; do [ "${u%%:*}" = "$1" ] && echo "$u" | cut -d: -f2 && return; done; }
+mgmt_release() { # <backup_if> <addr>: take the alias away again
+  b=$1; a=$2
+  $IPCMD addr del "$a/32" dev "$b" 2>/dev/null
+  while $IPCMD rule del from "$a" pref "$MGMT_RPREF" 2>/dev/null; do :; done
+  rm -f "$RUN/mgmt.on" "$RUN/mgmt.since" "$RUN/mgmt.garpn"
+}
+mgmt_failover() {
+  [ "$MGMT_FAILOVER" = on ] && [ -n "${WAN_IF:-}" ] || return 0
+  prim=$WAN_IF; mkdir -p "$RUN" "$MGMT_STATE" 2>/dev/null; t=$(now)
+  on=$(cut -d' ' -f1 "$RUN/mgmt.on" 2>/dev/null); onaddr=$(cut -d' ' -f2 "$RUN/mgmt.on" 2>/dev/null)
+  pa=$(sta_addr "$prim")
+  if sta_up "$prim" && [ -n "$pa" ]; then
+    # the primary carries its address: remember it, and take the alias back if it was moved
+    [ "$(cat "$MGMT_STATE/mgmt.addr" 2>/dev/null)" = "$pa" ] || echo "$pa" > "$MGMT_STATE/mgmt.addr" 2>/dev/null
+    echo "$pa" > "$RUN/mgmt.addr"; rm -f "$RUN/mgmt.down"
+    if [ -n "$on" ]; then
+      MGMT_RPREF=$(( $(pref_of "$on") - 1 )); mgmt_release "$on" "$onaddr"
+      garp "$prim" "$pa"
+      log "management address $onaddr is back on $prim (was carried by $on)"; board_settings
+    fi
+    return 0
+  fi
+  [ -f "$RUN/mgmt.down" ] || echo "$t" > "$RUN/mgmt.down"
+  addr=${onaddr:-$(cat "$MGMT_STATE/mgmt.addr" 2>/dev/null)}
+  [ -n "$addr" ] || return 0
+  if [ -n "$on" ]; then
+    # moved already: keep it healthy (the carrier must stay up; the alias and rule must exist), re-announce now and then
+    if sta_up "$on" && $IPCMD -4 -o addr show dev "$on" 2>/dev/null | grep -F " $addr/32 " >/dev/null; then
+      n=$(( $(cat "$RUN/mgmt.garpn" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$RUN/mgmt.garpn"
+      [ $(( n % MGMT_GARP_EVERY )) -eq 0 ] && garp "$on" "$addr"
+      MGMT_RPREF=$(( $(pref_of "$on") - 1 ))
+      [ -n "$($IPCMD rule list pref "$MGMT_RPREF" 2>/dev/null)" ] || $IPCMD rule add from "$addr" lookup "$(table_of "$on")" pref "$MGMT_RPREF"
+      return 0
+    fi
+    MGMT_RPREF=$(( $(pref_of "$on") - 1 )); mgmt_release "$on" "$onaddr"
+    log "management address $addr: carrier $on lost: looking for another uplink"; board_settings
+  fi
+  [ $(( t - $(cat "$RUN/mgmt.down") )) -ge "$MGMT_FAILOVER_AFTER" ] || return 0
+  for b in ${UPLINKS:-}; do
+    [ "$b" = "$prim" ] && continue
+    radio_held "$b" && continue
+    sta_up "$b" && [ -n "$(sta_addr "$b")" ] && [ -n "$(table_of "$b")" ] || continue
+    # its source-routing table must exist (src_one runs earlier in the same pass), else replies would leave by the dead uplink
+    [ -n "$($IPCMD route show table "$(table_of "$b")" 2>/dev/null)" ] || continue
+    MGMT_RPREF=$(( $(pref_of "$b") - 1 ))
+    $IPCMD addr replace "$addr/32" dev "$b" scope global 2>/dev/null || continue
+    while $IPCMD rule del from "$addr" pref "$MGMT_RPREF" 2>/dev/null; do :; done
+    $IPCMD rule add from "$addr" lookup "$(table_of "$b")" pref "$MGMT_RPREF"
+    $IPCMD neigh flush dev "$b" 2>/dev/null
+    echo "$b $addr" > "$RUN/mgmt.on"; echo "$t" > "$RUN/mgmt.since"
+    garp "$b" "$addr"
+    log "management address $addr: $prim is down, now carried by $b"; board_settings
+    return 0
+  done
+  return 0
+}
+
 pass() {
   mgmt_pass
   for h in $RADIO_WATCH; do radio_one "$h"; radio_forgive "$h"; done
   for h in $HEALTH_STA; do radio_held "$h" && radio_return "$h"; health_one "$h"; done
   for p in $FOLLOW; do follow_one "${p%%:*}" "$(echo "$p" | cut -d: -f2)" "${p##*:}"; done
   for u in $UPLINK_TABLES; do src_one "${u%%:*}" "$(echo "$u" | cut -d: -f2)" "${u##*:}"; done
+  mgmt_failover
   settings_link
 }
 
@@ -452,6 +534,8 @@ status() {
     if radio_held "$h"; then echo "$h: dropped by the radio watchdog: $(cut -d' ' -f1 "$RUN/$h.dropped") until $(cut -d' ' -f2 "$RUN/$h.dropped") (uptime s)"
     else echo "$h: watched (radio $RADIO_DEV), drops so far: $(cat "$RADIO_STATE/$h.level" 2>/dev/null || echo 0)"; fi
   done
+  if [ "$MGMT_FAILOVER" = on ] && [ -f "$RUN/mgmt.on" ]; then echo "management address: carried by $(cut -d' ' -f1 "$RUN/mgmt.on") ($(cut -d' ' -f2 "$RUN/mgmt.on"))"
+  else echo "management address: failover $MGMT_FAILOVER, on ${WAN_IF:-?} ($(cat "$RUN/mgmt.addr" 2>/dev/null || echo unknown))"; fi
   for p in $FOLLOW; do
     sta=${p%%:*}; apif=$(echo "$p" | cut -d: -f2); name=${p##*:}
     echo "$name: client $sta [$(sta_channel "$sta")] ap $apif [$(ap_channel "$apif")] running=$(ap_running "$name" && echo yes || echo no)"

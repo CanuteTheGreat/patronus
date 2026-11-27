@@ -26,6 +26,19 @@ echo 'UPLINK5=maybe' > "$W/etc/unit.conf"; run > /dev/null 2>&1
 chk "a value that is not on|off falls back to the board default" test "$(js "e['value']")" = off
 printf 'UPLINK5=on\nUPLINK5_REASON="has \\"quotes\\" and a back\\\\slash"\n' > "$W/etc/unit.conf"; rm -f "$W/run"/wl5-sta.*; run > /dev/null
 chk "quotes and backslashes in text stay valid JSON" python3 -c "import json; json.load(open('$W/out.json'))"
+mj() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); e=[x for x in d if x['key']=='MGMT_FAILOVER'][0]; print(eval(sys.argv[2]))" "$W/out.json" "$1"; }
+rm -f "$W/etc/unit.conf" "$W/run"/*; run > /dev/null
+chk "MGMT_FAILOVER: typed on|off, default on, with reason and how" test "$(mj "e['value'],e['default'],e['allowed'],bool(e['reason']),'MGMT_FAILOVER=off' in e['how']")" = "('on', 'on', ['on', 'off'], True, True)"
+chk "MGMT_FAILOVER: one uplink only -> idle, says it needs UPLINK5=on" sh -c "grep -q 'on, but idle: needs a second uplink' $W/out.json"
+echo 'UPLINK5=on' > "$W/etc/unit.conf"; echo "10.9.9.173" > "$W/run/mgmt.addr"; run > /dev/null
+chk "MGMT_FAILOVER: ready state names the address" test "$(mj "e['state']")" = "on: ready (10.9.9.173 on wl24-sta); moves to the other uplink if the primary loses its Wi-Fi link"
+echo "wl5-sta 10.9.9.173" > "$W/run/mgmt.on"; run > /dev/null
+chk "MGMT_FAILOVER: active state names the carrier" sh -c "grep -q 'ACTIVE: 10.9.9.173 is carried by wl5-sta while wl24-sta is down' $W/out.json"
+printf 'MGMT_FAILOVER=off\n' > "$W/etc/unit.conf"; rm -f "$W/run"/*; run > /dev/null
+chk "MGMT_FAILOVER=off from unit.conf: value off, default still on" test "$(mj "e['value'],e['default']")" = "('off', 'on')"
+printf 'MGMT_FAILOVER=sometimes\nMGMT_FAILOVER_AFTER=abc\n' > "$W/etc/unit.conf"; run > /dev/null 2>&1
+chk "MGMT_FAILOVER: a bad value falls back to the default" test "$(mj "e['value']")" = on
+chk "MGMT_FAILOVER_AFTER: a bad value falls back to 4" sh -c ". '$W/etc/board.sh' 2>/dev/null; [ \"\$MGMT_FAILOVER_AFTER\" = 4 ]"
 chk "board-network publishes the settings at boot" grep -q 'board-settings write' "$D/overlay/usr/libexec/patronus/board-network"
 chk "board-network starts the 5 GHz client only with UPLINK5=on" grep -q 'if \[ "$UPLINK5" = on \]; then radio5 client; else radio5; fi' "$D/overlay/usr/libexec/patronus/board-network"
 [ "$fails" = 0 ] && echo "board-settings: all checks passed" || { echo "board-settings: $fails failed"; exit 1; }

@@ -43,6 +43,9 @@ t "wifi-follow (AP follows the uplink channel)" sh "$D/tests/wifi-follow-test.sh
 # 1c. board settings for the UI (UPLINK5: 5 GHz client off by default, typed, with its reason and live state)
 t "board-settings (System > Hardware settings JSON)" sh "$D/tests/board-settings-test.sh"
 
+t "sh -n tests/netns-mgmt-failover.sh (the netns proof runs as root in CI: embedded-tier.yml slate-mgmt-failover)" sh -n "$D/tests/netns-mgmt-failover.sh"
+t "wifi-follow carries the management-address failover (typed keys in board.sh)" sh -c "grep -q '^mgmt_failover()' '$D/overlay/usr/libexec/patronus/wifi-follow' && grep -q '^MGMT_FAILOVER=' '$D/overlay/etc/patronus/board.sh'"
+
 # 1c. package-managed accounts (shared with the AX1800 tier)
 t "accounts-sync (package-managed accounts)" sh "$D/../../embedded-common/tests/accounts-sync.sh"
 
