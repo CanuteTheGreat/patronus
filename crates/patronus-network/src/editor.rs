@@ -28,7 +28,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 
-/// The tool of the image (`gentoo/live-iso/common/overlay/usr/sbin/default-editor`).
+/// The tool of the image (`gentoo/live-iso/common/overlay/usr/bin/default-editor`).
 pub const TOOL: &str = "/usr/sbin/default-editor";
 const CONF: &str = "/etc/default-editor.conf";
 const ENVD: &str = "/etc/env.d/99editor";
@@ -294,7 +294,7 @@ mod tests {
     /// The real tool of the image, installed into the test root.
     fn install_tool(t: &testutil::TestEnv) {
         let src = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../gentoo/live-iso/common/overlay/usr/sbin/default-editor");
+            .join("../../gentoo/live-iso/common/overlay/usr/bin/default-editor");
         let dst = t.env.path(TOOL);
         std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
         std::fs::copy(&src, &dst).unwrap();
