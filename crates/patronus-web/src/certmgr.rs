@@ -36,7 +36,9 @@ pub async fn run_once(state: &AppState) {
     let outcomes = patronus_network::certs::tick(&state.config_store).await;
     let notify = patronus_network::svc::Settings::load(
         &state.config_store,
-        patronus_network::svc::find("certs").map(|s| s.spec()).unwrap_or_else(|| unreachable!()),
+        patronus_network::svc::find("certs")
+            .map(|s| s.spec())
+            .unwrap_or_else(|| unreachable!()),
     )
     .await
     .map(|s| s.b("notify"))
@@ -77,7 +79,9 @@ pub fn spawn_task(state: AppState) {
             }
             let mins = patronus_network::svc::Settings::load(
                 &state.config_store,
-                patronus_network::svc::find("certs").map(|s| s.spec()).unwrap_or_else(|| unreachable!()),
+                patronus_network::svc::find("certs")
+                    .map(|s| s.spec())
+                    .unwrap_or_else(|| unreachable!()),
             )
             .await
             .map(|s| s.s("check_mins").parse::<u64>().unwrap_or(60))

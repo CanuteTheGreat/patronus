@@ -46,20 +46,34 @@ static ACME_FIELDS: [Field; 20] = [
     Field::new("enabled", "Enabled", Kind::Bool).def("1"),
     Field::new("domains", "Domain names", Kind::Text)
         .req()
-        .help("comma separated; the first is the primary name; a wildcard (*.example.org) needs DNS-01"),
+        .help(
+        "comma separated; the first is the primary name; a wildcard (*.example.org) needs DNS-01",
+    ),
     Field::new("email", "Account e-mail", Kind::Text)
         .help("the CA's expiry and problem notices go here"),
     Field::new("tos", "I agree to the CA's terms of service", Kind::Bool).def("0"),
-    Field::new("directory", "ACME directory", Kind::Select(&["staging", "production", "custom"]))
-        .def("staging")
-        .help("staging issues untrusted test certificates with generous limits: start there"),
+    Field::new(
+        "directory",
+        "ACME directory",
+        Kind::Select(&["staging", "production", "custom"]),
+    )
+    .def("staging")
+    .help("staging issues untrusted test certificates with generous limits: start there"),
     Field::new("directory_url", "Custom directory URL", Kind::Text)
         .help("only for directory = custom (an internal CA, ZeroSSL, Pebble)"),
-    Field::new("ca_bundle", "Extra CA bundle for the ACME server", Kind::Token)
-        .help("PEM file path trusted for the ACME server's own TLS (private CAs)"),
-    Field::new("challenge", "Challenge", Kind::Select(&["http-01", "dns-01"]))
-        .def("http-01")
-        .help("http-01 answers on this router's port 80; dns-01 publishes a TXT record"),
+    Field::new(
+        "ca_bundle",
+        "Extra CA bundle for the ACME server",
+        Kind::Token,
+    )
+    .help("PEM file path trusted for the ACME server's own TLS (private CAs)"),
+    Field::new(
+        "challenge",
+        "Challenge",
+        Kind::Select(&["http-01", "dns-01"]),
+    )
+    .def("http-01")
+    .help("http-01 answers on this router's port 80; dns-01 publishes a TXT record"),
     Field::new(
         "dns_provider",
         "DNS provider (dns-01)",
@@ -80,8 +94,18 @@ static ACME_FIELDS: [Field; 20] = [
     )
     .def("hmac-sha256"),
     Field::new("tsig_secret", "TSIG secret (base64)", Kind::Secret),
-    Field::new("propagation_secs", "DNS propagation wait (seconds)", Kind::Int(0, 3600)).def("5"),
-    Field::new("renew_days", "Renew when this many days remain", Kind::Int(1, 60)).def("30"),
+    Field::new(
+        "propagation_secs",
+        "DNS propagation wait (seconds)",
+        Kind::Int(0, 3600),
+    )
+    .def("5"),
+    Field::new(
+        "renew_days",
+        "Renew when this many days remain",
+        Kind::Int(1, 60),
+    )
+    .def("30"),
     Field::new("use_for_web", "Use for the web interface", Kind::Bool)
         .def("0")
         .help("the web UI serves this certificate and picks up every renewal without a restart"),
@@ -218,7 +242,9 @@ pub fn settings_from_row(r: &Map<String, Value>) -> std::result::Result<AcmeSett
             _ => DirectoryKind::Staging,
         },
         directory_url: s("directory_url"),
-        ca_bundle: Some(s("ca_bundle")).filter(|p| !p.is_empty()).map(PathBuf::from),
+        ca_bundle: Some(s("ca_bundle"))
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from),
         email: s("email"),
         terms_of_service_agreed: b("tos"),
         domains: s("domains")
@@ -254,7 +280,10 @@ fn write_atomic(path: &Path, data: &[u8], mode: u32) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir)?;
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o750))?;
-    let tmp = dir.join(format!(".{}.tmp", path.file_name().and_then(|n| n.to_str()).unwrap_or("f")));
+    let tmp = dir.join(format!(
+        ".{}.tmp",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("f")
+    ));
     let _ = std::fs::remove_file(&tmp);
     let mut f = std::fs::OpenOptions::new()
         .write(true)
@@ -336,7 +365,10 @@ pub async fn statuses(store: &ConfigStore) -> Result<Map<String, Value>> {
     let mut out = Map::new();
     for r in rows(store).await? {
         let name = r["name"].as_str().unwrap_or("").to_string();
-        let renew = r["renew_days"].as_str().and_then(|s| s.parse().ok()).unwrap_or(30);
+        let renew = r["renew_days"]
+            .as_str()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(30);
         let (la, lo, le, nf) = db.get(&name).cloned().unwrap_or_default();
         let pem = std::fs::read_to_string(chain_path(&dir, &name)).ok();
         let state = match &pem {
@@ -386,13 +418,15 @@ pub async fn issue(store: &ConfigStore, name: &str, force: bool) -> Result<Value
     // a stored account belongs to one directory: a changed directory = new account
     let fp = format!("{:?}|{}", settings.directory, settings.directory_url());
     let fp_path = cert_dir(&dir, name).join("account.directory");
-    let account = account.filter(|_| std::fs::read_to_string(&fp_path).ok().as_deref() == Some(&fp));
+    let account =
+        account.filter(|_| std::fs::read_to_string(&fp_path).ok().as_deref() == Some(&fp));
 
     match acme::issue(&settings, account.as_deref(), acme::global_http01()).await {
         Ok(issued) => {
             write_atomic(&acct_path, issued.account_json.as_bytes(), 0o600)
                 .map_err(|e| io_err("write ACME account", e))?;
-            write_atomic(&fp_path, fp.as_bytes(), 0o600).map_err(|e| io_err("write account note", e))?;
+            write_atomic(&fp_path, fp.as_bytes(), 0o600)
+                .map_err(|e| io_err("write account note", e))?;
             // key first, then chain: a reader that sees the new chain always finds its key
             write_atomic(&key_path(&dir, name), issued.key_pem.as_bytes(), 0o600)
                 .map_err(|e| io_err("write key", e))?;
@@ -409,7 +443,9 @@ pub async fn issue(store: &ConfigStore, name: &str, force: bool) -> Result<Value
             let msg = e.to_string();
             tracing::warn!("ACME issue for {name} failed: {msg}");
             set_status(store, name, false, &msg, None).await.ok();
-            Err(Error::Config(format!("ACME issue for {name} failed: {msg}")))
+            Err(Error::Config(format!(
+                "ACME issue for {name} failed: {msg}"
+            )))
         }
     }
 }
@@ -456,8 +492,15 @@ async fn point_web_at(store: &ConfigStore, dir: &str, name: &str) -> Result<()> 
     let cert = chain_path(dir, name).to_string_lossy().into_owned();
     let key = key_path(dir, name).to_string_lossy().into_owned();
     let cur = patronus_config::webui::stored(store).await;
-    let get = |k: &str| cur.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone()).unwrap_or_default();
-    if get(patronus_config::webui::K_TLS_CERT) == cert && get(patronus_config::webui::K_TLS_KEY) == key {
+    let get = |k: &str| {
+        cur.iter()
+            .find(|(n, _)| *n == k)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+    if get(patronus_config::webui::K_TLS_CERT) == cert
+        && get(patronus_config::webui::K_TLS_KEY) == key
+    {
         return Ok(());
     }
     patronus_config::webui::save(
@@ -490,7 +533,9 @@ pub async fn tick(store: &ConfigStore) -> Vec<Outcome> {
         return out;
     };
     let retry = global.s("retry_mins").parse::<i64>().unwrap_or(360) * 60;
-    let Ok(all) = rows(store).await else { return out };
+    let Ok(all) = rows(store).await else {
+        return out;
+    };
     let st = statuses(store).await.unwrap_or_default();
     for r in all {
         if !lan::flag(r["enabled"].as_str().unwrap_or("")) {
@@ -519,7 +564,12 @@ pub async fn tick(store: &ConfigStore) -> Vec<Outcome> {
                 use_for_web: web,
             }),
             Ok(_) => {}
-            Err(e) => out.push(Outcome { name, ok: false, detail: e.to_string(), use_for_web: web }),
+            Err(e) => out.push(Outcome {
+                name,
+                ok: false,
+                detail: e.to_string(),
+                use_for_web: web,
+            }),
         }
     }
     out
@@ -529,7 +579,10 @@ pub async fn tick(store: &ConfigStore) -> Vec<Outcome> {
 pub async fn any_enabled(store: &ConfigStore) -> bool {
     rows(store)
         .await
-        .map(|r| r.iter().any(|r| lan::flag(r["enabled"].as_str().unwrap_or(""))))
+        .map(|r| {
+            r.iter()
+                .any(|r| lan::flag(r["enabled"].as_str().unwrap_or("")))
+        })
         .unwrap_or(false)
 }
 
@@ -566,7 +619,12 @@ mod tests {
     #[test]
     fn row_requires_tos_and_provider() {
         assert!(settings_from_row(&row(&[("domains", "a.example.org")])).is_err());
-        let r = row(&[("domains", "*.example.org"), ("tos", "1"), ("challenge", "dns-01"), ("dns_provider", "none")]);
+        let r = row(&[
+            ("domains", "*.example.org"),
+            ("tos", "1"),
+            ("challenge", "dns-01"),
+            ("dns_provider", "none"),
+        ]);
         assert!(settings_from_row(&r).is_err());
         let r = row(&[
             ("domains", "*.example.org"),
@@ -593,7 +651,10 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("n/key.pem");
         write_atomic(&p, b"K", 0o600).unwrap();
-        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         write_atomic(&p, b"K2", 0o600).unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), b"K2");
     }

@@ -243,18 +243,20 @@ fn redirect_app(https_port: u16) -> axum::Router {
     {
         router = router.route(
             "/.well-known/acme-challenge/:token",
-            axum::routing::get(|axum::extract::Path(token): axum::extract::Path<String>| async move {
-                use axum::response::IntoResponse;
-                match patronus_security::acme::global_http01().lookup(&token) {
-                    Some(body) => (
-                        axum::http::StatusCode::OK,
-                        [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
-                        body,
-                    )
-                        .into_response(),
-                    None => axum::http::StatusCode::NOT_FOUND.into_response(),
-                }
-            }),
+            axum::routing::get(
+                |axum::extract::Path(token): axum::extract::Path<String>| async move {
+                    use axum::response::IntoResponse;
+                    match patronus_security::acme::global_http01().lookup(&token) {
+                        Some(body) => (
+                            axum::http::StatusCode::OK,
+                            [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+                            body,
+                        )
+                            .into_response(),
+                        None => axum::http::StatusCode::NOT_FOUND.into_response(),
+                    }
+                },
+            ),
         );
     }
     router.fallback(move |headers: HeaderMap, uri: Uri| async move {

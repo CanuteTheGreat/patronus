@@ -315,6 +315,16 @@ that are not finished are listed separately under
   the web UI's port or another listener's port is refused with the reason.
   Every value is a setting in the configuration (export, history, rollback),
   the API and the page. [C1201]
+- Certificates (ACME, page `/svc/certs`): the router gets and renews its own
+  certificates from Let's Encrypt or any RFC 8555 CA with a built-in Rust client
+  (no acme.sh, no certbot): HTTP-01 answered on the port-80 listener (the
+  firewall opens tcp/80 by itself while one is configured), or DNS-01 through
+  Cloudflare or RFC 2136 with TSIG, wildcards included. A certificate marked for
+  the web interface is served at once and a renewal replaces it without a
+  restart; a failed renewal is reported as a `cert_renewal_failed` event, an
+  expired one shows as expired, a revoked one is revoked at the CA and replaced.
+  Private keys are stored mode 0600 and never appear in the API or the log.
+  [C1250]
 - Packet capture (admin API `POST /api/system/capture`): captures packets on one
   interface with tcpdump, filtered by protocol, host and port (at most 500
   packets or 30 seconds), and returns the decoded lines. [C72]

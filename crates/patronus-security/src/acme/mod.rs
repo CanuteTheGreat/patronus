@@ -274,7 +274,15 @@ pub async fn issue(
     // place until the order is ready (or has failed), and are removed
     // afterwards in every case.
     let res = async {
-        run_challenges(s, &mut order, http01, provider.as_deref(), &mut tokens, &mut txt).await?;
+        run_challenges(
+            s,
+            &mut order,
+            http01,
+            provider.as_deref(),
+            &mut tokens,
+            &mut txt,
+        )
+        .await?;
         let status = order.poll_ready(&retry).await?;
         if status != OrderStatus::Ready {
             return Err(AcmeError::Challenge(format!("order ended {status:?}")));
@@ -413,7 +421,9 @@ pub enum RenewalState {
 pub fn not_after(cert_pem: &str) -> Result<i64, AcmeError> {
     let (_, p) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes())
         .map_err(|e| AcmeError::Cert(format!("bad PEM: {e}")))?;
-    let cert = p.parse_x509().map_err(|e| AcmeError::Cert(format!("bad certificate: {e}")))?;
+    let cert = p
+        .parse_x509()
+        .map_err(|e| AcmeError::Cert(format!("bad certificate: {e}")))?;
     Ok(cert.validity().not_after.timestamp())
 }
 

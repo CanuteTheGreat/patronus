@@ -163,7 +163,8 @@ nl_api POST /svc/certs/acme "{\"name\":\"wild\",\"domains\":\"*.$ZONE,$ZONE\",\"
 WID=$(jget 'd["id"]')
 nl_api POST /svc/certs/action/issue '{"name":"wild"}'
 [ "$NL_CODE" = 200 ] || { tail -20 "$NL_T/nl-web.log"; nl_fail "issue (dns-01): $NL_CODE $(cat "$NL_OUT")"; }
-openssl x509 -in "$W/certs/wild/fullchain.pem" -noout -ext subjectAltName | grep -q "DNS:\*.$ZONE" || nl_fail "wildcard SAN missing"
+SANS=$(openssl x509 -in "$W/certs/wild/fullchain.pem" -noout -ext subjectAltName)
+grep -q "DNS:\*.$ZONE" <<<"$SANS" || nl_fail "wildcard SAN missing"
 nl_ok "wildcard issued with DNS-01 via RFC 2136 (TSIG signed), no shell tool involved"
 [ -z "$(INET dig +short TXT _acme-challenge.$ZONE @$NS_IP 2>/dev/null)" ] || nl_fail "challenge TXT record left in the zone"
 nl_ok "the challenge TXT record was removed after validation"
@@ -189,7 +190,8 @@ echo "=== revocation"
 SER=$(openssl x509 -in "$W/certs/web/fullchain.pem" -noout -serial | cut -d= -f2 | tr 'A-F' 'a-f')
 nl_api POST /svc/certs/action/revoke '{"name":"web"}'
 [ "$NL_CODE" = 200 ] || nl_fail "revoke: $NL_CODE $(cat "$NL_OUT")"
-INET curl -sk "https://$CA_IP:15000/cert-status-by-serial/$SER" | grep -qi revoked || nl_fail "Pebble does not list serial $SER as revoked"
+PST=$(INET curl -sk "https://$CA_IP:15000/cert-status-by-serial/$SER")
+grep -qi revoked <<<"$PST" || nl_fail "Pebble does not list serial $SER as revoked"
 nl_ok "the revocation reached the CA (Pebble: serial $SER revoked)"
 for _ in $(seq 1 60); do [ -s "$W/certs/web/fullchain.pem" ] && break; sleep 1; done
 [ -s "$W/certs/web/fullchain.pem" ] || nl_fail "no replacement requested after revocation"
@@ -206,4 +208,4 @@ nl_ok "no secret or key in the API answer or the log"
 nl_assert_store_ok "$DB"
 nl_web_stop
 INET sh -c "kill \$(cat $W/bind/named.pid)" 2>/dev/null || true
-nl_ok "lane-h-acme: all checks passed"
+echo "PASS lane-h-acme"
