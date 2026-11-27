@@ -274,7 +274,7 @@ that are not finished are listed separately under
   file chosen at run time; filter by minimum priority, service, identifier with
   a wildcard, kernel only, text and time span, follow it live (pause and resume),
   see a separator at every boot, download the filtered view; filters stay in the
-  address. [C87]
+  address. [C1210]
 - NetFlow / IPFIX export (USE=netflow): softflowd on a chosen interface
   exports flow records (v5, v9 or IPFIX) to a collector. [C47]
 - IGMP proxy (USE=igmp): igmpproxy forwards multicast streams from the WAN to
