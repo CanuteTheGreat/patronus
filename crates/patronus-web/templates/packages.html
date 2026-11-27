@@ -200,7 +200,7 @@
                 continue;
             }
             if (s.type === 'list') { const items = inp.value.split('\n').map(x => x.trim()).filter(x => x); if (items.length || s.required) values[s.key] = items; else clear.push(s.key); continue; }
-            if ((s.type === 'int' || s.type === 'port') && inp.value.trim() === '') { if (s.required && s.default == null) values[s.key] = ''; else clear.push(s.key); continue; }
+            if (inp.value.trim() === '' && s.type !== 'string' && s.type !== 'text') { if (s.required && s.default == null) values[s.key] = ''; else clear.push(s.key); continue; }
             values[s.key] = inp.value;
         }
         showSetMsg('pk-set-ok', ''); showSetMsg('pk-set-err', '');
