@@ -315,6 +315,14 @@ that are not finished are listed separately under
   the web UI's port or another listener's port is refused with the reason.
   Every value is a setting in the configuration (export, history, rollback),
   the API and the page. [C1201]
+- Default text editor: one setting, `[system] editor` in patronus.toml (vim, neovim,
+  nano, vi or an absolute path; vim by default), also on the System page, in the API
+  (`/api/system/editor`) and as the GitOps resource `DefaultEditor`. It is applied
+  with `default-editor set` at every boot and after every change, a value that is
+  not valid or whose binary is not installed is refused with the reason and changes
+  nothing, and neovim comes from the optional `neovim` USE flag. The router tier
+  accepts only busybox `vi` or an installed absolute path and the page lists the
+  editors it leaves out with the reason. [C1790]
 - Packet capture (admin API `POST /api/system/capture`): captures packets on one
   interface with tcpdump, filtered by protocol, host and port (at most 500
   packets or 30 seconds), and returns the decoded lines. [C72]

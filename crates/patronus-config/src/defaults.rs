@@ -156,6 +156,8 @@ pub struct Bootstrap {
     pub mgmt: Vec<String>,
     pub bonds: Vec<BootBond>,
     pub vlans: Vec<BootVlan>,
+    /// `[system] editor`: the default text editor of a new install (see [`crate::editor`]).
+    pub editor: Option<String>,
 }
 
 /// A `[[network.bond]]` entry of patronus.toml.
@@ -227,6 +229,13 @@ impl BootVlan {
 struct BootstrapFile {
     #[serde(default)]
     network: NetworkSection,
+    #[serde(default)]
+    system: SystemSection,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct SystemSection {
+    editor: Option<String>,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -283,6 +292,7 @@ impl Bootstrap {
             mgmt: role_list(n.mgmt_interface, n.mgmt_interfaces),
             bonds: n.bond,
             vlans: n.vlan,
+            editor: f.system.editor.filter(|e| !e.trim().is_empty()),
         })
     }
 
@@ -508,6 +518,17 @@ pub async fn ensure_defaults(
                 patronus_core::Error::Config(format!("seed DNS rebind protection: {e}"))
             })?;
         }
+        // the default editor of a new install; an upgraded store keeps its editor unmanaged
+        if !upgraded {
+            if let Some(e) = bootstrap.and_then(|b| b.editor.as_deref()) {
+                if let Some(w) =
+                    crate::editor::seed(store, e, crate::editor::embedded_tier()).await?
+                {
+                    tracing::warn!("{w}");
+                    rep.warnings.push(w);
+                }
+            }
+        }
         store
             .save_system_config(DEFAULTS_SEEDED_KEY, &chrono::Utc::now().to_rfc3339())
             .await?;
@@ -672,6 +693,51 @@ mod tests {
         assert!(b.wan.is_empty());
         assert_eq!(b.lan, vec!["eth1", "eth2"]);
         assert_eq!(Bootstrap::parse("").unwrap(), Bootstrap::default());
+    }
+
+    #[test]
+    fn parses_the_system_editor_key() {
+        assert_eq!(
+            Bootstrap::parse("[system]\neditor = \"neovim\"\n")
+                .unwrap()
+                .editor
+                .as_deref(),
+            Some("neovim")
+        );
+        assert_eq!(
+            Bootstrap::parse("[system]\neditor = \"\"\n")
+                .unwrap()
+                .editor,
+            None
+        );
+        assert_eq!(Bootstrap::parse("[network]\n").unwrap().editor, None);
+    }
+
+    #[tokio::test]
+    async fn new_installs_seed_the_editor_but_upgraded_stores_keep_theirs_unmanaged() {
+        let b = Bootstrap::parse("[system]\neditor = \"nano\"\n").unwrap();
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        ensure_defaults(&s, Some(&b), &[]).await.unwrap();
+        assert_eq!(
+            crate::editor::get(&s).await.unwrap().as_deref(),
+            Some("nano")
+        );
+        let up = ConfigStore::open_in_memory().await.unwrap();
+        up.save_system_config(DEFAULTS_SEEDED_KEY, "2026-01-01T00:00:00Z")
+            .await
+            .unwrap();
+        ensure_defaults(&up, Some(&b), &[]).await.unwrap();
+        assert_eq!(crate::editor::get(&up).await.unwrap(), None);
+        // a value no tier accepts is a warning, never a failed first boot
+        let bad = Bootstrap::parse("[system]\neditor = \"emacs\"\n").unwrap();
+        let s2 = ConfigStore::open_in_memory().await.unwrap();
+        let rep = ensure_defaults(&s2, Some(&bad), &[]).await.unwrap();
+        assert!(
+            rep.warnings.iter().any(|w| w.contains("[system] editor")),
+            "{:?}",
+            rep.warnings
+        );
+        assert_eq!(crate::editor::get(&s2).await.unwrap(), None);
     }
 
     #[test]

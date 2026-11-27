@@ -271,6 +271,77 @@ async function fwFeedDownload() {
         the marked block in /etc/hosts and /etc/localtime + /etc/timezone, and re-applied at every boot.</p>
 </div>
 
+<div class="card" id="editor-card">
+    <div class="card-header"><h2 class="card-title">Default text editor</h2></div>
+    <p class="text-sm" id="editor-state">Loading...</p>
+    <table class="lan"><thead><tr><th>Editor</th><th>On this device</th></tr></thead><tbody id="editor-list"></tbody></table>
+    {% if is_admin %}
+    <form id="editor-form" class="inline-form" onsubmit="return saveEditor(event)">
+        <label>Editor <select name="choice" id="editor-choice"></select></label>
+        <label id="editor-path-label" style="display:none">Absolute path <input name="path" id="editor-path" placeholder="/usr/bin/emacs" maxlength="255"></label>
+        <button class="btn btn-sm btn-primary" id="save-editor" type="submit">Save</button>
+    </form>
+    {% endif %}
+    <p class="text-sm text-muted" id="editor-help"></p>
+</div>
+<script>
+// The default editor (EDITOR / VISUAL of every login shell, git, crontab -e, visudo, sudoedit): the setting is
+// system.editor (patronus.toml [system] editor, this form, or the GitOps resource kind DefaultEditor). Choices
+// this device leaves out are listed with the reason, never hidden.
+async function loadEditor() {
+    const r = await fetch('/api/system/editor', {credentials: 'same-origin'});
+    if (!r.ok) { document.getElementById('editor-state').textContent = 'Not available (' + r.status + ')'; return; }
+    const o = await r.json();
+    const st = document.getElementById('editor-state');
+    const stored = o.settings && o.settings.editor;
+    st.textContent = (stored ? 'Setting: ' + stored : 'Not set here (the system keeps its own; a new install uses ' + o['default'] + ')') +
+        (o.effective ? '. In effect: ' + o.effective + '.' : '.');
+    const tb = document.getElementById('editor-list'); tb.textContent = '';
+    const sel = document.getElementById('editor-choice');
+    if (sel) sel.textContent = '';
+    for (const c of o.choices) {
+        const tr = document.createElement('tr'); tr.dataset.editor = c.name;
+        let why;
+        if (!c.available) why = 'Not offered on this device: ' + c.reason;
+        else if (c.installed) why = 'Installed (' + c.installed + ')';
+        else why = 'Not installed' + (c.package ? ' (emerge ' + c.package + ')' : '');
+        for (const v of [c.name, why]) { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); }
+        tb.appendChild(tr);
+        if (sel && c.available) {
+            const op = document.createElement('option'); op.value = c.name; op.textContent = c.name;
+            if (stored === c.name) op.selected = true;
+            sel.appendChild(op);
+        }
+    }
+    if (sel) {
+        const op = document.createElement('option'); op.value = '/'; op.textContent = 'absolute path...';
+        const isPath = stored && stored.startsWith('/');
+        if (isPath) op.selected = true;
+        sel.appendChild(op);
+        document.getElementById('editor-path').value = isPath ? stored : '';
+        sel.onchange = () => { document.getElementById('editor-path-label').style.display = sel.value === '/' ? '' : 'none'; };
+        sel.onchange();
+    }
+    document.getElementById('editor-help').textContent = 'Accepts ' + o.accepts + '. neovim needs the optional package app-editors/neovim.';
+}
+async function saveEditor(ev) {
+    ev.preventDefault();
+    const sel = document.getElementById('editor-choice');
+    const editor = sel.value === '/' ? document.getElementById('editor-path').value.trim() : sel.value;
+    const r = await fetch('/api/system/editor', {method: 'PUT', credentials: 'same-origin',
+        headers: {'content-type': 'application/json'}, body: JSON.stringify({editor})});
+    if (!r.ok) {
+        let m = r.status + '';
+        try { m = (await r.json()).error || m; } catch (_) {}
+        document.getElementById('editor-state').textContent = 'Not applied: ' + m;
+        return false;
+    }
+    await loadEditor();
+    return false;
+}
+loadEditor();
+</script>
+
 <div class="card" id="web-card">
     <div class="card-header"><h2 class="card-title">Web UI addresses and ports</h2></div>
     <p class="text-sm text-muted">Where this management UI answers: HTTPS on the main port (443 =

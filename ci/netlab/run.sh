@@ -53,6 +53,8 @@ cp "$BIN/patronus-web" "$OUT/patronus-web"
 [ -f "$BIN/patronus-dashboard" ] && cp "$BIN/patronus-dashboard" "$OUT/patronus-dashboard"
 for s in "$@"; do cp "$s" "$OUT/"; done
 cp ci/netlab/lib.sh "$OUT/"
+# lane N default editor installs the image's own tool
+cp gentoo/live-iso/common/overlay/usr/sbin/default-editor "$OUT/default-editor"
 cp -r ci/netlab/fixtures "$OUT/"
 # lane T UI scenario drives this Playwright script
 cp ci/guest-page-e2e.py "$OUT/"

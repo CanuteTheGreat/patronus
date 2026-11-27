@@ -57,6 +57,8 @@ pub enum ResourceKind {
     IpsecRoadWarrior,
     /// RBAC group (`privileges: {firewall: write, vpn: read}`).
     Group,
+    /// The system default text editor (`spec: {editor: vim}`, one resource named `default-editor`).
+    DefaultEditor,
 }
 
 /// Resource metadata
@@ -442,7 +444,8 @@ impl ConfigParser {
                 | ResourceKind::IpsecTunnel
                 | ResourceKind::IpsecRoadWarrior
                 | ResourceKind::User
-                | ResourceKind::Group,
+                | ResourceKind::Group
+                | ResourceKind::DefaultEditor,
                 ResourceSpec::Generic(v),
             ) if v.is_object() => {}
             _ => {

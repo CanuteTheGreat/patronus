@@ -19,6 +19,7 @@ it declared. Proof: `ci/netlab/lane-m-gitops.sh` (rules) and
 | `WireGuardTunnel` | wireguard | `listen_port, addresses, mtu, endpoint, client_dns, client_allowed_ips, enabled, description, peers: [{name, public_key, allowed_ips, endpoint, persistent_keepalive, preshared_key, enabled}]` |
 | `IpsecTunnel` | ipsec | `remote_address, local_address, local_id, remote_id, psk \| psk_file, local_ts, remote_ts, ike_proposals, esp_proposals, start_action, dpd_delay, enabled` |
 | `IpsecRoadWarrior` | ipsec | `auth: eap \| cert, server_id, pool, dns, local_ts, local_address, enabled, users: [{username, password \| password_file, enabled}]` |
+| `DefaultEditor` | editor | `editor: vim \| neovim \| nano \| vi \| /absolute/path` (one resource, named `default-editor`; the router tier accepts only `vi` or an installed path; deleting it stops managing the editor and leaves the system as it is) |
 | `Group` | accounts | `description, privileges: {firewall: write, vpn: read, ...}` |
 | `User` | accounts | `role: admin \| operator \| readonly, password_hash, enabled, groups: [one group]` |
 

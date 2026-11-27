@@ -17,6 +17,7 @@ pub mod bootguard;
 pub mod bridge;
 pub mod dhcp_client;
 pub mod diag;
+pub mod editor;
 pub mod general;
 pub mod interfaces;
 pub mod lan;

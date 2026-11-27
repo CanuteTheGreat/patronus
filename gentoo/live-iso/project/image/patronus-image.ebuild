@@ -27,6 +27,8 @@ HOMEPAGE="https://patronus.errant.solutions/"
 LICENSE="GPL-3+"
 SLOT="0"
 KEYWORDS="amd64 arm64 riscv"
+# neovim: optional editor (the default editor can be set to neovim; vim stays the default, see docs/DEFAULT-EDITOR.md)
+IUSE="neovim"
 # No init USE flags: the image ships BOTH init systems' files (the one it does not run is inert), whatever the profile's USE says. The
 # image is built once per init variant from the same payload, and an installed system keeps both so a later switch needs no re-merge.
 
@@ -36,6 +38,7 @@ QA_PREBUILT="usr/bin/patronus-cli usr/bin/patronus-web usr/bin/patronus-install"
 
 RDEPEND="
 	app-editors/vim
+	neovim? ( app-editors/neovim )
 	acct-user/patronus
 	acct-group/patronus
 	sec-keys/openpgp-keys-errantsolutions

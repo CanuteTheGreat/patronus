@@ -597,6 +597,44 @@ pub async fn put_general(
     }
 }
 
+/// GET /api/system/editor -- the default text editor: the stored choice (`null` = unmanaged), what is
+/// configured and in effect, and every named choice with whether this tier offers it (the router tier
+/// omits vim/neovim/nano and says why), whether its binary is installed and which package provides it.
+pub async fn get_editor(State(state): State<AppState>) -> Response {
+    match state.lan.editor_overview().await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// Body of `PUT /api/system/editor`.
+#[derive(serde::Deserialize)]
+pub struct EditorInput {
+    pub editor: String,
+}
+
+/// PUT /api/system/editor -- `{"editor": "vim|neovim|nano|vi|/absolute/path"}`: validated for this tier,
+/// stored and applied (`default-editor set`). A refused value (unknown name, an editor the tier leaves out,
+/// a binary that is not installed) answers 400 with the reason and changes nothing.
+pub async fn put_editor(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(i): Json<EditorInput>,
+) -> Response {
+    match state.lan.save_editor(&i.editor).await {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => {
+            let m = e.to_string();
+            let code = if m.contains("Invalid") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            error(code, m)
+        }
+    }
+}
+
 /// GET /api/system/ssh -- the managed OpenSSH server settings (public
 /// keys and the host certificate only; there are no secrets in them).
 pub async fn get_ssh(State(state): State<AppState>) -> Response {
@@ -1309,6 +1347,7 @@ pub fn router() -> axum::Router<AppState> {
             axum::routing::put(put_speedtest),
         )
         .route("/system/general", get(get_general).put(put_general))
+        .route("/system/editor", get(get_editor).put(put_editor))
         .route("/system/ssh", get(get_ssh).put(put_ssh))
         .route("/system/web", get(get_web).put(put_web))
         .route("/system/reboot", post(reboot))

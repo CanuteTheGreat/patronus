@@ -676,6 +676,36 @@ impl LanManager {
 }
 
 // ---------------------------------------------------------------------------
+// Default text editor (System page): vim | neovim | nano | vi | absolute path
+// ---------------------------------------------------------------------------
+
+impl LanManager {
+    pub async fn editor_overview(&self) -> anyhow::Result<Value> {
+        patronus_network::editor::overview(
+            &self.store,
+            &patronus_network::lan::LanEnv::system(),
+            patronus_config::editor::embedded_tier(),
+        )
+        .await
+        .map_err(e)
+    }
+
+    /// Validate for this tier, store, apply (`default-editor set`), undo on failure.
+    pub async fn save_editor(&self, choice: &str) -> anyhow::Result<()> {
+        let _g = self.edit.lock().await;
+        let snap = self.begin("change default editor").await?;
+        patronus_config::editor::save(
+            &self.store,
+            choice,
+            patronus_config::editor::embedded_tier(),
+        )
+        .await
+        .map_err(e)?;
+        self.commit("default editor", snap, &["editor"]).await
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SSH server (System page): port, listen addresses, CA / principals / host cert
 // ---------------------------------------------------------------------------
 

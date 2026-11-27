@@ -30,6 +30,7 @@
 		<flag name="syslog">Forward the system log to remote collectors from the web UI (rsyslog)</flag>
 		<flag name="igmp">IGMP proxy for multicast forwarding (igmpproxy)</flag>
 		<flag name="uci-import">patronus import-uci: one-step migration from an OpenWrt router configuration (sysupgrade backup or the running router over ssh)</flag>
+		<flag name="neovim">Install app-editors/neovim so the default editor can be set to neovim (System page, [system] editor = "neovim", GitOps DefaultEditor); vim stays the default</flag>
 		<flag name="wifi-client">Wi-Fi client (station) uplink: use a wireless network as WAN or backup WAN through wpa_supplicant</flag>
 		<flag name="udp-relay">UDP broadcast relay: repeat NetBIOS/SSDP/game-discovery broadcasts between LAN segments (built in, no extra package)</flag>
 		<flag name="mdns">mDNS repeater: Bonjour/AirPlay/printer discovery across LAN segments (avahi-daemon reflector)</flag>

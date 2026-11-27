@@ -135,7 +135,7 @@ pub fn render_hosts(old: &str, host: &str, domain: Option<&str>) -> String {
     out
 }
 
-fn write_atomic(path: &Path, content: &str, mode: u32) -> Result<bool> {
+pub(crate) fn write_atomic(path: &Path, content: &str, mode: u32) -> Result<bool> {
     use std::os::unix::fs::PermissionsExt;
     if std::fs::read_to_string(path).ok().as_deref() == Some(content) {
         return Ok(false);

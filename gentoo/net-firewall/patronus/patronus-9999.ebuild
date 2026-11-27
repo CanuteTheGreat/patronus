@@ -38,6 +38,7 @@ IUSE="
 	certificates acme certbot
 	ldap radius +totp +plugins
 	+segmentation wifi-ap +wifi-client +guest
+	neovim
 	+uci-import
 	geoip geoip2
 	+aliases +insight
@@ -78,6 +79,7 @@ REQUIRED_USE="
 # (No comments inside RDEPEND: Portage would parse '#' as an atom.)
 RDEPEND="
 	app-editors/vim
+	neovim? ( app-editors/neovim )
 	acct-user/patronus
 	sys-auth/pambase
 	sys-libs/pam

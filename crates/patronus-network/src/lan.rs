@@ -38,6 +38,8 @@ pub const MARKER: &str = "Managed by Patronus";
 /// Every table lane D owns (web undo + docs).
 pub const LAN_TABLES: &[&str] = &[
     "lan_settings",
+    // lane H: the default text editor (patronus_config::editor)
+    "system_editor",
     "dhcp_pools",
     "dhcp_static_mappings",
     "dhcp6_pools",
@@ -977,6 +979,7 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     #[allow(unused_mut)]
     let mut v: Vec<Arc<dyn patronus_config::Applier>> = Vec::new();
     v.push(Arc::new(crate::general::GeneralApplier::new(env.clone())));
+    v.push(Arc::new(crate::editor::EditorApplier::new(env.clone())));
     #[cfg(feature = "dns")]
     v.push(Arc::new(crate::dns::DnsApplier::new(env.clone())));
     #[cfg(feature = "dhcp")]

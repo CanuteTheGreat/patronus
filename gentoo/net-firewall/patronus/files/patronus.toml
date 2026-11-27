@@ -40,6 +40,13 @@ listen_addr = "0.0.0.0"
 # tls_cert = "/etc/patronus/tls/cert.pem"   # both empty = generated self-signed
 # tls_key = "/etc/patronus/tls/key.pem"
 
+[system]
+# The system default text editor (EDITOR / VISUAL; /etc/default-editor.conf). Applied once at the first
+# boot of a new install; afterwards the System page, the API and the GitOps resource kind DefaultEditor own it.
+# vim | neovim | nano | vi | /absolute/path. neovim needs USE=neovim (app-editors/neovim). The embedded
+# router tier accepts only vi (busybox) or the absolute path of an editor you installed.
+editor = "vim"
+
 [dns]
 # Enable DNS forwarder
 enabled = false
