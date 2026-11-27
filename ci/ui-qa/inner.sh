@@ -18,7 +18,11 @@ fails=()
 run_variant() { # NAME BIN PORT KBD(yes|no) [env...]
   local name=$1 bin=$2 port=$3 kbd=$4; shift 4
   local t=/q/var-$name; rm -rf "$t"; mkdir -p "$t/tls"
-  env PATRONUS_DB="$t/config.db" PATRONUS_ADMIN_PASSWORD="$PW" PATRONUS_ADMIN_PASSWORD_FILE="$t/pw" PATRONUS_TLS_DIR="$t/tls" \
+  # PATRONUS_STATS_TICK_SECS=3600: the Monitoring page's History card turns from "Collecting" into six charts once the
+  # first 5-minute point exists (5 sampler ticks); with the default 60 s tick that lands mid-crawl, so whichever
+  # screenshots came after it were ~20 % taller and the visual diff failed at random. One tick per hour keeps every
+  # run's pages in the same state.
+  env PATRONUS_STATS_TICK_SECS=3600 PATRONUS_DB="$t/config.db" PATRONUS_ADMIN_PASSWORD="$PW" PATRONUS_ADMIN_PASSWORD_FILE="$t/pw" PATRONUS_TLS_DIR="$t/tls" \
       PATRONUS_HTTPS_PORT="$port" PATRONUS_HTTP_REDIRECT_PORT=0 PATRONUS_WEB_EXTRA_HTTPS_PORTS=none RUST_LOG=info "$@" \
       "$bin" > "/q/out/web-$name.log" 2>&1 &
   local pid=$!
