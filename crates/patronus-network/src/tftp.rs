@@ -479,7 +479,6 @@ pub mod files {
     /// `a/b/c.bin` -> parts, at most three, each valid.
     pub fn parts(name: &str) -> Result<Vec<String>> {
         let ps: Vec<String> = name
-            
             .trim_start_matches('/')
             .split('/')
             .map(String::from)
@@ -1657,9 +1656,9 @@ pub mod engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::result::Result;
     use crate::supervise::{InitMode, NetPaths};
     use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+    use std::result::Result;
     use std::sync::atomic::{AtomicU16, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
@@ -1938,16 +1937,7 @@ mod tests {
         );
         files::upload(&root, "pxelinux.0", b"abcd", true).unwrap();
         files::upload(&root, "grub/x86_64/grub.cfg", b"cfg", false).unwrap();
-        for bad in [
-            "../x",
-            ".x",
-            "a/../b",
-            "a b",
-            "a;b",
-            "",
-            "a/b/c/d",
-            "x\n",
-        ] {
+        for bad in ["../x", ".x", "a/../b", "a b", "a;b", "", "a/b/c/d", "x\n"] {
             assert!(files::upload(&root, bad, b"x", true).is_err(), "{bad:?}");
             assert!(files::delete(&root, bad).is_err(), "{bad:?}");
         }
