@@ -10,7 +10,7 @@ and **off until you turn it on** (Security > Brute-force protection, or
 
 | Source | Where the failures come from |
 |---|---|
-| `sshd` (OpenSSH) | `Failed password ...`, `Failed keyboard-interactive/pam ...`, `maximum authentication attempts exceeded ...` |
+| `sshd` (OpenSSH) | `Failed password ...`, `Failed keyboard-interactive/pam ...`, `maximum authentication attempts exceeded ...`, and (OpenSSH 9.8+) `drop connection ... penalty: failed authentication`: with `PerSourcePenalties` (the default since 9.8) sshd refuses a guesser's next connections before they reach the password prompt, so after the first `Failed password` the further guesses show up only as these lines |
 | `dropbear` | `Bad password attempt for ...`, `Login attempt for nonexistent user ...` |
 | `web` | every refused login of the web UI (wrong password, wrong two-factor code) |
 | `openvpn` | the OpenVPN server's `VERIFY ERROR` (a client certificate the CA did not sign) and `Auth Username/Password verification failed` |
@@ -157,8 +157,9 @@ System page of a router image lists it under "Not available on this device".
 unban), tls-crypt failures in the server log that are not counted, a real strongSwan road
 warrior with wrong EAP passwords (attributed to its address through the IKE_SA, banned, the
 right password does not get in while banned and does after the unban), and successful
-logins that count as nothing. The unit tests parse the real log of OpenVPN 2.6 and strongSwan
-6.0 (`crates/patronus-firewall/tests/fixtures/`) and the forged-line attempts.
+logins that count as nothing. The unit tests parse the real logs of OpenVPN 2.6 and 2.7 (2.7 writes the
+transport in front of the peer: `udp4:198.51.100.10:45905`), OpenSSH 10.2 (`sshd -E`, CRLF line ends, penalty
+lines) and strongSwan 6.0 (`crates/patronus-firewall/tests/fixtures/`) and the forged-line attempts.
 
 `ci/netlab/lane-b-guard.sh`: real sshd password failures and real web UI login
 failures ban the client (kernel set, drop counter, the client reaches nothing),

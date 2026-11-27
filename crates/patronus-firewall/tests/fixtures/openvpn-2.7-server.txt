@@ -1,0 +1,18 @@
+2026-11-27 02:58:07 udp4:198.51.100.10:35987 VERIFY OK: depth=1, CN=Patronus VPN CA
+2026-11-27 02:58:07 udp4:198.51.100.10:35987 VERIFY KU OK
+2026-11-27 02:58:07 udp4:198.51.100.10:35987 ++ Certificate has EKU (str) TLS Web Client Authentication, expects TLS Web Client Authentication
+2026-11-27 02:58:07 udp4:198.51.100.10:35987 VERIFY EKU OK
+2026-11-27 02:58:07 udp4:198.51.100.10:35987 VERIFY OK: depth=0, CN=alice
+2026-11-27 02:58:07 udp4:198.51.100.10:35987 TLS: move_session: dest=TM_ACTIVE src=TM_INITIAL reinit_src=1
+2026-11-27 02:58:07 udp4:198.51.100.10:35987 TLS: tls_multi_process: initial untrusted session promoted to trusted
+2026-11-27 02:58:07 udp4:198.51.100.10:35987 Control Channel: TLSv1.3, cipher TLSv1.3 TLS_AES_256_GCM_SHA384, peer certificate: 256 bits ECprime256v1, signature: ecdsa-with-SHA256, peer temporary key: 768 bits X25519MLKEM768, peer signing digest/type: ecdsa_secp256r1_sha256 ECDSA, key agreement: X25519MLKEM768
+2026-11-27 02:58:11 TLS Error: tls-crypt unwrapping failed from [AF_INET]198.51.100.10:34682
+2026-11-27 02:58:14 TLS Error: tls-crypt unwrapping failed from [AF_INET]198.51.100.10:34682
+2026-11-27 02:58:30 udp4:198.51.100.10:45905 VERIFY ERROR: depth=0, error=unable to get local issuer certificate: CN=alice, serial=383138174803879483320756091965604369969387684395
+2026-11-27 02:58:30 udp4:198.51.100.10:45905 TLS_ERROR: BIO read tls_read_plaintext error
+2026-11-27 02:58:30 udp4:198.51.100.10:45905 TLS Error: TLS object -> incoming plaintext read error
+2026-11-27 02:58:30 udp4:198.51.100.10:45905 TLS Error: TLS handshake failed
+2026-11-27 02:58:30 Warning buffer of freed TLS session is still in use (tls_wrap.work.data)
+2026-11-27 02:58:39 udp4:198.51.100.10:54606 VERIFY ERROR: depth=0, error=unable to get local issuer certificate: CN=alice, serial=383138174803879483320756091965604369969387684395
+2026-11-27 02:58:39 udp4:198.51.100.10:54606 TLS_ERROR: BIO read tls_read_plaintext error
+2026-11-27 02:58:39 udp4:198.51.100.10:54606 TLS Error: TLS object -> incoming plaintext read error
