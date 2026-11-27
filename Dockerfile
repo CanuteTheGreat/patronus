@@ -12,7 +12,7 @@
 ARG CI_BASE_IMAGE=gentoo/stage3:amd64-systemd
 FROM ${CI_BASE_IMAGE} AS builder
 
-ARG PATRONUS_USE="web cli api dashboard nftables wireguard multiwan monitoring prometheus backup systemd"
+ARG PATRONUS_USE="web cli api dashboard nftables wireguard multiwan monitoring prometheus backup reverse-proxy systemd"
 
 # Portage's default FEATURES include ipc-sandbox/network-sandbox/pid-sandbox,
 # which call unshare(2) to create new namespaces per sandboxed action. Inside
