@@ -39,6 +39,7 @@ pub const LANE_RANGES: &[(&str, u32, u32)] = &[
     ("s", 1300, 1399), // device segmentation: groups, devices, isolation, Wi-Fi credentials, DNS/time policy
     ("t", 1400, 1499), // guest network: vouchers (settings live in lan_settings)
     ("u", 1500, 1599), // reverse proxy / load balancer: frontends, backends, servers, rules
+    ("v", 1600, 1699), // captive portal: zones, portal users, voucher rolls, passthrough, sessions
 ];
 
 /// Whether `version` is recorded in `schema_migrations`, read inside the caller's transaction.

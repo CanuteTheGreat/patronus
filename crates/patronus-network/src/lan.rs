@@ -76,6 +76,11 @@ pub const LAN_TABLES: &[&str] = &[
     "revproxy_backends",
     "revproxy_servers",
     "revproxy_rules",
+    "cp_zones",
+    "cp_users",
+    "cp_voucher_rolls",
+    "cp_vouchers",
+    "cp_passthrough",
     "edge_endpoints",
     "edge_subnets",
     // signed plugins (USE=plugins)
@@ -1017,6 +1022,8 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::seg::SegApplier::default()));
     #[cfg(feature = "guest")]
     v.push(Arc::new(crate::guest::GuestApplier::default()));
+    #[cfg(feature = "captive-portal")]
+    v.push(Arc::new(crate::captive::CaptiveApplier));
     #[cfg(feature = "wifi-ap")]
     v.push(Arc::new(crate::wireless::WifiApplier::default()));
     #[cfg(feature = "wifi-client")]

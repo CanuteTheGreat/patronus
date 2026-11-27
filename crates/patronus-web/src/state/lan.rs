@@ -175,8 +175,13 @@ fn svc_appliers(spec: &patronus_network::svc::Spec) -> Vec<&'static str> {
             | "edge"
             | "vrf"
             | "guest"
+            | "captive"
     ) {
         v.push("firewall");
+    }
+    // the DHCP servers hand out the portal's RFC 8908 API (option 114)
+    if spec.slug == "captive" {
+        v.push("dhcp");
     }
     if spec.slug == "nat64" {
         v.push("dns");

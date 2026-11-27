@@ -60,7 +60,8 @@ config file that only one process knows about.
   and the `lane_ranges_are_respected` test enforces it:
   A 1-99, B 100-199, C 200-299, D 300-399, E 400-499, F 500-599,
   G 600-699, H 700-799, I 800-899, J 900-999, K 1000-1099, M 1100-1199,
-  N 1200-1299, S 1300-1399 (device segmentation).
+  N 1200-1299, S 1300-1399 (device segmentation), T 1400-1499 (guest
+  network), U 1500-1599 (reverse proxy), V 1600-1699 (captive portal).
 - **Table ownership:** a lane creates and owns its own tables (prefix them
   with the subsystem, e.g. `dhcp_pools`, `wg_peers`). Shared foundation
   tables: `system_config`, `interfaces` (lane C owns the columns except

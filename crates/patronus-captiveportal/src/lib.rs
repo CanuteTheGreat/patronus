@@ -1,17 +1,20 @@
-//! Patronus Captive Portal
+//! Patronus captive portal runtime (lane v) and the "time's up" page of
+//! parental time limits.
 //!
-//! Enterprise-grade guest WiFi authentication with vouchers, social login,
-//! bandwidth management, and comprehensive access control.
+//! With feature `portal` (USE=captive-portal): the sign-in pages
+//! ([`http`], [`pages`]), the session engine ([`engine`]: login backends
+//! none / local users / vouchers / RADIUS, idle and hard timeouts, per-client
+//! `tc` bandwidth, disconnects) and the RADIUS client ([`radius`]). The
+//! configuration and the `inet patronus_portal` nft table are
+//! `patronus_network::captive`; patronus-web serves the listeners and runs
+//! the session ticker. See docs/CAPTIVE-PORTAL.md.
 
-pub mod auth;
-pub mod bandwidth;
-pub mod portal;
-pub mod sessions;
+#[cfg(feature = "portal")]
+pub mod engine;
+#[cfg(feature = "portal")]
+pub mod http;
+#[cfg(feature = "portal")]
+pub mod pages;
+#[cfg(feature = "portal")]
+pub mod radius;
 pub mod timeup;
-pub mod vouchers;
-
-pub use auth::{AuthMethod, AuthProvider};
-pub use bandwidth::BandwidthLimiter;
-pub use portal::CaptivePortal;
-pub use sessions::{ClientSession, SessionManager};
-pub use vouchers::{Voucher, VoucherManager};
