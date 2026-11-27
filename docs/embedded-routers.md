@@ -457,6 +457,12 @@ and the other uplink's own address keeps working; primary back -> back on its MA
 nothing moves; only the backup returns -> carried again. `MODE=off` is the red run (stays unreachable). CI job
 `slate-mgmt-failover` (embedded-tier.yml); host tests `tests/board-settings-test.sh`.
 
+On the test unit (UPLINK5=on, new `wifi-follow` run from /tmp beside the stock root, 2026-11-27): `wpa_cli -i wl24-sta disconnect` for
+18 s while the house pinged the unit's reserved address twice a second: 16 consecutive replies lost (8 s = `MGMT_FAILOVER_AFTER` 4 s +
+one 3 s pass + the announcement), then the address answered from wl5-sta's MAC until `reconnect`, and went back to wl24-sta
+(alias and extra rule removed, 25 s later) with no further loss. The kept limit: a primary that is associated but whose gateway
+is dead does not trigger it (that stays the job of the gateway probe in 6h, which drops or blacklists the client).
+
 ## 6a. Local web UI (the LuCI equivalent)
 
 **Yes: the Slate keeps a local web UI, and it is the real Patronus UI**, not a lite copy. Decision rule that was applied: try the straight port first; fall back to a `web-lite` only if it missed the 16 MiB slot or a 25-30 MB RSS cap. It met both, so no second UI exists to maintain.
