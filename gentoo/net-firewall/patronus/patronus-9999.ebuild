@@ -33,7 +33,7 @@ IUSE="
 	+monitoring prometheus netflow collectd
 	+captive-portal
 	intrusion-detection suricata snort
-	syslog igmp mdns udp-relay nat64 l2tp upnp vrf web-proxy reverse-proxy dynamic-routing sdwan
+	syslog igmp mdns +certs udp-relay nat64 l2tp upnp vrf web-proxy reverse-proxy dynamic-routing sdwan
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp +plugins
@@ -249,6 +249,7 @@ src_configure() {
 		$(usex igmp "igmp" "")
 		$(usex udp-relay "udp-relay" "")
 		$(usex mdns "mdns" "")
+		$(usex certs "certs" "")
 		$(usex nat64 "nat64" "")
 		$(usex l2tp "l2tp" "")
 		$(usex upnp "upnp" "")
@@ -399,6 +400,7 @@ src_install() {
 		use igmp && webfeatures+=( igmp )
 		use udp-relay && webfeatures+=( udp-relay )
 		use mdns && webfeatures+=( mdns )
+		use certs && webfeatures+=( certs )
 		use nat64 && webfeatures+=( nat64 )
 		use l2tp && webfeatures+=( l2tp )
 		use upnp && webfeatures+=( upnp )
