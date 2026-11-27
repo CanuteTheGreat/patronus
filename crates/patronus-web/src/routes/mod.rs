@@ -496,6 +496,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "upnp",
         "vrf",
         "web-proxy",
+        "reverse-proxy",
         "intrusion-detection",
         "dynamic-routing",
         "sdwan-edge",
@@ -516,6 +517,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "board": board,
         "wifi_backend": patronus_network::apwifi::Paths::default().present(),
         "absent": absent_features(&list, &tier, role),
+        "board_settings": board_settings(),
     }))
 }
 
@@ -537,7 +539,89 @@ pub(crate) const AP_ROUTER_JOBS: &[&str] = &[
     "dynamic-routing",
     "vrf",
     "web-proxy",
+    "reverse-proxy",
 ];
+
+/// Settings the image declares for this hardware (`/run/patronus/board-settings.json`, or
+/// `PATRONUS_BOARD_SETTINGS_FILE`): written by the board's scripts at boot and whenever their state changes
+/// (e.g. the Slate's 5 GHz Wi-Fi uplink, off by default because its radio's firmware fails as client and access
+/// point at once). Each entry is a typed key with its value, the board default, the allowed values, why the
+/// default is what it is, where to change it and the live state. Shown on the System page; a board without the
+/// file has none.
+pub(crate) fn board_settings() -> Vec<serde_json::Value> {
+    let path = std::env::var("PATRONUS_BOARD_SETTINGS_FILE")
+        .unwrap_or_else(|_| "/run/patronus/board-settings.json".into());
+    board_settings_from(&std::fs::read_to_string(path).unwrap_or_default())
+}
+
+/// Parse the board settings file: a JSON array of objects with string `key`, `label` and `value` (required) and
+/// optional `default`, `allowed` (array of strings), `reason`, `how` and `state`. Malformed entries are skipped.
+pub(crate) fn board_settings_from(text: &str) -> Vec<serde_json::Value> {
+    let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(text)
+    else {
+        return Vec::new();
+    };
+    items
+        .into_iter()
+        .filter_map(|v| {
+            let o = v.as_object()?;
+            let s = |k: &str| o.get(k).and_then(|x| x.as_str()).map(str::to_string);
+            let allowed: Vec<String> = o
+                .get("allowed")
+                .and_then(|a| a.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(serde_json::json!({
+                "key": s("key")?,
+                "label": s("label")?,
+                "value": s("value")?,
+                "default": s("default"),
+                "allowed": allowed,
+                "reason": s("reason"),
+                "how": s("how"),
+                "state": s("state"),
+            }))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod board_settings_tests {
+    use super::board_settings_from;
+
+    #[test]
+    fn reads_typed_entries_and_skips_malformed_ones() {
+        let v = board_settings_from(
+            r#"[{"key":"UPLINK5","label":"5 GHz Wi-Fi uplink","value":"off","default":"off","allowed":["on","off"],
+                 "reason":"firmware fails as client and AP","how":"UPLINK5=on in unit.conf","state":"off"},
+                {"label":"no key"}, 7]"#,
+        );
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0]["key"], "UPLINK5");
+        assert_eq!(v[0]["value"], "off");
+        assert_eq!(v[0]["allowed"], serde_json::json!(["on", "off"]));
+        assert_eq!(v[0]["reason"], "firmware fails as client and AP");
+    }
+
+    #[test]
+    fn missing_or_garbage_file_means_no_settings() {
+        assert!(board_settings_from("").is_empty());
+        assert!(board_settings_from("{\"key\":1}").is_empty());
+        assert!(board_settings_from("not json").is_empty());
+    }
+
+    #[test]
+    fn optional_fields_may_be_absent() {
+        let v = board_settings_from(r#"[{"key":"K","label":"L","value":"x"}]"#);
+        assert_eq!(v.len(), 1);
+        assert!(v[0]["reason"].is_null());
+        assert_eq!(v[0]["allowed"], serde_json::json!([]));
+    }
+}
 
 /// What a user may look for and not find on this unit, and why: features
 /// this build leaves out, and (on an access point) the router functions the
@@ -573,6 +657,7 @@ pub fn absent_features(
         ("upnp", "UPnP / NAT-PMP"),
         ("vrf", "VRFs"),
         ("web-proxy", "Web proxy"),
+        ("reverse-proxy", "Reverse proxy / load balancer"),
         ("intrusion-detection", "Intrusion detection (Suricata)"),
         ("dynamic-routing", "BGP / OSPF"),
         ("sdwan-edge", "SD-WAN edge"),

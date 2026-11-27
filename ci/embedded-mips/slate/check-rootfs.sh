@@ -70,6 +70,16 @@ esac
 # ETPhoneHome router client: baked into every variant (owner standing rule). Binary + service + enablement under both inits.
 [ -x "$R/usr/sbin/etphonehome" ] && head -c4 "$R/usr/sbin/etphonehome" | grep ELF >/dev/null || fail "ETPhoneHome: no /usr/sbin/etphonehome ELF binary"
 [ -x "$R/usr/libexec/patronus/etph-run" ] || fail "ETPhoneHome: no /usr/libexec/patronus/etph-run"
+# 5 GHz driver: a root with ath10k needs QCA9887 firmware its driver loads; an upstream-driver root (wifi5.pin) needs firmware-5.bin
+if ls "$R"/lib/modules/*/ath10k_core.ko >/dev/null 2>&1; then
+  ls "$R"/lib/firmware/ath10k/QCA9887/hw1.0/firmware-*.bin >/dev/null 2>&1 || fail "ath10k without any QCA9887 firmware-N.bin"
+  if grep -qx 'WIFI5_DRIVER=upstream' "$R/etc/patronus-release" 2>/dev/null; then
+    [ -f "$R/lib/firmware/ath10k/QCA9887/hw1.0/firmware-5.bin" ] || fail "WIFI5_DRIVER=upstream but no QCA9887 firmware-5.bin"
+  fi
+fi
+# the 5 GHz radio's watchdog and the board settings the UI shows (a root without them cannot drop a crashing 5 GHz client)
+for f in usr/libexec/patronus/wifi-follow usr/libexec/patronus/board-settings; do [ -x "$R/$f" ] || fail "missing /$f"; done
+grep RADIO_WATCH "$R/usr/libexec/patronus/wifi-follow" >/dev/null || fail "wifi-follow without the radio watchdog (RADIO_WATCH)"
 case "${INIT:-}" in
   openrc)  [ -x "$R/etc/init.d/patronus-etph" ] && [ -L "$R/etc/runlevels/default/patronus-etph" ] || fail "ETPhoneHome: OpenRC service patronus-etph missing or not in the default runlevel" ;;
   systemd) [ -f "$R/etc/systemd/system/patronus-etph.service" ] && [ -L "$R/etc/systemd/system/multi-user.target.wants/patronus-etph.service" ] || fail "ETPhoneHome: patronus-etph.service missing or not enabled" ;;

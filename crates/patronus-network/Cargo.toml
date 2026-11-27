@@ -60,6 +60,8 @@ wifi-client = []
 # signed plugins + Gentoo package jobs (Packages page)
 plugins = ["dep:ed25519-dalek", "dep:rand"]
 web-proxy = []
+# reverse proxy / load balancer (RDEPEND net-proxy/haproxy)
+reverse-proxy = []
 # SD-WAN edge agent page + applier (the agent itself is `patronus edge run`)
 sdwan-edge = ["wireguard"]
 

@@ -131,6 +131,8 @@ pub mod plugins;
 #[cfg(feature = "web-proxy")]
 pub mod proxy;
 pub mod radio;
+#[cfg(feature = "reverse-proxy")]
+pub mod revproxy;
 #[cfg(feature = "segmentation")]
 pub mod seg;
 #[cfg(feature = "upnp")]

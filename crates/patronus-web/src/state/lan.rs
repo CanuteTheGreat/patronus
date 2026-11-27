@@ -170,6 +170,7 @@ fn svc_appliers(spec: &patronus_network::svc::Spec) -> Vec<&'static str> {
             | "upnp"
             | "openvpn"
             | "proxy"
+            | "revproxy"
             | "ids"
             | "frr"
             | "edge"

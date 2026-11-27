@@ -104,11 +104,11 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "traffic_daily",
     "system_events",
     "firewall_log",
-    // S.M.A.R.T. disk health (lane u): per-poll samples (pruned by smart.retention_days) and the
+    // S.M.A.R.T. disk health (lane v): per-poll samples (pruned by smart.retention_days) and the
     // latest report of each disk; a rollback or restore must not rewind a disk's history
     "smart_samples",
     "smart_state",
-    // UPS readings (lane u): measured history, pruned by the recorder
+    // UPS readings (lane v): measured history, pruned by the recorder
     "ups_samples",
 ];
 

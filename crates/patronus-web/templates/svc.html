@@ -7,6 +7,8 @@
 <style>
     pre.svc-pre { background: var(--surface-2); padding: 8px 10px; border-radius: 6px; max-height: 260px; overflow: auto; font-size: 0.8em; white-space: pre-wrap; }
     .svc-help { color: var(--muted); font-size: 0.8em; }
+    .svc-scroll { overflow-x: auto; max-width: 100%; }
+    #rp-stats { margin-top: 12px; } #rp-stats .svc-scroll { overflow-x: auto; }
 </style>
 {% endblock %}
 
@@ -152,7 +154,8 @@
             }
             tr.appendChild(td); t.appendChild(tr);
         }
-        wrap.appendChild(t);
+        const scroll = document.createElement('div'); scroll.className = 'svc-scroll'; scroll.tabIndex = 0; scroll.setAttribute('role', 'region'); scroll.setAttribute('aria-label', c.title);
+        scroll.appendChild(t); wrap.appendChild(scroll);
         if (!rows.length) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'Nothing configured.'; wrap.appendChild(p); }
         if (CAN_MODIFY) {
             const form = document.createElement('form'); form.className = 'lan-form'; form.id = 'svc-form-' + c.key;
@@ -197,6 +200,14 @@
             b.onclick = async () => {
                 const body = {};
                 if (SLUG === 'wol') { const mac = prompt('MAC address to wake (aa:bb:cc:dd:ee:ff)'); if (!mac) return; body.mac = mac; body.interface = '@lan'; }
+                if (SLUG === 'revproxy' && a.name === 'publish') {
+                    const name = prompt('Name for the published service (letters, digits, . _ -)'); if (!name) return;
+                    const address = prompt('LAN address of the server (e.g. 192.168.50.20)'); if (!address) return;
+                    const port = prompt('Port of the service on that server', '80'); if (!port) return;
+                    const host = prompt('Host name clients use (optional, e.g. blog.example.org)', ''); if (host === null) return;
+                    const pub = prompt('Public port to listen on', '80'); if (!pub) return;
+                    Object.assign(body, {name, address, port, public_port: pub}); if (host) body.host = host;
+                }
                 if (SLUG === 'guest' && a.name === 'open') { const m = prompt('Open the guest network for how many minutes?', '240'); if (!m) return; body.minutes = Number(m); }
                 if (SLUG === 'guest' && a.name === 'voucher') { const n = prompt('Voucher name (optional)', ''); if (n === null) return; const m = prompt('Valid for how many minutes? (0 = never expires)', '1440'); if (!m) return; if (n) body.name = n; body.minutes = Number(m); }
                 if (SLUG === 'guest' && a.name === 'new_password' && !confirm('Replace the shared guest Wi-Fi password? Guests using the old one are disconnected.')) return;
@@ -236,6 +247,31 @@
             cols.appendChild(el);
         }
         renderStatus(d.status);
+        if (SLUG === 'revproxy') revproxyExtras(d);
+    }
+    async function revproxyExtras(d) {
+        let box = document.getElementById('rp-problems');
+        if (!box) { box = document.createElement('div'); box.id = 'rp-problems'; box.className = 'alert-error'; box.setAttribute('role', 'alert'); document.getElementById('svc-error').after(box); }
+        box.textContent = '';
+        const ps = (d.problems || []).concat((d.warnings || []).map(w => 'Note: ' + w));
+        box.style.display = ps.length ? '' : 'none';
+        if (ps.length) { const ul = document.createElement('ul'); for (const t of ps) { const li = document.createElement('li'); li.textContent = t; ul.appendChild(li); } box.appendChild(ul); }
+        const host = document.getElementById('svc-status'); if (!host) return;
+        let st = document.getElementById('rp-stats');
+        if (!st) { st = document.createElement('div'); st.id = 'rp-stats'; host.after(st); }
+        st.textContent = '';
+        let r; try { r = await fetch('/api/svc/revproxy/action/stats', {method: 'POST', credentials: 'same-origin'}); } catch (_) { return; }
+        if (!r.ok) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'No live statistics (the proxy is not running).'; st.appendChild(p); return; }
+        const j = await r.json();
+        const t = document.createElement('table'); t.className = 'data-table'; t.id = 'rp-stats-table';
+        const hd = ['Proxy', 'Server', 'Status', 'Sessions', 'Total', 'Bytes in', 'Bytes out'];
+        const tr0 = document.createElement('tr'); for (const h of hd) { const th = document.createElement('th'); th.textContent = h; tr0.appendChild(th); } t.appendChild(tr0);
+        for (const row of j.stats) {
+            const tr = document.createElement('tr');
+            for (const k of ['pxname', 'svname', 'status', 'scur', 'stot', 'bin', 'bout']) { const td = document.createElement('td'); td.textContent = row[k] || ''; tr.appendChild(td); }
+            t.appendChild(tr);
+        }
+        st.appendChild(t);
     }
     document.addEventListener('DOMContentLoaded', load);
 </script>

@@ -33,9 +33,8 @@ IUSE="
 	+monitoring prometheus netflow collectd
 	+captive-portal
 	intrusion-detection suricata snort
-	syslog igmp ups mdns nat64 l2tp upnp vrf web-proxy dynamic-routing sdwan
+	syslog igmp ups mdns udp-relay nat64 l2tp upnp vrf web-proxy reverse-proxy dynamic-routing sdwan
 	zabbix-agent telegraf
-	syslog igmp mdns udp-relay nat64 l2tp upnp vrf web-proxy dynamic-routing sdwan
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp +plugins
@@ -118,6 +117,7 @@ RDEPEND="
 	l2tp? ( net-dialup/xl2tpd net-dialup/ppp )
 	upnp? ( net-misc/miniupnpd[nftables] )
 	web-proxy? ( net-proxy/squid )
+	reverse-proxy? ( net-proxy/haproxy )
 	dynamic-routing? ( net-misc/frr )
 	netflow? ( net-analyzer/softflowd )
 	sdwan? ( net-vpn/wireguard-tools dev-libs/openssl:0= || ( net-misc/iputils sys-apps/busybox ) )
@@ -264,6 +264,7 @@ src_configure() {
 		$(usex upnp "upnp" "")
 		$(usex vrf "vrf" "")
 		$(usex web-proxy "web-proxy" "")
+		$(usex reverse-proxy "reverse-proxy" "")
 		$(usex intrusion-detection "intrusion-detection" "")
 		$(usex dynamic-routing "dynamic-routing" "")
 		$(usex sdwan "sdwan-edge" "")
@@ -418,6 +419,7 @@ src_install() {
 		use vrf && webfeatures+=( vrf )
 		use openvpn && webfeatures+=( openvpn )
 		use web-proxy && webfeatures+=( web-proxy )
+		use reverse-proxy && webfeatures+=( reverse-proxy )
 		use intrusion-detection && webfeatures+=( intrusion-detection )
 		use dynamic-routing && webfeatures+=( dynamic-routing )
 		use sdwan && webfeatures+=( sdwan-edge )

@@ -454,6 +454,49 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- reverse proxy (HAProxy): every enabled frontend's port, on the interface
+    // chosen for it; a listen address other than a wildcard is matched too
+    let rp = settings(store, "revproxy").await?;
+    if on(&rp, "enabled") {
+        let rows = sqlx::query(
+            "SELECT name, interface, bind, port FROM revproxy_frontends WHERE enabled = 1 ORDER BY id",
+        )
+        .fetch_all(store.pool()?)
+        .await
+        .map_err(|e| Error::Config(format!("read revproxy_frontends: {e}")))?;
+        for r in rows {
+            let name: String = r.get(0);
+            let iface: Option<String> = r.get(1);
+            let bind: Option<String> = r.get(2);
+            let port: i64 = r.get(3);
+            if !(1..=65535).contains(&port)
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            {
+                continue;
+            }
+            let daddr = match bind
+                .as_deref()
+                .and_then(|b| b.parse::<std::net::IpAddr>().ok())
+            {
+                Some(std::net::IpAddr::V4(a)) if !a.is_unspecified() => format!("ip daddr {a} "),
+                Some(std::net::IpAddr::V6(a)) if !a.is_unspecified() => format!("ip6 daddr {a} "),
+                _ => String::new(),
+            };
+            for d in devices(
+                store,
+                iface.as_deref().filter(|i| !i.is_empty()).unwrap_or("@wan"),
+            )
+            .await
+            {
+                out.filter.push(format!(
+                    "add rule {t} input iifname \"{d}\" {daddr}tcp dport {port} accept comment \"reverse proxy {name}\""
+                ));
+            }
+        }
+    }
+
     // --- web proxy: the proxy ports on the LAN side; optional interception
     let px = settings(store, "proxy").await?;
     if on(&px, "enabled") {
@@ -651,6 +694,46 @@ mod tests {
             svc_rules(&s).await.unwrap(),
             VpnRules::default(),
             "off again"
+        );
+    }
+
+    #[tokio::test]
+    async fn reverse_proxy_opens_each_enabled_frontend_port_on_its_interface_only() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth0", Some("wan")).await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        let fe = |name: &str, iface: &str, bind: &str, port: i64, en: i64| {
+            let (n, i, b) = (name.to_string(), iface.to_string(), bind.to_string());
+            let s = &s;
+            async move {
+                sqlx::query("INSERT INTO revproxy_frontends (name, enabled, interface, bind, port, mode, updated_at) VALUES (?, ?, ?, ?, ?, 'http', 0)")
+                    .bind(n).bind(en).bind(i).bind(b).bind(port)
+                    .execute(s.pool().unwrap()).await.unwrap();
+            }
+        };
+        fe("site", "@wan", "0.0.0.0", 443, 1).await;
+        fe("intranet", "@lan", "192.168.50.1", 8080, 1).await;
+        fe("off", "@wan", "0.0.0.0", 9999, 0).await;
+        assert_eq!(
+            svc_rules(&s).await.unwrap(),
+            VpnRules::default(),
+            "feature off: nothing"
+        );
+        put(&s, "revproxy.enabled", "1").await;
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(
+            f.contains(
+                "input iifname \"eth0\" tcp dport 443 accept comment \"reverse proxy site\""
+            ),
+            "{f}"
+        );
+        assert!(
+            f.contains("input iifname \"eth1\" ip daddr 192.168.50.1 tcp dport 8080 accept"),
+            "{f}"
+        );
+        assert!(
+            !f.contains("9999"),
+            "a disabled frontend opens nothing: {f}"
         );
     }
 

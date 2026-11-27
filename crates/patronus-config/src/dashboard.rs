@@ -12,7 +12,7 @@
 //! | `diag.tcp_timeout_secs` | 3 | connect timeout of the Diagnostics "test port" tool |
 //! | `diag.tcp_tests_per_minute` | 30 | port tests allowed per minute |
 //!
-//! Layouts are rows of `dashboard_layouts` (migration 1520): one JSON document
+//! Layouts are rows of `dashboard_layouts` (migration 1620): one JSON document
 //! per web user; the widget registry that gives the ids meaning lives in
 //! `patronus-web`.
 

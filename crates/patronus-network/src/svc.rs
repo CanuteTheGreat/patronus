@@ -200,6 +200,8 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     v.push(Arc::new(crate::openvpn_server::OpenVpnSvc));
     #[cfg(feature = "web-proxy")]
     v.push(Arc::new(crate::proxy::ProxySvc));
+    #[cfg(feature = "reverse-proxy")]
+    v.push(Arc::new(crate::revproxy::RevProxySvc));
     #[cfg(feature = "intrusion-detection")]
     v.push(Arc::new(crate::ids::IdsSvc));
     #[cfg(feature = "dynamic-routing")]
@@ -304,6 +306,10 @@ pub const SVC_TABLES: &[&str] = &[
     "edge_subnets",
     "guest_vouchers",
     "zabbix_servers",
+    "revproxy_frontends",
+    "revproxy_backends",
+    "revproxy_servers",
+    "revproxy_rules",
 ];
 
 pub fn find_coll(spec: &Spec, key: &str) -> Result<&'static Coll> {

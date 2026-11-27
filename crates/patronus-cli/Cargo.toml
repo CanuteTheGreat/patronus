@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "smart", "mdns", "udp-relay", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "uci-import", "ups", "zabbix-agent", "telegraf"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "smart", "mdns", "udp-relay", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "reverse-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "wifi-client", "uci-import", "ups", "zabbix-agent", "telegraf"]
 
 # `patronus import-uci`: OpenWrt UCI config importer (no extra dependencies;
 # its wifi-ap / dhcp-server parts are cfg-gated inside it)
@@ -82,6 +82,7 @@ wifi-ap = ["patronus-network/wifi-ap", "patronus-web?/wifi-ap", "segmentation"]
 wifi-client = ["patronus-network/wifi-client", "patronus-web?/wifi-client"]
 vrf = ["patronus-network/vrf", "patronus-web?/vrf"]
 web-proxy = ["patronus-network/web-proxy", "patronus-web?/web-proxy"]
+reverse-proxy = ["patronus-network/reverse-proxy", "patronus-web?/reverse-proxy"]
 intrusion-detection = ["patronus-network/intrusion-detection", "patronus-web?/intrusion-detection"]
 dynamic-routing = ["patronus-network/dynamic-routing", "patronus-web?/dynamic-routing"]
 sdwan-edge = ["patronus-network/sdwan-edge", "patronus-web?/sdwan-edge", "dep:reqwest"]
