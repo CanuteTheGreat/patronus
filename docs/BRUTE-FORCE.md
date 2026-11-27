@@ -131,6 +131,8 @@ rollbacks neither carry nor rewind them.
 - `DELETE /api/guard/bans?address=ADDR`: lift a ban (address or IPv6 prefix)
 - `GET /api/guard/history?limit=N`
 - `patronus guard status [--json] | ban ADDR [--secs N] [--reason T] | unban ADDR | set KEY=VALUE ...`
+  (`patronus` is the standard tier's link to `patronus-cli`; the router images ship only `patronus-cli`, so there it is
+  `patronus-cli guard ...`)
 
 ## Tiers
 
