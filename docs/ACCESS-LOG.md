@@ -22,4 +22,4 @@ When the queue is full a request is counted as dropped, never blocked.
 ## Tests
 Unit/route: `state/accesslog.rs` tests, `routes/honesty_tests.rs`. Netlab: `lane-h-access-log.sh`, `lane-h-access-log-ui.sh`
 (+ `ci/access-log-page-e2e.py`, Firefox, 1280/390 px, light/dark, contrast). Router tier: the ax1800 `qemu-gate.sh` and Slate
-`qemu-gate.py` burst checks. Claim C87.
+`qemu-gate.py` burst checks. Claim C1210.
