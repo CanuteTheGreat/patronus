@@ -664,7 +664,74 @@ pub async fn post_body(
         cfg.push_str(&format!("header = {}\n", curl_quote(h)));
     }
     cfg.push_str(&format!("data-binary = {}\n", curl_quote(body)));
+    if !in_path("curl") && in_path("wget") {
+        return post_wget(url, content_type, headers, body).await;
+    }
     run_curl(cfg).await
+}
+
+fn in_path(prog: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).any(|d| d.join(prog).is_file()))
+        .unwrap_or(false)
+}
+
+/// The router images carry no curl, only busybox wget (with ssl_client for
+/// https): POST with it. The body goes through a private temp file; a non-2xx
+/// answer makes busybox wget exit non-zero, like curl's `fail`.
+async fn post_wget(
+    url: &str,
+    content_type: &str,
+    headers: &[String],
+    body: &str,
+) -> anyhow::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = std::env::temp_dir().join(format!(
+        "patronus-hook-{}-{}.body",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?;
+        f.write_all(body.as_bytes())?;
+    }
+    let mut cmd = tokio::process::Command::new("wget");
+    cmd.args([
+        "-q",
+        "-T",
+        "15",
+        "-O",
+        "/dev/null",
+        "-U",
+        "Patronus-Events/1.0",
+    ])
+    .arg(format!("--header=Content-Type: {content_type}"));
+    for h in headers {
+        cmd.arg(format!("--header={h}"));
+    }
+    cmd.arg(format!("--post-file={}", path.display()))
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+    let out = cmd
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("cannot run wget: {e}"))?
+        .wait_with_output()
+        .await;
+    let _ = std::fs::remove_file(&path);
+    let out = out?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let e = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        anyhow::bail!("{}", if e.is_empty() { "wget failed".to_string() } else { e })
+    }
 }
 
 /// Run curl with a config on stdin (secrets never in `ps`).
