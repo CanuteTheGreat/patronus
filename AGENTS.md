@@ -103,8 +103,8 @@ config file that only one process knows about.
   `net.bridge.bridge-nf-call-{iptables,ip6tables,arptables}` when
   `br_netfilter` is loaded (`bridges_stay_layer2`), otherwise frames between
   members of a Patronus bridge hit the routed `forward` policy (drop).
-  Netlab hosts without the module (rw-man-04) can't reproduce this; the CI
-  runners (rw-man-01..03) have it loaded.
+  Netlab hosts without the module (the CI host) can't reproduce this; the CI
+  runners (the CI host) have it loaded.
 - **Device segmentation (lane S, `patronus_config::seg`, docs/design/device-segmentation.md):**
   `seg_groups` / `seg_devices` / `seg_links` / `seg_services` / `seg_segments` (migration 1300),
   built-in groups `home` and `quarantine`. Isolation is opt-in per segment
@@ -127,7 +127,7 @@ config file that only one process knows about.
   supervised hostapd per network: WPA2 entries reload live, SAE entries restart it). First join of a
   MAC-less device = `hostapd_cli -a` script -> `patronus wifi-event` (hidden CLI subcommand) -> bind MAC.
   hwsim proof: `ci/netlab/wifi-hwsim.sh` (host-side: loads the host-global module, moves phys into the
-  container, runs `lane-s-wifi-hwsim.sh`; rw-man-02/03 only, one run at a time).
+  container, runs `lane-s-wifi-hwsim.sh`; the CI host only, one run at a time).
 - **Policy routing contract (B <-> E):** `firewall_rules.gateway` names a
   gateway or gateway group; lane E resolves it to an fwmark, lane B renders
   `meta mark set`.

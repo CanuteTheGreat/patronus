@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs INSIDE gentoo/stage3 (rw-man-07, arm64 host) as container pembed-slate-g.
+# Runs INSIDE gentoo/stage3 (the CI host, arm64 host) as container pembed-slate-g.
 # 1) crossdev mips-unknown-linux-musl (BE, soft-float, mips32r2)  2) sysroot libs
 # 3) static OpenSSL  4) router rootfs (busybox, nft, dnsmasq, iproute2, wg, hostapd,
 #    wpa_supplicant, dropbear, mtd-utils/ubi tools)  5) rust nightly.  Markers in /out/stage-*.ok

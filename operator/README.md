@@ -576,5 +576,4 @@ See [LICENSE](../LICENSE) for details.
 ---
 
 **Operator Version**: 1.0.0
-**Last Updated**: 2025-10-12
 **Maintainer**: Patronus Team

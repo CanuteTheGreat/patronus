@@ -2,7 +2,7 @@
 #   ZFS is the default root file system from 8 GB RAM; below that (or without a ZFS module) plain XFS; ext4 only by hand.
 #   Encryption: only with a working TPM 2.0 (swtpm), unlocked by the initramfs with nobody at the console; without a TPM: not encrypted, no prompt.
 if [ "$ARCH" = x86_64 ]; then
-  # 2026-11-08: guests are 5120 MB + explicit --fs zfs, not --mem 8192: rw-man-01's kvm-x86_64 job cap is 6g (shared host budget, unchanged), and qemu with an
+  # 2026-11-08: guests are 5120 MB + explicit --fs zfs, not --mem 8192: the CI host's kvm-x86_64 job cap is 6g (shared host budget, unchanged), and qemu with an
   # 8 GB guest + the unsquashfs/ZFS page cache got the guest OOM-killed mid-extract (runs 811..851, 'installer-finished timeout' at 'Copying the system').
   # Assertions are unchanged; the "ZFS is the default from 8 GB" choice is asserted by test_patronus_fs_policy.test_default_matrix (hwprofile.choose_fs, 8192 -> zfs).
   MATRIX+=(

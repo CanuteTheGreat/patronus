@@ -73,7 +73,7 @@ repair)
   # Two units that check at the same moment can therefore both miss each other (on a loaded host their scans drift by
   # more than a dwell, and the mover's dwell on the other unit's channel falls into the other unit's off-channel time),
   # so the case staggers the two checks by 30 s. The other cases never run the re-check (AP_COORD_DELAY=3600 in board()):
-  # a unit's re-check taking its radio off the air while the other unit scans made 'plan' miss it, 2 runs of 4 on rw-man-02.
+  # a unit's re-check taking its radio off the air while the other unit scans made 'plan' miss it, 2 runs of 4 on the CI host.
   # AP_COORD_QUIET is empty in board() (any hour): a re-check outside the quiet hours holds the move, so the case would fail by wall clock.
   RA=${COORD_REPAIR_DELAY:-30}; RB=$((RA + 30))
   board a $A24 $A5 AP_COORD_DELAY=$RA; board b $B24 $B5 AP_COORD_DELAY=$RB

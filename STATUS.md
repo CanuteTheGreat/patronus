@@ -404,6 +404,5 @@ This project represents 40 sprints of systematic development, building from core
 
 ---
 
-**Last Updated**: 2025-10-13
 **Version**: v0.2.0-dev (Sprint 40)
 **Next Release**: v0.2.0 (Dashboard UI + Enhanced Failover)

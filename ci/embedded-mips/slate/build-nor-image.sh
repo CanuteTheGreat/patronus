@@ -1,5 +1,5 @@
 #!/bin/bash
-# Rebuilds the NOR-budget CI builder image (pembed-slate-img:ci) on the arm64 build host (rw-man-07), reproducibly from
+# Rebuilds the NOR-budget CI builder image (pembed-slate-img:ci) on the arm64 build host (the CI host), reproducibly from
 # the scripts in this directory, and optionally pushes it to the Forgejo registry so a docker prune cannot lose it.
 #   build-nor-image.sh [REGISTRY_REF]      e.g. git.canutethegreat.com/canutethegreat/pembed-slate-img:ci
 # Takes 2-4 h (crossdev gcc, systemd, rust). Run it detached: `systemd-run --user ... build-nor-image.sh`. Log: $D/out/build.log

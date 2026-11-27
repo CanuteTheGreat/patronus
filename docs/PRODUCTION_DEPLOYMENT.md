@@ -1,7 +1,6 @@
 # Patronus SD-WAN Production Deployment Guide
 
 **Version**: 1.0.0
-**Last Updated**: 2025-10-12
 **Target Audience**: Operations Teams, DevOps Engineers
 
 > **⚠️ Platform note**: Patronus's primary, supported target is Gentoo
@@ -1220,5 +1219,4 @@ sudo systemctl restart patronus-sdwan
 ---
 
 **Document Version**: 1.0.0
-**Last Updated**: 2025-10-12
 **Maintainer**: Operations Team

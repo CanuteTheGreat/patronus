@@ -1,7 +1,6 @@
 # Patronus SD-WAN CI/CD Pipeline
 
 **Version**: 1.0.0
-**Last Updated**: 2025-10-11
 
 > **Note**: The actual, currently-running CI is
 > `.forgejo/workflows/rust-ci.yml` (Forgejo Actions, added 2026-09-24). It
@@ -490,5 +489,4 @@ updates:
 ---
 
 **Document Version**: 1.0.0
-**Last Updated**: 2025-10-11
 **Maintainer**: DevOps Team

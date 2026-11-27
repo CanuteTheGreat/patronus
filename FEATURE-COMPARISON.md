@@ -903,6 +903,5 @@ NEW IN THIS SPRINT: ~5,350 LOC
 
 ---
 
-*Last Updated: 2025-10-08*
 *Document Version: 1.0*
 *Patronus Version: 1.0.0 (Release Candidate)*

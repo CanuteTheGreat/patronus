@@ -1,6 +1,5 @@
 # Patronus Firewall Security Hardening Guide
 
-**Last Updated:** 2025-10-08
 **Status:** ✅ SECURITY HARDENING COMPLETE
 
 This document outlines all security improvements implemented to address the vulnerabilities identified in the security audit.
@@ -800,5 +799,4 @@ info!("Secret '{}' accessed by user '{}'", secret_key, username);
 
 ---
 
-*Last Updated: 2025-10-08*
 *Security Hardening Version: 1.0*

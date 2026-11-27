@@ -7,7 +7,7 @@ They are the record of the 2026-11-05 feasibility run, not a CI job yet.
 03 ath79 config/modules/uImage | 04 malta nft inet fix | 05 cross-emerge rootfs | 06 cross cargo (patronus-cli) |
 07 squashfs assemble + sizes | 08 QEMU malta boot + measurement (`08-qemu-cmds.txt`).
 Needs the two source fixes on this branch (unused patronus-dashboard dep in patronus-cli, AtomicI64 -> AtomicI32).
-The host-specific paths inside are from rw-man-03 and will need editing.
+The host-specific paths inside are from the CI host and will need editing.
 
 ## Web UI spike (2026-11-06, section 6a of the doc)
 

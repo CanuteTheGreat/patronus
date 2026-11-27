@@ -239,7 +239,6 @@ Want to help achieve feature parity? See `CONTRIBUTING.md` for how to get involv
 
 ---
 
-**Last Updated**: 2025-10-08
 **Patronus Version**: 0.1.0-dev
 **pfSense Version Compared**: CE 2.7.x
 **OPNsense Version Compared**: 24.x

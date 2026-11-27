@@ -489,5 +489,4 @@ bpftool map dump id <map_id>
 
 ---
 
-*Last Updated: 2025-10-08*
 *eBPF Optimization Version: 1.0*

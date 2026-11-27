@@ -782,5 +782,4 @@ Before releasing a new version:
 
 ---
 
-**Last Updated:** 2025-10-08
 **Version:** 0.1.0

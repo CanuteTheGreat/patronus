@@ -3,7 +3,6 @@
 Comprehensive architecture documentation for Patronus Firewall.
 
 **Version:** 0.1.0
-**Last Updated:** 2025-10-08
 
 ---
 
@@ -814,7 +813,6 @@ Physical Interface: eth1
 
 ---
 
-**Last Updated:** 2025-10-08
 **Version:** 0.1.0
 
 This architecture supports the most demanding enterprise deployments while remaining simple enough for home use.

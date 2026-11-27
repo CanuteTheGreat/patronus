@@ -1,7 +1,6 @@
 # Patronus Firewall UI Design Specification
 
 **Version:** 0.1.0
-**Last Updated:** 2025-10-08
 
 ---
 
@@ -577,5 +576,4 @@ ws.onmessage = (event) => {
 
 ---
 
-**Last Updated:** 2025-10-08
 **Version:** 0.1.0
