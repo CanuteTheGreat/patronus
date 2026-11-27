@@ -22,7 +22,7 @@ mkdir -p "$WORK/extract"
 xorriso -osirrox on -indev "$SRC_ISO" -extract / "$WORK/extract" >/dev/null
 
 CMDLINE="modules=loop,squashfs,sd-mod,usb-storage,virtio_pci,virtio_ring,virtio_net,virtio_blk,virtio_scsi,virtio_console console=tty0 console=ttyS0,115200 loglevel=8"
-# x86_64 guest under QEMU/KVM on rw-man-01 (the kvm-x86_64 runner). History:
+# x86_64 guest under QEMU/KVM on the CI host (the kvm-x86_64 runner). History:
 # the guest ran x86_64 under pure TCG on the emulated runner host (Apple Silicon) and never
 # finished booting, then aarch64 under UTM/HVF; both retired 2026-10-16 when
 # the test moved to real KVM on an x86_64 host.

@@ -1,7 +1,6 @@
 # Patronus vs. Competitors: Comprehensive Comparison
 
 **Version:** 0.1.0
-**Last Updated:** 2025-10-08
 
 This document provides detailed comparisons between Patronus Firewall and major competitors in the firewall/router market.
 
@@ -575,7 +574,6 @@ patronus validate /etc/patronus/
 
 ---
 
-**Last Updated:** 2025-10-08
 **Version:** 0.1.0
 
 *Benchmarks performed on standardized hardware. Your results may vary based on hardware configuration.*

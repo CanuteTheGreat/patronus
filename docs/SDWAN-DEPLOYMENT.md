@@ -643,5 +643,4 @@ sudo systemctl status patronus-sdwan
 ---
 
 **Version**: 1.0.0
-**Last Updated**: 2025-10-09
 **License**: MIT

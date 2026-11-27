@@ -58,7 +58,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | Signed plugins / package jobs | `ci/netlab/lane-n-plugins.sh` | netlab | PASS 19 s|
 | Web proxy (Squid) | `ci/netlab/lane-n-proxy.sh` | netlab | PASS 12 s|
 | Groups and privileges (RBAC) | `ci/netlab/lane-n-rbac.sh` | netlab | PASS 8 s|
-| Reverse proxy / load balancer (HAProxy) | `ci/netlab/lane-n-reverse-proxy.sh` + `lane-n-reverse-proxy-ui.sh` | netlab | PASS (rw-man-03, branch run; CI row to be filled from the merge run) |
+| Reverse proxy / load balancer (HAProxy) | `ci/netlab/lane-n-reverse-proxy.sh` + `lane-n-reverse-proxy-ui.sh` | netlab | PASS (the CI host, branch run; CI row to be filled from the merge run) |
 | UPnP / NAT-PMP | `ci/netlab/lane-n-upnp.sh` | netlab | PASS 7 s|
 | VRF segmentation | `ci/netlab/lane-n-vrf.sh` | netlab | PASS 24 s|
 | GRE / VXLAN overlay links (Interfaces > Overlays) | `ci/netlab/lane-n-overlays.sh` | netlab | PASS 29 s, 2026-11-16, run 1354 on 36a6cab0 (job 106369): GRE key 7 + VXLAN VNI 100 ping across, key change recreates, reboot rebuild, delete |

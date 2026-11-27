@@ -447,5 +447,4 @@ RUST_LOG=debug cargo run --bin patronus-cli -- --help
 
 ---
 
-**Last Updated:** 2025-10-08
 **Patronus Version:** 0.1.0

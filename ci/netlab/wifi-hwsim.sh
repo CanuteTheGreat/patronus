@@ -14,8 +14,8 @@
 #   NETLAB_BIN_DIR=<dir with patronus-cli + patronus-web> ci/netlab/wifi-hwsim.sh
 #   HWSIM_CONTAINER=<running container with /t, hostapd, wpa_supplicant, iw> ci/netlab/wifi-hwsim.sh
 #
-# Hosts with the module: rw-man-02/03 (x86_64, kernel 7.0; the hwsim-x86_64 runner lane), rw-man-04/05
-# (arm64, untested); rw-man-01 (kernel 6.8) has none. Where the module cannot be loaded, or a scenario
+# Hosts with the module: the CI host (x86_64, kernel 7.0; the hwsim-x86_64 runner lane), the CI host
+# (arm64, untested); the CI host (kernel 6.8) has none. Where the module cannot be loaded, or a scenario
 # prints SKIP, the run FAILS (HWSIM_ALLOW_SKIP=1 turns that into a skip for a local run) and ends with one
 # "HWSIM SUMMARY: ... executed=N" line (ci/hwsim-lock.sh).
 set -euo pipefail
@@ -44,7 +44,7 @@ modctl() { # load|unload
   docker run --rm --privileged -v /lib/modules:/lib/modules:ro "$IMAGE" sh -c \
     "command -v modprobe >/dev/null || (apt-get update -qq >/dev/null && apt-get install -y -qq kmod >/dev/null); $cmd" >/dev/null 2>&1
 }
-modctl load || hwsim_skip_or_fail "this kernel has no mac80211_hwsim (rw-man-01's 6.8 kernel has none)"
+modctl load || hwsim_skip_or_fail "this kernel has no mac80211_hwsim (the CI host's 6.8 kernel has none)"
 
 cleanup() {
   [ -n "$OWN" ] && docker rm -fv "$C" >/dev/null 2>&1 || true

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# xbss-hwsim.sh: host-side runner for xbss-scenario.sh on mac80211_hwsim (x86_64 rw-man-02/03; the module is
+# xbss-hwsim.sh: host-side runner for xbss-scenario.sh on mac80211_hwsim (x86_64 the CI host; the module is
 # host-global: lock, refuse if loaded, load 4 radios, move them into a test container, always unload).
 # Proves the Patronus hostapd (hostapd/APKBUILD, patronus-xbss.diff) deletes a station on the old BSS of a radio BEFORE
 # creating it on the new one, and that the same scenario with Alpine's stock hostapd shows the overlap the IPQ6018

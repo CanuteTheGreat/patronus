@@ -610,5 +610,4 @@ resource "patronus_policy" "exec_ssh" {
 
 ---
 
-*Last Updated: 2025-10-13*
 *Status: Active Development*

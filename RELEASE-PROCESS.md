@@ -339,5 +339,4 @@ Suggested schedule:
 
 ---
 
-**Last Updated:** 2025-10-08
 **Current Version:** 0.1.0

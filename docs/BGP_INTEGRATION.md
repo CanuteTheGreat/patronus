@@ -1,7 +1,6 @@
 # Patronus SD-WAN BGP Integration Guide
 
 **Version**: 1.0.0
-**Last Updated**: 2025-10-12
 
 ---
 
@@ -642,5 +641,4 @@ Planned for future releases:
 ---
 
 **Document Version**: 1.0.0
-**Last Updated**: 2025-10-12
 **Maintainer**: Network Team

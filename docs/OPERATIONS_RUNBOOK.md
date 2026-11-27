@@ -1,7 +1,6 @@
 # Patronus SD-WAN Operations Runbook
 
 **Version**: 1.0.0
-**Last Updated**: 2025-10-11
 **Applies To**: Patronus SD-WAN v1.0+
 
 ---
@@ -1516,7 +1515,6 @@ patronus-cli status
 ---
 
 **Document Version**: 1.0.0
-**Last Updated**: 2025-10-11
 **Maintainer**: Operations Team
 **Review Frequency**: Quarterly
 **Next Review**: 2026-01-11

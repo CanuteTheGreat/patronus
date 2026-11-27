@@ -2,7 +2,6 @@
 
 **Status**: Production Ready
 **Version**: 2.0.0
-**Last Updated**: 2025-10-10
 
 ## Overview
 
@@ -860,5 +859,4 @@ Recommended tools:
 ---
 
 **Document Version**: 2.0.0
-**Last Updated**: 2025-10-10
 **Maintained By**: Patronus Security Team

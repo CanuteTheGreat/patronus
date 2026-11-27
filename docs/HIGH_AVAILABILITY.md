@@ -2,7 +2,6 @@
 
 **Status**: Production Ready
 **Version**: 1.0.0
-**Last Updated**: 2025-10-10
 
 ## Overview
 
@@ -872,5 +871,4 @@ docker-compose -f docker-compose.ha.yml restart dashboard2
 ---
 
 **Document Version**: 1.0.0
-**Last Updated**: 2025-10-10
 **Maintained By**: Patronus Development Team

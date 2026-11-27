@@ -20,7 +20,7 @@
 #                   fails on any NEW surviving mutant there (mutation-incremental.py gate, MUT_ID).
 set -uo pipefail
 cd "$(dirname "$0")/.."
-# colo lane only (rw-man-01): refuse on the EC2 hosts rw-man-02..05 (GuardDuty), CI or by hand.
+# colo lane only (the CI host): refuse on the EC2 hosts (GuardDuty), CI or by hand.
 if [ "${1:-}" = "--files" ]; then
   awk '$1 !~ /^#/ && NF >= 2 {print $2}' "${2:-ci/mutants-floors.txt}"
   exit 0

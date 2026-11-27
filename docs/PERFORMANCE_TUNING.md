@@ -1,7 +1,6 @@
 # Patronus SD-WAN Performance Tuning Guide
 
 **Version**: 1.0.0
-**Last Updated**: 2025-10-11
 **Applies To**: Patronus SD-WAN v1.0+
 
 ---
@@ -1201,6 +1200,5 @@ metrics:
 ---
 
 **Document Version**: 1.0.0
-**Last Updated**: 2025-10-11
 **Next Review**: 2026-01-11
 **Maintainer**: Performance Engineering Team

@@ -55,7 +55,7 @@ jobs:
   mutants:
     name: Mutation testing (core modules, score floors)
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.only == '' || github.event.inputs.only == 'mutants'
-    # shared mutation/chaos lane (x86 slots on rw-man-01..05 since 2026-10-18,
+    # shared mutation/chaos lane (x86 slots on the CI host since 2026-10-18,
     # ctg-infrastructure ci-runners/README.md); jobs that must stay on colo set CI_COLO_ONLY=1.
     runs-on: mutation-x86_64
     timeout-minutes: 300
@@ -113,7 +113,7 @@ jobs:
   netlab-deep:
     name: Deep netlab (previous-release upgrade, 30 power cuts)
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.only == '' || github.event.inputs.only == 'netlab-deep'
-    # shared mutation/chaos lane (x86 slots on rw-man-01..05 since 2026-10-18,
+    # shared mutation/chaos lane (x86 slots on the CI host since 2026-10-18,
     # ctg-infrastructure ci-runners/README.md); jobs that must stay on colo set CI_COLO_ONLY=1.
     runs-on: mutation-x86_64
     timeout-minutes: 120
@@ -167,7 +167,7 @@ jobs:
     name: Wi-Fi per-device credentials (mac80211_hwsim, stock hostapd)
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.only == '' || github.event.inputs.only == 'wifi-hwsim'
     # mac80211_hwsim is host-global: the script takes a lock, loads it and unloads it afterwards. The dedicated
-    # hwsim-x86_64 lane (rw-man-02/03, runners-expected.json in redweek-devops) only exists on hosts whose kernel
+    # hwsim-x86_64 lane (the CI host, runner inventory) only exists on hosts whose kernel
     # package carries the module; the job FAILS (never skips) if the module or a scenario is missing, and its log ends
     # with a "HWSIM SUMMARY: ... executed=N" line.
     runs-on: hwsim-x86_64

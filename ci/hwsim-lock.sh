@@ -35,8 +35,8 @@ hwsim_lock_drop() {
 
 # --- skip policy and scenario accounting (bash; sourced by ci/netlab/wifi-hwsim.sh and xbss-hwsim.sh) -------------------
 # A Wi-Fi job that cannot load mac80211_hwsim proves nothing, so in CI it FAILS: it is routed to the hwsim-x86_64 runner
-# lane (rw-man-02/03, declared in redweek-devops runners-expected.json) whose kernel package ships the module, and a
-# host without it is an error, never a green SKIP (the job used to "pass" on rw-man-01, whose 6.8 kernel has none, and the
+# lane (the CI host, declared in the runner inventory) whose kernel package ships the module, and a
+# host without it is an error, never a green SKIP (the job used to "pass" on the CI host, whose 6.8 kernel has none, and the
 # Wi-Fi code went unproven for weeks). HWSIM_ALLOW_SKIP=1 turns that back into a SKIP for a developer box without the module.
 HWSIM_RUN=0; HWSIM_EXEC=0; HWSIM_SKIPPED=0; HWSIM_FAILED=0; HWSIM_CHECKS=0; HWSIM_FAILED_LIST=
 hwsim_skip_or_fail() { # REASON

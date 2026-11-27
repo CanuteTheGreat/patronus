@@ -26,7 +26,7 @@ CI** -- the `[Cn]` marker after a claim is its row in
 that are not finished are listed separately under
 [Being built](#being-built), without claims.
 
-**[Roadmap to 1.0 (live checklist)](docs/ROADMAP.md)** | **[Stable channel design](docs/stable-channel.md)** | **[Installing from the ISO](docs/ISO-INSTALL.md)**
+**[Roadmap to 1.0 (live checklist)](docs/ROADMAP.md)** | **[Stable channel](docs/stable-channel.md)** | **[Installing from the ISO](docs/ISO-INSTALL.md)**
 
 **[Versions, updates and rollback](docs/UPDATE-POLICY.md)** | **[Privacy: what a device sends out](docs/PRIVACY.md)** | **[Open-source licenses](docs/OPEN-SOURCE-LICENSES.md)** | **[Changelog](CHANGELOG.md)**
 

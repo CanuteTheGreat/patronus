@@ -1,7 +1,6 @@
 # Patronus SD-WAN Load Testing Guide
 
 **Version**: 1.0.0
-**Last Updated**: 2025-10-11
 
 ---
 

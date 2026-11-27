@@ -2,7 +2,6 @@
 
 **Version**: 1.0.0
 **API Version**: v1
-**Last Updated**: 2025-10-11
 
 ---
 
@@ -654,5 +653,4 @@ Link: <https://docs.patronus.com/api/v2>; rel="successor-version"
 ---
 
 **Document Version**: 1.0.0
-**Last Updated**: 2025-10-11
 **Maintainer**: API Team

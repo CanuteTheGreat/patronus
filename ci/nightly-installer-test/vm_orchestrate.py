@@ -2,8 +2,8 @@
 """
 Host-side orchestration for the Patronus nightly realistic installer test.
 
-Runs inside the job container of the `kvm-x86_64` runner (rw-man-01, the one
-CI host with /dev/kvm; see ctg-infrastructure ci-runners/rw-man-kvm) and
+Runs inside the job container of the `kvm-x86_64` runner (the CI host, the one
+CI host with /dev/kvm; see runner definition kept outside this repo) and
 drives QEMU/KVM directly - no UTM, no GUI session, no Apple Events.
 
 What it does (all real, no simulation):
@@ -85,7 +85,7 @@ def check_kvm():
     if not os.path.exists("/dev/kvm"):
         raise SystemExit(
             "/dev/kvm is missing in this job container. This job must run on the "
-            "kvm-x86_64 runner (rw-man-01, container option --device=/dev/kvm); "
+            "kvm-x86_64 runner (the CI host, container option --device=/dev/kvm); "
             "refusing to fall back to TCG software emulation, which never finishes."
         )
     try:

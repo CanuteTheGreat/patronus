@@ -1,7 +1,6 @@
 # Patronus SD-WAN Disaster Recovery Plan
 
 **Version**: 1.0.0
-**Last Updated**: 2025-10-11
 **Last Tested**: 2025-10-11
 **Next Test**: 2026-01-11
 
@@ -1377,12 +1376,7 @@ EOF
 
 ### Recovery Contacts
 
-| Role | Primary | Secondary | Phone |
-|------|---------|-----------|-------|
-| Incident Commander | TBD | TBD | TBD |
-| Database Admin | TBD | TBD | TBD |
-| Network Engineer | TBD | TBD | TBD |
-| Security Team | TBD | TBD | TBD |
+Keep your own on-call roster (incident commander, database admin, network engineer, security contact) with your runbooks; Patronus does not ship one.
 
 ---
 
@@ -1395,10 +1389,3 @@ EOF
 | API | 99.9% | 2 hours | 1 hour |
 | Monitoring | 99.0% | 4 hours | N/A |
 
----
-
-**Document Version**: 1.0.0
-**Last Updated**: 2025-10-11
-**Last DR Test**: TBD
-**Next DR Test**: TBD
-**Document Owner**: Operations Team

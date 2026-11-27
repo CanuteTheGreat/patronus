@@ -8,8 +8,8 @@ name: Nightly Realistic Installer Test
 # (run.sh is the single entry point, also usable for local reproduction on
 # any x86_64 host with /dev/kvm - see its header).
 #
-# Runs on kvm-x86_64: rw-man-01's dedicated VM-test runner, the one CI host
-# with hardware virtualization (ctg-infrastructure ci-runners/rw-man-kvm).
+# Runs on kvm-x86_64: the CI host's dedicated VM-test runner, the one CI host
+# with hardware virtualization (runner definition kept outside this repo).
 # History: until 2026-10-16 this ran under UTM on the emulated runner host (Apple Silicon),
 # where an x86_64 guest under TCG never finished booting and the schedule was
 # paused; on KVM the live system is up in ~25 s and the whole install + reboot
