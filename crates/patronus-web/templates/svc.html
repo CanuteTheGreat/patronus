@@ -174,7 +174,7 @@
             dlg = collectionDialog(c);
             const add = document.createElement('button'); add.type = 'button'; add.className = 'ui-btn primary sm'; add.textContent = 'Add entry';
             add.dataset.open = 'svc-form-' + c.key;
-            add.onclick = () => { delete editing[c.key]; const f = dlg.querySelector('form'); f.reset(); fillForm(c, {}); lanShowForm(f, 'Add to ' + c.title); };
+            add.onclick = () => { delete editing[c.key]; const f = dlg.querySelector('form'); f.reset(); fillForm(c, defaultsFor(c)); lanShowForm(f, 'Add to ' + c.title); };
             left.appendChild(add);
         }
         if (rows.length > 5) {
@@ -201,7 +201,7 @@
             const td = document.createElement('td'); td.className = 'svc-actions';
             if (CAN_MODIFY) {
                 const eb = document.createElement('button'); eb.type = 'button'; eb.className = 'ui-btn sm'; eb.textContent = 'Edit';
-                eb.onclick = () => { editing[c.key] = row.id; const f = dlg.querySelector('form'); f.reset(); fillForm(c, row); lanShowForm(f, 'Edit ' + c.title + ' entry'); };
+                eb.onclick = () => { editing[c.key] = row.id; const f = dlg.querySelector('form'); f.reset(); fillForm(c, Object.assign(defaultsFor(c), row)); lanShowForm(f, 'Edit ' + c.title + ' entry'); };
                 const db = document.createElement('button'); db.type = 'button'; db.className = 'ui-btn danger sm'; db.textContent = 'Delete'; db.style.marginLeft = '6px';
                 db.onclick = async () => { if (confirm('Delete this entry?') && await api('DELETE', '/api/svc/' + SLUG + '/' + c.key + '/' + row.id)) load(); };
                 td.appendChild(eb); td.appendChild(db);
@@ -218,6 +218,18 @@
         }
         if (dlg) wrap.appendChild(dlg);
         return wrap;
+    }
+    // the schema defaults of a collection, as fillForm takes them: form.reset() alone would clear values that inputFor
+    // set as properties (an "Enabled" box would come up unticked and every new entry would be stored switched off)
+    function defaultsFor(c) {
+        const o = {};
+        for (const f of c.fields) {
+            if (f.type === 'bool') o[f.key] = f.default === '1';
+            else if (f.type === 'select') o[f.key] = f.default || f.extra[0];
+            else if (f.type === 'secret') o[f.key] = '';
+            else o[f.key] = f.default === undefined || f.default === null ? '' : f.default;
+        }
+        return o;
     }
     function fillForm(c, row) {
         const form = document.getElementById('svc-form-' + c.key) || document.querySelector('#svc-dlg-' + c.key + ' form');

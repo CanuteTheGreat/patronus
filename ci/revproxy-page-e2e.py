@@ -137,6 +137,8 @@ def run(p, kind):
     page.wait_for_selector("[data-coll=frontends] button[data-open=svc-form-frontends]")
     page.click("[data-coll=frontends] button[data-open=svc-form-frontends]")
     page.wait_for_selector("#svc-form-frontends [name=name]", state="visible")
+    check(tag + "Add entry opens with the schema defaults (Enabled ticked)",
+          page.locator("#svc-form-frontends [name=enabled]").is_checked())
     page.fill("#svc-form-frontends [name=name]", "e2e-clash")
     page.fill("#svc-form-frontends [name=port]", WEB_PORT)
     page.fill("#svc-form-frontends [name=default_backend]", "e2e-clash-be")
