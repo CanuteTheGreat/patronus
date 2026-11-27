@@ -269,16 +269,19 @@ pub async fn issue(
 
     let mut tokens: Vec<String> = Vec::new();
     let mut txt: Vec<(String, String)> = Vec::new();
-    let res = run_challenges(
-        s,
-        &mut order,
-        http01,
-        provider.as_deref(),
-        &mut tokens,
-        &mut txt,
-    )
+    let retry = RetryPolicy::default().timeout(Duration::from_secs(s.poll_timeout_secs));
+    // The CA validates while we poll: the challenge answers must stay in
+    // place until the order is ready (or has failed), and are removed
+    // afterwards in every case.
+    let res = async {
+        run_challenges(s, &mut order, http01, provider.as_deref(), &mut tokens, &mut txt).await?;
+        let status = order.poll_ready(&retry).await?;
+        if status != OrderStatus::Ready {
+            return Err(AcmeError::Challenge(format!("order ended {status:?}")));
+        }
+        Ok(())
+    }
     .await;
-    // Always clean up, success or not.
     for t in &tokens {
         http01.remove(t);
     }
@@ -291,11 +294,6 @@ pub async fn issue(
     }
     res?;
 
-    let retry = RetryPolicy::default().timeout(Duration::from_secs(s.poll_timeout_secs));
-    let status = order.poll_ready(&retry).await?;
-    if status != OrderStatus::Ready {
-        return Err(AcmeError::Challenge(format!("order ended {status:?}")));
-    }
     let key_pem = order.finalize().await?;
     let chain_pem = order.poll_certificate(&retry).await?;
     Ok(Issued {

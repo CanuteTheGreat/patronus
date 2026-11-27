@@ -100,6 +100,7 @@ for i in 1 2 3; do
   curl -fsSL https://github.com/letsencrypt/pebble/releases/download/v2.10.3/pebble-linux-\$(dpkg --print-architecture).tar.gz | tar -xz -C /opt/pebble --strip-components=3 && break
   sleep 10
 done
+chmod +x /opt/pebble/pebble
 # wg(8) only; its "recommends" would pull wireguard-dkms + kernel headers
 apt-get install -y -qq --no-install-recommends wireguard-tools >/dev/null
 # lane F IPsec road warriors (lane-f-ipsec-rw.sh): strongSwan server + a second charon as the client

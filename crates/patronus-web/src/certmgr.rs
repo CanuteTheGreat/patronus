@@ -20,8 +20,8 @@ fn event(kind: &str, subject: &str, severity: &str, detail: String) -> Event {
 /// Re-read the certificate files the web UI is configured with and swap them
 /// into the running listeners.  Existing connections keep their session; new
 /// handshakes get the new certificate.
-pub async fn reload_web_tls(state: &AppState) {
-    let s = patronus_config::webui::resolve(Some(&state.config_store)).await;
+pub async fn reload_web_tls(store: &patronus_config::store::ConfigStore) {
+    let s = patronus_config::webui::resolve(Some(store)).await;
     if s.tls_cert.is_empty() || s.tls_key.is_empty() {
         return;
     }
@@ -43,7 +43,7 @@ pub async fn run_once(state: &AppState) {
     .unwrap_or(true);
     for o in outcomes {
         if o.ok && o.use_for_web {
-            reload_web_tls(state).await;
+            reload_web_tls(&state.config_store).await;
         }
         let e = if o.ok {
             event("cert_renewed", &o.name, "info", o.detail.clone())
