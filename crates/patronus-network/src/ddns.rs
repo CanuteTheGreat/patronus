@@ -15,6 +15,17 @@
 //! "Update now" is pressed. Results are kept in
 //! `/var/lib/patronus/ddns-status.json` (runtime state, not config).
 //!
+//! An update that fails because the provider cannot be reached (timeout,
+//! DNS, connect refused, HTTP 5xx, an unknown answer) is a WARNING of the
+//! apply, never a failure: a router that boots with a WAN lease but no
+//! working uplink must still finish its boot pass. Such a client is retried
+//! with exponential backoff (`ddns.retry_min_secs` .. `ddns.retry_max_secs`,
+//! kept in the status file as `fails`/`next_try`), every request is bounded
+//! (`ddns.connect_timeout_secs`, `ddns.max_time_secs`) and one apply run
+//! spends at most `ddns.run_budget_secs` on all clients together. Only a
+//! provider refusal of the settings themselves (see [`UpdateError::Refused`])
+//! still fails the apply.
+//!
 //! Providers: `dyndns2` (DynDNS/No-IP/Google-style `/nic/update`, `server`
 //! = API host), `duckdns` (`password` = token), `cloudflare` (`server` =
 //! zone id, `password` = API token), `custom` (`server` = http(s) URL with
@@ -40,6 +51,51 @@ pub const FAMILIES: &[&str] = &["ipv4", "ipv6", "both"];
 /// Overrides the Cloudflare API base (a fake API in tests / netlab).
 pub const CLOUDFLARE_API_ENV: &str = "PATRONUS_CLOUDFLARE_API";
 const REFRESH_SECS: i64 = 25 * 86400;
+
+/// Typed settings (`lan_settings` keys) with their defaults.
+pub const KEY_CONNECT_TIMEOUT: &str = "ddns.connect_timeout_secs";
+pub const KEY_MAX_TIME: &str = "ddns.max_time_secs";
+pub const KEY_RUN_BUDGET: &str = "ddns.run_budget_secs";
+pub const KEY_RETRY_MIN: &str = "ddns.retry_min_secs";
+pub const KEY_RETRY_MAX: &str = "ddns.retry_max_secs";
+pub const DEFAULT_CONNECT_TIMEOUT: u64 = 5;
+pub const DEFAULT_MAX_TIME: u64 = 15;
+pub const DEFAULT_RUN_BUDGET: u64 = 30;
+pub const DEFAULT_RETRY_MIN: i64 = 60;
+pub const DEFAULT_RETRY_MAX: i64 = 3600;
+
+/// Bounds of one HTTP request (see the `ddns.*_secs` settings).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HttpLimits {
+    pub connect_secs: u64,
+    pub max_secs: u64,
+}
+
+impl Default for HttpLimits {
+    fn default() -> Self {
+        Self {
+            connect_secs: DEFAULT_CONNECT_TIMEOUT,
+            max_secs: DEFAULT_MAX_TIME,
+        }
+    }
+}
+
+/// Seconds to wait after the `fails`-th consecutive unreachable attempt.
+fn backoff_secs(fails: u32, min: i64, max: i64) -> i64 {
+    let min = min.max(1);
+    let shift = fails.saturating_sub(1).min(20);
+    min.saturating_mul(1i64 << shift).min(max.max(min))
+}
+
+async fn secs_setting(store: &ConfigStore, key: &str, default: u64) -> Result<u64> {
+    Ok(lan::setting_or(store, key, &default.to_string())
+        .await?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|v| *v > 0)
+        .unwrap_or(default))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DdnsClient {
@@ -346,6 +402,15 @@ pub struct ClientStatus {
     /// (see [`UpdateError::Refused`]); no retry until they change.
     #[serde(default)]
     pub refused: bool,
+    /// Consecutive attempts that failed because the provider was unreachable.
+    #[serde(default)]
+    pub fails: u32,
+    /// Earliest time of the next attempt after such a failure (unix seconds).
+    #[serde(default)]
+    pub next_try: i64,
+    /// The address that last attempt tried to publish (a changed address ends the backoff).
+    #[serde(default)]
+    pub tried_ip: Option<String>,
 }
 
 /// Why a provider update failed.
@@ -468,12 +533,15 @@ pub async fn http(
     user: Option<&str>,
     headers: &[String],
     body: Option<&str>,
+    lim: HttpLimits,
 ) -> Result<String> {
     let mut cfg = format!(
-        "url = {}\nrequest = {}\nsilent\nshow-error\nfail-with-body\nmax-time = 30\n\
-         user-agent = \"Patronus-DDNS/1.0\"\n",
+        "url = {}\nrequest = {}\nsilent\nshow-error\nfail-with-body\nconnect-timeout = {}\n\
+         max-time = {}\nuser-agent = \"Patronus-DDNS/1.0\"\n",
         curl_quote(url),
-        curl_quote(method)
+        curl_quote(method),
+        lim.connect_secs.max(1),
+        lim.max_secs.max(lim.connect_secs).max(1)
     );
     if let Some(u) = user {
         cfg.push_str(&format!("user = {}\n", curl_quote(u)));
@@ -513,7 +581,11 @@ pub async fn http(
 }
 
 /// Perform the provider update; Ok(message) on success.
-pub async fn update(c: &DdnsClient, ip: IpAddr) -> std::result::Result<String, UpdateError> {
+pub async fn update(
+    c: &DdnsClient,
+    ip: IpAddr,
+    lim: HttpLimits,
+) -> std::result::Result<String, UpdateError> {
     let pass = c.password.clone().unwrap_or_default();
     match c.provider.as_str() {
         "duckdns" => {
@@ -527,7 +599,7 @@ pub async fn update(c: &DdnsClient, ip: IpAddr) -> std::result::Result<String, U
                 IpAddr::V4(_) => format!("{url}&ip={ip}"),
                 IpAddr::V6(_) => format!("{url}&ipv6={ip}"),
             };
-            duckdns_answer(&http("GET", &url, None, &[], None).await?)
+            duckdns_answer(&http("GET", &url, None, &[], None, lim).await?)
         }
         "cloudflare" => {
             let zone = c.server.clone().unwrap_or_default();
@@ -548,6 +620,7 @@ pub async fn update(c: &DdnsClient, ip: IpAddr) -> std::result::Result<String, U
                     None,
                     &auth,
                     None,
+                    lim,
                 )
                 .await?,
             )?;
@@ -555,9 +628,11 @@ pub async fn update(c: &DdnsClient, ip: IpAddr) -> std::result::Result<String, U
                 .to_string();
             let res: Value = match found["result"][0]["id"].as_str() {
                 Some(id) => serde_json::from_str(
-                    &http("PUT", &format!("{base}/{id}"), None, &auth, Some(&rec)).await?,
+                    &http("PUT", &format!("{base}/{id}"), None, &auth, Some(&rec), lim).await?,
                 )?,
-                None => serde_json::from_str(&http("POST", &base, None, &auth, Some(&rec)).await?)?,
+                None => {
+                    serde_json::from_str(&http("POST", &base, None, &auth, Some(&rec), lim).await?)?
+                }
             };
             if res["success"].as_bool() == Some(true) {
                 Ok("record updated".into())
@@ -573,7 +648,7 @@ pub async fn update(c: &DdnsClient, ip: IpAddr) -> std::result::Result<String, U
                 .replace("%h", &urlenc(&c.hostname))
                 .replace("%i", &ip.to_string());
             let auth = c.username.as_ref().map(|u| format!("{u}:{pass}"));
-            let b = http("GET", &url, auth.as_deref(), &[], None).await?;
+            let b = http("GET", &url, auth.as_deref(), &[], None, lim).await?;
             Ok(b.trim().chars().take(80).collect())
         }
         _ => {
@@ -594,7 +669,7 @@ pub async fn update(c: &DdnsClient, ip: IpAddr) -> std::result::Result<String, U
                 urlenc(&c.hostname)
             );
             let auth = format!("{}:{pass}", c.username.clone().unwrap_or_default());
-            dyndns2_answer(&http("GET", &url, Some(&auth), &[], None).await?)
+            dyndns2_answer(&http("GET", &url, Some(&auth), &[], None, lim).await?)
         }
     }
 }
@@ -697,6 +772,15 @@ impl Applier for DdnsApplier {
             .await?
             .parse()
             .unwrap_or(0);
+        let connect_secs =
+            secs_setting(store, KEY_CONNECT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT).await?;
+        let max_secs = secs_setting(store, KEY_MAX_TIME, DEFAULT_MAX_TIME).await?;
+        let budget = std::time::Duration::from_secs(
+            secs_setting(store, KEY_RUN_BUDGET, DEFAULT_RUN_BUDGET).await?,
+        );
+        let retry_min = secs_setting(store, KEY_RETRY_MIN, DEFAULT_RETRY_MIN as u64).await? as i64;
+        let retry_max = secs_setting(store, KEY_RETRY_MAX, DEFAULT_RETRY_MAX as u64).await? as i64;
+        let started = std::time::Instant::now();
         let mut st = load_status(&self.env);
         let t = now();
         let mut failures = Vec::new();
@@ -752,6 +836,34 @@ impl Applier for DdnsApplier {
                     ));
                     continue;
                 }
+                // unreachable last time: wait out the backoff unless the address
+                // changed or the user pressed "Update now"
+                if !prev.ok
+                    && prev.next_try > t
+                    && prev.tried_ip.as_deref() == Some(ip.to_string().as_str())
+                    && force <= prev.last_check
+                {
+                    rep.warn(format!(
+                        "DDNS {}: provider unreachable, next try in {} s ({})",
+                        c.hostname,
+                        prev.next_try - t,
+                        prev.message
+                    ));
+                    continue;
+                }
+                let spent = started.elapsed();
+                if spent >= budget {
+                    rep.warn(format!(
+                        "DDNS {}: skipped, this run's {} s budget is used up; it is tried again on the next run",
+                        c.hostname,
+                        budget.as_secs()
+                    ));
+                    continue;
+                }
+                let lim = HttpLimits {
+                    connect_secs,
+                    max_secs: max_secs.min((budget - spent).as_secs().max(1)),
+                };
                 let mut s = ClientStatus {
                     ip: prev.ip.clone(),
                     last_update: prev.last_update,
@@ -759,8 +871,11 @@ impl Applier for DdnsApplier {
                     ok: false,
                     message: String::new(),
                     refused: false,
+                    fails: 0,
+                    next_try: 0,
+                    tried_ip: Some(ip.to_string()),
                 };
-                match update(c, ip).await {
+                match update(c, ip, lim).await {
                     Ok(msg) => {
                         s.ok = true;
                         s.ip = Some(ip.to_string());
@@ -776,7 +891,18 @@ impl Applier for DdnsApplier {
                     Err(e) => {
                         s.refused = matches!(e, UpdateError::Refused(_));
                         s.message = e.to_string();
-                        failures.push(format!("{}: {e}", c.hostname));
+                        if s.refused {
+                            failures.push(format!("{}: {e}", c.hostname));
+                        } else {
+                            // provider unreachable or in trouble: a warning with its own backoff
+                            s.fails = prev.fails.saturating_add(1);
+                            s.next_try = t + backoff_secs(s.fails, retry_min, retry_max);
+                            rep.warn(format!(
+                                "DDNS {}: update failed ({e}); retrying in {} s",
+                                c.hostname,
+                                s.next_try - t
+                            ));
+                        }
                     }
                 }
                 st.insert(key, s);
@@ -942,6 +1068,24 @@ mod tests {
         )
         .unwrap();
         assert!(!old.refused);
+    }
+
+    #[test]
+    fn backoff_doubles_and_is_capped() {
+        assert_eq!(backoff_secs(1, 60, 3600), 60);
+        assert_eq!(backoff_secs(2, 60, 3600), 120);
+        assert_eq!(backoff_secs(4, 60, 3600), 480);
+        assert_eq!(backoff_secs(7, 60, 3600), 3600);
+        assert_eq!(backoff_secs(500, 60, 3600), 3600);
+        // a max below the min never shortens the min
+        assert_eq!(backoff_secs(1, 60, 10), 60);
+        // old status files (no fails/next_try) still parse
+        let old: ClientStatus = serde_json::from_str(
+            r#"{"ip":null,"last_update":0,"last_check":5,"ok":false,"message":"x"}"#,
+        )
+        .unwrap();
+        assert_eq!((old.fails, old.next_try), (0, 0));
+        assert_eq!(HttpLimits::default().connect_secs, 5);
     }
 
     #[test]

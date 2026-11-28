@@ -9,6 +9,9 @@ Wants=network-online.target
 Requires=patronus-firewall.service
 StartLimitIntervalSec=0
 
+# Nothing orders patronus-web or any other unit after this one: units start in parallel, so a slow or retrying pass delays only itself
+# (ci/check-boot-order.sh guards this and the OpenRC twin's `after *`).
+
 [Service]
 Type=oneshot
 RemainAfterExit=yes

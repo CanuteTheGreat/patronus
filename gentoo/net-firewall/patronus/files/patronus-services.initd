@@ -11,6 +11,11 @@
 # the configured static routes and default gateway, and every configured daemon (DHCP/DNS/NTP, VPN, ...) are up when the box is
 # reachable, and an apply that fails is retried instead of leaving a daemon down until someone applies by hand.
 #
+# This pass must never hold up anything else: OpenRC starts the default runlevel one service at a time, so `after *` puts it behind
+# every other service of the runlevel (patronus-web, qemu-guest-agent, sshd, ...) and a slow or retrying apply only delays itself.
+# A dynamic-DNS provider that cannot be reached is a warning of the apply, not a failure, so a box that boots without an uplink
+# does not retry at all (see crates/patronus-network/src/ddns.rs). ci/check-boot-order.sh guards the ordering on both inits.
+#
 # Tunables (/etc/conf.d/patronus): PATRONUS_LATE_TRIES, PATRONUS_LATE_RETRY_DELAY.
 
 # OpenRC reads /etc/conf.d/<this service> only; the shared tunables live in /etc/conf.d/patronus
@@ -21,7 +26,7 @@ description="Patronus second boot pass (interfaces, routes and daemons once the 
 depend() {
 	need patronus-firewall
 	use net logger
-	after net dhcpcd patronus-applyd
+	after net dhcpcd patronus-applyd *
 }
 
 start() {

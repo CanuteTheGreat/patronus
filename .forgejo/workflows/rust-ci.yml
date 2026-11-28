@@ -549,6 +549,8 @@ jobs:
           done
       - name: Boot apply survives a transient failure (systemd Restart, OpenRC retry)
         run: ci/check-boot-apply-resilience.sh
+      - name: Second boot pass never delays patronus-web (OpenRC after *, systemd ordering)
+        run: ci/check-boot-order.sh
       - name: Kernel hook + unattended boot menu (installs without boot environments)
         run: ci/check-boot-menu-hooks.sh
       - name: Build patronus-cli once per ebuild USE-flag feature
