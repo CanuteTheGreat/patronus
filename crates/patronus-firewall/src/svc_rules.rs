@@ -261,12 +261,11 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
     // conntrack therefore cannot match the answer)
     let d6 = settings(store, "dhcp6-relay").await?;
     if on(&d6, "enabled") {
-        let rows = sqlx::query(
-            "SELECT iface, server, upstream FROM dhcp6_relay_rules WHERE enabled = 1",
-        )
-        .fetch_all(store.pool()?)
-        .await
-        .unwrap_or_default();
+        let rows =
+            sqlx::query("SELECT iface, server, upstream FROM dhcp6_relay_rules WHERE enabled = 1")
+                .fetch_all(store.pool()?)
+                .await
+                .unwrap_or_default();
         let mut seen: Vec<String> = Vec::new();
         for r in rows {
             let (iface, server, upstream): (String, String, Option<String>) =
@@ -809,22 +808,38 @@ mod tests {
             .await
             .unwrap();
         let f = svc_rules(&s).await.unwrap().filter.join("\n");
-        assert!(f.contains("input iifname \"eth1\" meta nfproto ipv6 udp dport 547"), "{f}");
-        assert!(f.contains("input iifname \"eth2\" meta nfproto ipv6 udp dport 547"), "{f}");
+        assert!(
+            f.contains("input iifname \"eth1\" meta nfproto ipv6 udp dport 547"),
+            "{f}"
+        );
+        assert!(
+            f.contains("input iifname \"eth2\" meta nfproto ipv6 udp dport 547"),
+            "{f}"
+        );
         assert!(
             f.contains("input ip6 saddr 2001:db8:1::53 udp sport 547 udp dport 547 accept"),
             "{f}"
         );
         assert!(
-            f.contains("input iifname \"eth3\" ip6 saddr fe80::53 udp sport 547 udp dport 547 accept"),
+            f.contains(
+                "input iifname \"eth3\" ip6 saddr fe80::53 udp sport 547 udp dport 547 accept"
+            ),
             "{f}"
         );
         assert!(
             f.contains("input iifname \"eth0\" udp sport 547 udp dport 547 accept"),
             "{f}"
         );
-        assert_eq!(f.matches("iifname \"eth1\" meta nfproto ipv6 udp dport 547").count(), 1, "deduplicated: {f}");
-        assert!(!f.contains("eth4") && !f.contains("eth5") && !f.contains("not-an-ip"), "{f}");
+        assert_eq!(
+            f.matches("iifname \"eth1\" meta nfproto ipv6 udp dport 547")
+                .count(),
+            1,
+            "deduplicated: {f}"
+        );
+        assert!(
+            !f.contains("eth4") && !f.contains("eth5") && !f.contains("not-an-ip"),
+            "{f}"
+        );
         assert!(!f.contains("2001:db8:1::99"), "{f}");
         put(&s, "dhcp6-relay.enabled", "0").await;
         assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());

@@ -168,11 +168,11 @@ pub async fn load(store: &ConfigStore) -> Result<RelayConf> {
             continue;
         }
         let id = r["id"].as_i64().unwrap_or(0);
-        let server: Ipv6Addr = r["server"]
-            .as_str()
-            .unwrap_or("")
-            .parse()
-            .map_err(|_| invalid(format!("DHCPv6 relay rule {id}: server is not an IPv6 address")))?;
+        let server: Ipv6Addr = r["server"].as_str().unwrap_or("").parse().map_err(|_| {
+            invalid(format!(
+                "DHCPv6 relay rule {id}: server is not an IPv6 address"
+            ))
+        })?;
         let up_spec = r["upstream"].as_str().unwrap_or("").trim();
         let ups: Vec<String> = if up_spec.is_empty() {
             Vec::new()
@@ -630,7 +630,10 @@ pub mod engine {
         let need = r.server.is_multicast() || is_ll(&r.server);
         let scope = match &r.upstream {
             Some(up) if need => ifindex(up).ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::NotFound, format!("{up}: no such device"))
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("{up}: no such device"),
+                )
             })?,
             _ => 0,
         };
@@ -722,7 +725,11 @@ pub mod engine {
                 let iid = sh.conf.interface_id.then(|| dev.as_bytes().to_vec());
                 let pkt = packet::build_forw(hop, link, *from.ip(), iid.as_deref(), msg);
                 for r in &rules {
-                    let c = sh.counters.get(&(dev.clone(), r.id)).cloned().unwrap_or_default();
+                    let c = sh
+                        .counters
+                        .get(&(dev.clone(), r.id))
+                        .cloned()
+                        .unwrap_or_default();
                     match send_server(&sh, &pkt, r) {
                         Ok(()) => {
                             c.forwarded.fetch_add(1, Ordering::Relaxed);
@@ -941,7 +948,13 @@ mod tests {
     #[test]
     fn forward_wraps_the_client_message_per_rfc8415() {
         let solicit = [1u8, 0xab, 0xcd, 0xef, 0, 1, 0, 2, 0, 0];
-        let p = build_forw(0, a("2001:db8:50::1"), a("fe80::1234"), Some(b"rtr-lan"), &solicit);
+        let p = build_forw(
+            0,
+            a("2001:db8:50::1"),
+            a("fe80::1234"),
+            Some(b"rtr-lan"),
+            &solicit,
+        );
         assert_eq!(p[0], RELAY_FORW);
         assert_eq!(p[1], 0, "hop-count");
         assert_eq!(&p[2..18], &a("2001:db8:50::1").octets());
@@ -984,13 +997,19 @@ mod tests {
         assert!(parse_repl(&nomsg).is_none());
         let mut tail = r.clone();
         tail.push(0);
-        assert!(parse_repl(&tail).is_none(), "3 trailing bytes cannot be an option");
+        assert!(
+            parse_repl(&tail).is_none(),
+            "3 trailing bytes cannot be an option"
+        );
     }
 
     #[test]
     fn forward_plan_hop_count_and_message_types() {
         // client messages start at hop 0 with the interface link-address
-        assert_eq!(forward_plan(&[1, 0, 0, 1, 0, 1, 0, 0], 32), Some((0, false)));
+        assert_eq!(
+            forward_plan(&[1, 0, 0, 1, 0, 1, 0, 0], 32),
+            Some((0, false))
+        );
         for t in [1u8, 3, 4, 5, 6, 8, 9, 11] {
             assert!(forward_plan(&[t, 0, 0, 1], 32).is_some(), "type {t}");
         }
@@ -1013,7 +1032,10 @@ mod tests {
         f[1] = 2;
         assert_eq!(forward_plan(&f, 3), Some((3, true)));
         assert_eq!(forward_plan(&f, 2), None);
-        assert!(forward_plan(&[RELAY_FORW, 0, 0], 32).is_none(), "truncated relay-forward");
+        assert!(
+            forward_plan(&[RELAY_FORW, 0, 0], 32).is_none(),
+            "truncated relay-forward"
+        );
     }
 
     #[test]
@@ -1033,15 +1055,24 @@ mod tests {
             msg: &[2, 0, 0, 0],
         };
         let pick = |r: &Repl<'_>| engine::pick_device(&devs, r, &addrs, None).cloned();
-        assert_eq!(pick(&mk("::", Some(b"rtr-guest"))).as_deref(), Some("rtr-guest"));
+        assert_eq!(
+            pick(&mk("::", Some(b"rtr-guest"))).as_deref(),
+            Some("rtr-guest")
+        );
         // the Interface-Id wins over a (wrong) link-address
         assert_eq!(
             pick(&mk("2001:db8:50::1", Some(b"rtr-guest"))).as_deref(),
             Some("rtr-guest")
         );
         assert_eq!(pick(&mk("2001:db8:50::1", Some(b"nope"))), None);
-        assert_eq!(pick(&mk("2001:db8:70::1", None)).as_deref(), Some("rtr-guest"));
-        assert_eq!(pick(&mk("2001:db8:50::ffff", None)).as_deref(), Some("rtr-lan"));
+        assert_eq!(
+            pick(&mk("2001:db8:70::1", None)).as_deref(),
+            Some("rtr-guest")
+        );
+        assert_eq!(
+            pick(&mk("2001:db8:50::ffff", None)).as_deref(),
+            Some("rtr-lan")
+        );
         assert_eq!(pick(&mk("::", None)), None);
         // a relayed Relay-forward has link-address :: and no Interface-Id: the
         // device the downstream relay was heard on is the way back
@@ -1094,18 +1125,28 @@ mod tests {
             assert!(svc::save_row(&s, c, None, &bad).await.is_err(), "{bad}");
         }
         // the checks that need the pair of fields happen when the config is built
-        svc::save_row(&s, c, None, &json!({"iface": "eth1", "server": "ff02::1:2"}))
-            .await
-            .unwrap();
+        svc::save_row(
+            &s,
+            c,
+            None,
+            &json!({"iface": "eth1", "server": "ff02::1:2"}),
+        )
+        .await
+        .unwrap();
         let e = ap.apply(&s).await.unwrap_err();
         assert!(e.to_string().contains("upstream"), "{e}");
         let rows = svc::raw_rows(&s, c).await.unwrap();
         svc::delete_row(&s, c, rows[0]["id"].as_i64().unwrap())
             .await
             .unwrap();
-        svc::save_row(&s, c, None, &json!({"iface": "eth1", "server": "2001:db8:1::53"}))
-            .await
-            .unwrap();
+        svc::save_row(
+            &s,
+            c,
+            None,
+            &json!({"iface": "eth1", "server": "2001:db8:1::53"}),
+        )
+        .await
+        .unwrap();
         svc::save_row(
             &s,
             c,
@@ -1123,7 +1164,10 @@ mod tests {
         .await
         .unwrap();
         let conf = load(&s).await.unwrap();
-        assert_eq!((conf.hop_limit, conf.interface_id, conf.rate_limit), (32, true, 500));
+        assert_eq!(
+            (conf.hop_limit, conf.interface_id, conf.rate_limit),
+            (32, true, 500)
+        );
         assert_eq!(conf.rules.len(), 3);
         assert_eq!(conf.rules[0].upstream, None);
         assert_eq!(conf.rules[1].server, ALL_SERVERS);
@@ -1176,9 +1220,14 @@ mod tests {
             .await
             .unwrap();
         let c = &SPEC.colls[0];
-        let id = svc::save_row(&s, c, None, &json!({"iface": "eth1", "server": "2001:db8::1"}))
-            .await
-            .unwrap();
+        let id = svc::save_row(
+            &s,
+            c,
+            None,
+            &json!({"iface": "eth1", "server": "2001:db8::1"}),
+        )
+        .await
+        .unwrap();
         let conf = load(&s).await.unwrap();
         assert_eq!((conf.hop_limit, conf.interface_id), (8, false));
         assert_eq!(conf.rules.len(), 1);

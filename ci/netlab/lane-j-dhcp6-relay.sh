@@ -52,7 +52,6 @@ v6_addrs() {
   R ip -6 addr replace $IOT_RTR6/64 dev rtr-iot nodad
   R ip -6 addr replace $G6/64 dev rtr-g nodad
   ip -n nl-iot -6 addr replace $IOT_SRV6/64 dev iot0 nodad
-  ip -n nl-iot -6 addr replace $IOT_SPOOF6/64 dev iot0 nodad
   settled
 }
 no_tentative() {
@@ -219,7 +218,8 @@ start_dhcpd() {
 probe_n() { local n; n=$(grep -c . "$PLOG" || true); echo $((n - 1)); }   # first line is "listening"
 probe_last() { tail -n 1 "$PLOG"; }
 jf() { python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d[sys.argv[2]])' "$1" "$2"; }
-client_ll() { ip -n nl-client -6 -j addr show dev lan0 scope link | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["addr_info"][0]["local"])'; }
+ll() { ip -n "$1" -6 -j addr show dev "$2" scope link | python3 -c 'import json,sys; print([a["local"] for i in json.load(sys.stdin) for a in i["addr_info"] if "local" in a][0])'; }   # ll NAMESPACE DEV
+client_ll() { ip -n nl-client -6 -j addr show dev lan0 scope link | python3 -c 'import json,sys; print([a["local"] for i in json.load(sys.stdin) for a in i["addr_info"] if "local" in a][0])'; }
 dc() { ip netns exec "$1" python3 "$NL_T/nl-d6.py" "${@:2}"; }   # dc NAMESPACE ARGS...
 
 diag() {
@@ -283,7 +283,8 @@ nl_wait 8 listening547 || nl_fail "nothing listens on udp/547 in the router"
 CLL=$(client_ll)
 out=$(dc nl-client client lan0)
 echo "$out"
-case "$out" in "ADV $(R ip -6 -j addr show dev rtr-lan scope link | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["addr_info"][0]["local"])') "*) ;; *) nl_fail "Advertise did not come from the router's link-local address: $out";; esac
+RLL=$(ip -n nl-rtr -6 -j addr show dev rtr-lan scope link | python3 -c 'import json,sys; print([a["local"] for i in json.load(sys.stdin) for a in i["addr_info"] if "local" in a][0])')
+case "$out" in "ADV $RLL "*) ;; *) nl_fail "Advertise did not come from the router's link-local address: $out";; esac
 [ "$(probe_n)" = 1 ] || { cat "$PLOG"; nl_fail "the server must see exactly one Relay-forward, saw $(probe_n)"; }
 L=$(probe_last)
 [ "$(jf "$L" hop)" = 0 ] || nl_fail "hop-count: $L"
@@ -306,8 +307,10 @@ echo "=== a Relay-reply from a host that is not the server is ignored"
 dc nl-client listen lan0 4 > "$NL_T/lan-hears.txt" 2>&1 &
 lp=$!
 nl_wait 5 grep -F listening "$NL_T/lan-hears.txt" || true
+ip -n nl-iot -6 addr add $IOT_SPOOF6/64 dev iot0 nodad
 ip netns exec nl-iot python3 "$NL_T/nl-d6.py" spoof $IOT_SPOOF6 $IOT_RTR6 iot0 rtr-lan
 wait $lp || true
+ip -n nl-iot -6 addr del $IOT_SPOOF6/64 dev iot0
 [ "$(grep -c GOT "$NL_T/lan-hears.txt" || true)" = 0 ] || { cat "$NL_T/lan-hears.txt"; nl_fail "a forged Relay-reply from $IOT_SPOOF6 reached the client"; }
 nl_ok "forged Relay-reply from another host: not delivered"
 
@@ -388,8 +391,8 @@ out=$(dc nl-client client lan0); echo "$out"
 case "$out" in ADV*) ;; *) nl_fail "multicast server: no Advertise ($out)";; esac
 [ "$(probe_n)" = 1 ] || { cat "$PLOG"; nl_fail "the multicast probe must see one Relay-forward, saw $(probe_n)"; }
 L=$(probe_last)
-[ "$(jf "$L" link)" = "$LAN6" ] && [ "$(jf "$L" from)" = "$IOT_RTR6" ] || nl_fail "multicast Relay-forward: $L"
-nl_ok "ff02::1:2 on the upstream link: the probe hears the Relay-forward from the router's upstream address"
+[ "$(jf "$L" link)" = "$LAN6" ] && [ "$(jf "$L" from)" = "$(ll nl-rtr rtr-iot)" ] || nl_fail "multicast Relay-forward (from the router's link-local address on rtr-iot): $L"
+nl_ok "ff02::1:2 on the upstream link: the probe hears the Relay-forward from the router's upstream interface"
 start_dhcpd
 sleep 1
 out=$(dc nl-client client lan0 full); echo "$out"
