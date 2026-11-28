@@ -372,12 +372,11 @@ These implementations are **production-ready** and **complete**:
     - Per-interface routing
     - *Needs: Gateway groups, tiered failover*
 
-14. **Wireless/WiFi** - ✅ Superior
-    - hostapd and iwd backend choice
-    - WPA2/WPA3
+14. **Wireless/WiFi** - ✅ Parity
+    - AP = hostapd only (iwd is not a Patronus backend; the Wi-Fi uplink uses wpa_supplicant)
+    - WPA2/WPA3 (SAE via hostapd; proven on mac80211_hwsim, not yet on real radios)
     - Multiple SSIDs
     - VLAN per SSID
-    - Better than competitors (backend choice)
 
 15. **PPPoE** - ✅ Complete
     - Client and server
