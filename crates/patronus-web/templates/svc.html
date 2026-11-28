@@ -114,6 +114,20 @@
             if (Array.isArray(v) && v.every(x => typeof x === 'string')) {
                 if (v.length === 0) td.textContent = '-';
                 else { const pre = document.createElement('pre'); pre.className = 'svc-pre'; pre.textContent = v.join('\n'); td.appendChild(pre); }
+            } else if (SLUG === 'tunnels' && Array.isArray(v) && v.length && v.every(x => x && typeof x === 'object' && !Array.isArray(x))) {
+                // a list of records (one per tunnel, ...): a real table in a labelled, scrollable region
+                const cols = [...new Set(v.flatMap(x => Object.keys(x)))];
+                const inner = document.createElement('table'); inner.className = 'lan'; inner.id = 'svc-status-' + k;
+                const hr = document.createElement('tr');
+                for (const c of cols) { const h = document.createElement('th'); h.textContent = c.replace(/_/g, ' '); hr.appendChild(h); }
+                inner.appendChild(hr);
+                for (const row of v) {
+                    const r = document.createElement('tr'); if (row.name !== undefined) r.dataset.name = row.name;
+                    for (const c of cols) { const cell = document.createElement('td'); cell.textContent = Array.isArray(row[c]) ? (row[c].join(', ') || '-') : renderValue(row[c]); r.appendChild(cell); }
+                    inner.appendChild(r);
+                }
+                const sc = document.createElement('div'); sc.className = 'svc-scroll'; sc.tabIndex = 0; sc.setAttribute('role', 'region'); sc.setAttribute('aria-label', k.replace(/_/g, ' ') + ' (live)');
+                sc.appendChild(inner); td.appendChild(sc);
             } else if (v !== null && typeof v === 'object') {
                 const pre = document.createElement('pre'); pre.className = 'svc-pre'; pre.textContent = JSON.stringify(v, null, 1); td.appendChild(pre);
             } else td.textContent = renderValue(v);

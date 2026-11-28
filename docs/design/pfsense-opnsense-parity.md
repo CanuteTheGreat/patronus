@@ -71,7 +71,7 @@ Status words: **present** = in the shipped binary, reachable from API/UI, covere
 | LAGG (LACP, failover, load balance) | bond (lane-c) | present |
 | Bridge | yes | present |
 | GRE, VXLAN | GRE, GRE-TAP, VXLAN (lane-n-overlays) | present |
-| GIF (IP-in-IP), 6in4 / 6rd tunnel broker | none | missing |
+| GIF (IP-in-IP), 6in4 / 6rd tunnel broker | IPIP, 6in4 (SIT), GIF-style on the tunnels page (lane-j-tunnels); no 6rd | partial: no 6rd, no broker dynamic-endpoint update |
 | PPPoE / PPP client, L2TP | PPPoE client, L2TP | present |
 | Wireless (AP, client) | AP + client, auto channel | present (ahead) |
 | Interface groups usable as rule targets | none | **missing** |

@@ -273,6 +273,11 @@ that are not finished are listed separately under
   exports flow records (v5, v9 or IPFIX) to a collector. [C47]
 - IGMP proxy (USE=igmp): igmpproxy forwards multicast streams from the WAN to
   LAN interfaces, with the firewall rules it needs generated for it. [C48]
+- IP tunnels (USE=tunnels): IPIP, 6in4 (tunnel brokers such as Hurricane Electric) and
+  GIF-style generic tunnels over IPv4, made on one page: each tunnel is a kernel link with
+  its inner addresses, routes (including a default route) and MSS clamping, the firewall
+  accepts the tunnel protocol only from the configured remote endpoint, and the far end
+  of a tunnel built by another implementation exchanges real traffic with it. [C1965]
 - NAT64 / DNS64 (USE=nat64): IPv6-only clients reach IPv4-only servers through
   tayga, and Unbound answers AAAA queries for IPv4-only names with addresses
   in the NAT64 prefix. [C49]
