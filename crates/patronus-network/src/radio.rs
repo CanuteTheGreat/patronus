@@ -631,7 +631,11 @@ mod tests {
         assert!(!hostapd_caps_of(b"", "").installed);
         assert_eq!(banner_version(b"\0hostapd v2.12\nUser space"), "2.12");
         assert_eq!(banner_version(b"#!/bin/sh\nsleep 300\n"), "");
-        assert_eq!(banner_version(b"\0hostapd v%s\n"), "", "the format string is not a version");
+        assert_eq!(
+            banner_version(b"\0hostapd v%s\n"),
+            "",
+            "the format string is not a version"
+        );
     }
 
     #[test]

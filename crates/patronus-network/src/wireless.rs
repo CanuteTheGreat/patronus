@@ -1114,7 +1114,13 @@ impl Applier for WifiApplier {
                 Ok(r) => (r, None),
                 Err(e) if !plan.links.is_empty() => {
                     let m = e.to_string();
-                    (true, Some(format!("hostapd refused the links: {}", m.chars().take(200).collect::<String>())))
+                    (
+                        true,
+                        Some(format!(
+                            "hostapd refused the links: {}",
+                            m.chars().take(200).collect::<String>()
+                        )),
+                    )
                 }
                 Err(e) => return Err(e),
             };
@@ -2513,24 +2519,43 @@ mod tests {
         // a hostapd that exits at once when it is given more than one link configuration (no MLO in the driver)
         let picky = l._d.path().join("picky-hostapd");
         std::fs::write(&picky, "#!/bin/sh\n[ $# -gt 1 ] && exit 1\nsleep 300\n").unwrap();
-        std::fs::set_permissions(&picky, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-        let a = WifiApplier { hcaps: Some(HostapdCaps::full()), ..l.apply.clone() }.binaries(
+        std::fs::set_permissions(&picky, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let a = WifiApplier {
+            hcaps: Some(HostapdCaps::full()),
+            ..l.apply.clone()
+        }
+        .binaries(
             picky,
             l._d.path().join("hostapd_cli"),
             l._d.path().join("patronus"),
         );
-        let mut i = NetworkInput { band: Some("5g".into()), channel: Some(36), country: Some("DE".into()), ..net_in("wpa3") };
+        let mut i = NetworkInput {
+            band: Some("5g".into()),
+            channel: Some(36),
+            country: Some("DE".into()),
+            ..net_in("wpa3")
+        };
         i.chan.width = Some(80);
         i.gen.mlo_links = Some("6g/37/160".into());
         i.gen.mlo_wait = Some(5);
         seg_wifi::create_network(&l.store, &i).await.unwrap();
         let r = a.apply(&l.store).await.unwrap();
-        assert!(r.warnings.iter().any(|w| w.contains("does not support it")), "{r:?}");
+        assert!(
+            r.warnings.iter().any(|w| w.contains("does not support it")),
+            "{r:?}"
+        );
         assert!(a.sup.is_running(SVC_HOSTAPD, "home"), "one link runs");
         assert!(!l.dir.join("home-link1.conf").exists());
         let st = a.status(&l.store).await.unwrap();
         let g = &st["networks"][0]["generation"];
-        assert!(g["links"].as_array().unwrap().is_empty() && g["warnings"][0].as_str().unwrap().contains("did not come up"), "{g}");
+        assert!(
+            g["links"].as_array().unwrap().is_empty()
+                && g["warnings"][0]
+                    .as_str()
+                    .unwrap()
+                    .contains("did not come up"),
+            "{g}"
+        );
     }
-
 }
