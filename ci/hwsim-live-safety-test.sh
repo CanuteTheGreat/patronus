@@ -40,7 +40,7 @@ export HWSIM_LOCK_NAME=patronus-hwsim-lock-lt$$ HWSIM_LOADER_NAME=patronus-hwsim
 # the four scripts; refuse runs must end quickly (HWSIM_WAIT_MIN=0 HWSIM_MODULE_WAIT_MIN=0)
 $DOCKER run -d --name "$CT-wifi" "$IMG" sleep infinity >/dev/null
 $DOCKER exec "$CT-wifi" mkdir -p /t
-$DOCKER exec "$CT-wifi" sh -c 'cat > /t/stub.sh' <<'EOF'
+$DOCKER exec -i "$CT-wifi" sh -c 'cat > /t/stub.sh' <<'EOF'
 echo "ok - stub scenario sees $(ls /sys/class/ieee80211 | wc -l) radios"
 EOF
 declare -A CMD=(
@@ -49,7 +49,7 @@ declare -A CMD=(
   [xbss]="SCENARIOS=acs bash ci/embedded-aarch64/ax1800/tests/xbss-hwsim.sh"
   [wifi-hwsim]="HWSIM_CONTAINER=$CT-wifi HWSIM_SCENARIOS=stub.sh HWSIM_RADIOS=3 bash ci/netlab/wifi-hwsim.sh"
 )
-ORDER="steer bandsteer xbss wifi-hwsim"
+ORDER=${LT_ORDER:-"steer bandsteer xbss wifi-hwsim"}
 mkleft() { # a pretend dead run: module loaded, loader recorded, nothing uses it, no one holds a lock
   HWSIM_LOADED=; hwsim_load 3 "pretend-dead-run" || { echo "cannot load the module"; exit 1; }; HWSIM_LOADED=; }
 
