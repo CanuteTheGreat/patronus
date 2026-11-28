@@ -1,0 +1,59 @@
+<section class="ui-panel" id="ap-uplink" data-live>
+    <div class="ui-panel-head"><h2>Access point</h2><a href="/wifi">Wi-Fi settings and clients</a></div>
+    <div class="ui-panel-body">
+        <dl class="ui-kv" id="ap-uplink-kv"></dl>
+        <h3 class="text-sm mt-4 mb-2">Radios</h3>
+        <div class="ui-grid-wrap"><table class="ui-grid" id="ap-radios"><thead><tr><th>Radio</th><th>State</th><th>Channel</th><th>Networks (clients)</th></tr></thead><tbody></tbody></table>
+            <div class="ui-grid-state" id="ap-radios-state">Loading…</div></div>
+        <h3 class="text-sm mt-4 mb-2">Uplink ports</h3>
+        <div class="ui-grid-wrap"><table class="ui-grid" id="ap-uplink-ports"><thead><tr><th>Port</th><th>Link</th><th>Speed</th></tr></thead><tbody></tbody></table>
+            <div class="ui-grid-state" id="ap-ports-state" style="display:none">No wired port is a member of the uplink bridge.</div></div>
+    </div>
+</section>
+<script>
+// An access point: how it is connected (uplink) and what it broadcasts.
+fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(async f => {
+    if (!f) return;
+    const kv = document.getElementById('ap-uplink-kv');
+    const row = (k, v) => { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; kv.append(dt, dd); };
+    const u = await fetch('/api/ap/uplink', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).catch(() => null);
+    if (u && u.uplink) {
+        const up = u.uplink;
+        row('Address', ((up.addresses || []).join(', ') || 'none yet') + ' (' + up.addressing + ') on ' + up.bridge);
+        row('Main router', up.gateway ? up.gateway + (up.gateway_reachable ? ' (reachable)' : ' (not answering yet)') : '\u2014');
+        row('DNS', [...new Set(up.dns || [])].join(', ') || '\u2014');
+        const tb = document.querySelector('#ap-uplink-ports tbody');
+        for (const p of up.ports || []) {
+            const tr = document.createElement('tr');
+            for (const v of [p.name, p.link ? 'up' : 'down', p.speed_mbps ? p.speed_mbps + ' Mbit/s ' + (p.duplex || '') : '\u2014']) {
+                const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+            }
+            tb.appendChild(tr);
+        }
+        if (!(up.ports || []).length) document.getElementById('ap-ports-state').style.display = '';
+    } else row('Uplink', 'could not be read');
+    const st = document.getElementById('ap-radios-state');
+    if (!f.wifi_backend) { st.textContent = 'This unit has no radio that Patronus drives.'; return; }
+    const w = await fetch('/api/wifi', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).catch(() => null);
+    if (!w || !w.radios) { st.textContent = 'Wi-Fi state could not be read.'; st.classList.add('error'); return; }
+    st.style.display = w.radios.length ? 'none' : '';
+    if (!w.radios.length) st.textContent = 'No radios found.';
+    const tb = document.querySelector('#ap-radios tbody');
+    for (const r of w.radios) {
+        const tr = document.createElement('tr');
+        const on = r.state === 'ENABLED';
+        const cells = [r.band === '5' ? '5 GHz' : '2.4 GHz', null, on ? String(r.channel) : '\u2014',
+            on ? (r.bss || []).map(b => b.ssid + ' (' + b.clients + ')').join(', ') : '\u2014'];
+        cells.forEach((v, i) => {
+            const td = document.createElement('td');
+            if (i === 1) {
+                const b = document.createElement('span'); b.className = 'ui-badge' + (on ? ' ok' : '');
+                const d = document.createElement('span'); d.className = 'ui-dot ' + (on ? 'ok' : 'off');
+                b.append(d, document.createTextNode(on ? 'on' : (r.state || 'off').toLowerCase())); td.appendChild(b);
+            } else td.textContent = v;
+            tr.appendChild(td);
+        });
+        tb.appendChild(tr);
+    }
+}).catch(() => {});
+</script>

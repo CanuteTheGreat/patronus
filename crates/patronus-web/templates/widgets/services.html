@@ -1,0 +1,14 @@
+<section class="ui-panel">
+    <div class="ui-panel-head"><h2>Services</h2><a href="/system">Manage</a></div>
+    <div class="ui-panel-body">
+        {% if services.is_empty() %}
+        <p class="empty" title="Patronus controls services through OpenRC or systemd">No services that Patronus manages were found on this system.</p>
+        {% else %}
+        <div class="svc-list">
+            {% for s in services %}
+            {% if s.is_running %}<span class="ui-badge ok"><span class="ui-dot ok"></span>{{ s.name }}</span>{% else %}<span class="ui-badge" title="{{ s.status|lower }}"><span class="ui-dot off"></span>{{ s.name }}: {{ s.status|lower }}</span>{% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</section>

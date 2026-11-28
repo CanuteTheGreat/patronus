@@ -268,9 +268,9 @@ This document compares Patronus against the **complete feature sets** of:
 | **WPA2/WPA3** | ✅ | ✅ | ✅ | ✅ COMPLETE |
 | **Multiple SSIDs** | ✅ | ✅ | ✅ | ✅ COMPLETE |
 | **VLAN per SSID** | ✅ | ✅ | ✅ | ✅ COMPLETE |
-| **Backend choice** | ❌ hostapd only | ❌ | ✅ hostapd/iwd | ✅ BETTER |
+| **AP backend** | hostapd | hostapd | hostapd (iwd is not a Patronus backend) | parity |
 
-**Status:** ✅ Complete and superior (backend choice)
+**Status:** ✅ Complete (hostapd AP; WPA3-SAE proven on mac80211_hwsim, not yet on real radios)
 
 ---
 

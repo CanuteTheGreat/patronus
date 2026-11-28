@@ -1,0 +1,8 @@
+{% if !traffic.is_empty() %}
+<div class="stat-card">
+    <h2>Traffic <a href="/monitoring">Monitoring</a></h2>
+    {% for t in traffic %}
+    <div class="label" data-traffic-rate="{{ t.name }}"><strong>{{ t.name }}</strong> &middot; &darr; {{ t.rx }} &middot; &uarr; {{ t.tx }}</div>
+    {% endfor %}
+</div>
+{% endif %}

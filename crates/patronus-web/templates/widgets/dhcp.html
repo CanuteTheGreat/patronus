@@ -1,0 +1,7 @@
+{% if let Some(n) = dhcp_leases %}
+<div class="stat-card">
+    <h2>DHCP <a href="/dhcp">Leases</a></h2>
+    <div class="value" id="dhcp-leases">{{ n }}</div>
+    <div class="label">clients holding a lease</div>
+</div>
+{% endif %}

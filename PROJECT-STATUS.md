@@ -86,7 +86,7 @@ We set out to build a **production-ready, enterprise-grade firewall** that:
 ### Advanced Networking ✅
 13. ✅ **Dynamic Routing** - BGP, OSPF, RIP (FRR + BIRD choice)
 14. ✅ **QoS** - HTB, FQ-CoDel, CAKE traffic shaping
-15. ✅ **Wireless/WiFi** - hostapd + iwd support, WPA3 ⭐ NEW
+15. ✅ **Wireless/WiFi** - AP via hostapd (iwd is not a Patronus backend; the Wi-Fi uplink uses wpa_supplicant), WPA3-SAE via hostapd (proven on mac80211_hwsim, not yet on real radios)
 16. ✅ **NetFlow/sFlow** - Traffic analysis export ⭐ NEW
 
 ### High Availability ✅
@@ -244,7 +244,7 @@ patronus/
 ### 3. The Gentoo Philosophy
 - **DHCP:** ISC or Kea? YOU choose!
 - **DNS:** Unbound, BIND, or dnsmasq? YOU choose!
-- **WiFi:** hostapd or iwd? YOU choose!
+- **WiFi:** AP is hostapd (no backend choice; the Wi-Fi uplink uses wpa_supplicant, iwd is not a Patronus backend)
 - **HA:** VRRP, Keepalived, or Pacemaker? YOU choose!
 - **Routing:** FRR or BIRD? YOU choose!
 - **Source-based:** Optimize for YOUR hardware!

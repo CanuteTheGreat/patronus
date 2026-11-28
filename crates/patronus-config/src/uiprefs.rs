@@ -5,8 +5,9 @@
 //! - `ui.health_warn_pct` (default 80) / `ui.health_crit_pct` (default 90): where a
 //!   usage value (CPU, memory, disk) turns amber / red on the dashboard and the
 //!   System page. 1-100, warn below crit.
-//! - `ui.refresh_secs` (default 10): how often the dashboard and other live panels
-//!   re-read their figures; 0 = never (the page says it is a snapshot), otherwise 2-3600.
+//! - `refresh_secs` = the key `dashboard.refresh_seconds` (owned by [`crate::dashboard`],
+//!   default 30): how often the dashboard re-reads its widgets; 0 = never (the page says it
+//!   is a snapshot), otherwise 5-3600. Shown here too so the Display card sets it; ONE key.
 //!
 //! An absent or empty key = the default.
 
@@ -16,12 +17,13 @@ use serde::{Deserialize, Serialize};
 
 pub const K_WARN: &str = "ui.health_warn_pct";
 pub const K_CRIT: &str = "ui.health_crit_pct";
-pub const K_REFRESH: &str = "ui.refresh_secs";
+/// The dashboard's own key (one setting, two views: `/api/system/ui` and the dashboard settings).
+pub const K_REFRESH: &str = crate::dashboard::K_REFRESH;
 pub const KEYS: &[&str] = &[K_WARN, K_CRIT, K_REFRESH];
 
 pub const DEFAULT_WARN: u8 = 80;
 pub const DEFAULT_CRIT: u8 = 90;
-pub const DEFAULT_REFRESH: u32 = 10;
+pub const DEFAULT_REFRESH: u32 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiPrefs {
@@ -79,8 +81,8 @@ impl UiPrefs {
         if self.health_warn_pct >= self.health_crit_pct {
             return bad("the warning threshold must be below the critical one");
         }
-        if self.refresh_secs != 0 && !(2..=3600).contains(&self.refresh_secs) {
-            return bad("refresh is 0 (off) or 2-3600 seconds");
+        if self.refresh_secs != 0 && !(5..=3600).contains(&self.refresh_secs) {
+            return bad("refresh is 0 (off) or 5-3600 seconds");
         }
         Ok(())
     }
@@ -200,6 +202,8 @@ mod tests {
             (70, 90, 0)
         );
         assert_eq!(resolve(&s).await, p);
+        // one key: the dashboard's own settings see the same refresh
+        assert_eq!(crate::dashboard::load(&s).await.refresh_seconds, 0);
         assert_eq!(p.level(69.9), Level::Ok);
         assert_eq!(p.level(70.0), Level::Warn);
         assert_eq!(p.level(95.0), Level::Crit);

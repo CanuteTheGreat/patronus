@@ -17,7 +17,7 @@
 {% block content %}
 <div class="page-header">
     <h1 class="page-title">Diagnostics</h1>
-    <p class="page-subtitle">Ping, traceroute and DNS lookups from the router itself, and its neighbour,
+    <p class="page-subtitle">Ping, traceroute, DNS lookups and a TCP port test from the router itself, and its neighbour,
         routing and socket tables. Packet capture is on the <a href="/system#capture-card">System</a> page.</p>
 </div>
 
@@ -55,6 +55,23 @@
     </form>
     <p class="text-sm diag-status" id="ping-status" role="status" aria-live="polite"></p>
     <pre class="ui-log diag-out" id="ping-out" tabindex="0" aria-label="Ping output"></pre>
+</div>
+
+<div class="card" id="tcp-card">
+    <div class="card-header"><h2 class="card-title">Test port</h2></div>
+    <p class="text-sm">Tries to open a TCP connection from the router: <strong>open</strong> (something answered),
+        <strong>closed</strong> (the host refused), or <strong>filtered</strong> (no answer in time, usually a firewall dropping it).</p>
+    <form class="lan-form" onsubmit="return runDiag(event, 'tcp')">
+        <label>Host or address <input name="host" required placeholder="example.com or 192.0.2.1" maxlength="253"></label>
+        <label>TCP port <input name="port" type="number" min="1" max="65535" required placeholder="443"></label>
+        <label>IP version <select name="family"><option value="auto">automatic</option><option value="4">IPv4</option><option value="6">IPv6</option></select></label>
+        <label>Source interface <input name="interface" placeholder="(routing decides)" maxlength="15"></label>
+        <label>Source address <input name="source" placeholder="(routing decides)" maxlength="45"></label>
+        <label>Timeout in seconds <input name="timeout" type="number" min="1" max="30" placeholder="(default from settings)"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Test port</button>
+    </form>
+    <p class="text-sm" id="tcp-status" role="status" aria-live="polite"></p>
+    <table class="table" id="tcp-table" style="display:none"><thead><tr><th>Result</th><th>Host</th><th>Address</th><th>Port</th><th>Time</th><th>Detail</th></tr></thead><tbody></tbody></table>
 </div>
 
 <div class="card" id="traceroute-card">
@@ -128,7 +145,17 @@
         btn.disabled = true; st.textContent = 'Running...';
         try {
             const j = await diag(body);
-            if (tool === 'dns') {
+            if (tool === 'tcp') {
+                const verdict = {open: 'Open', closed: 'Closed (connection refused)', filtered: 'Filtered (no answer in ' + j.timeout + ' s)',
+                                 unreachable: 'Unreachable (no route)', error: 'Error'}[j.state] || j.state;
+                st.textContent = j.host + ' port ' + j.port + ': ' + verdict;
+                const t = el('tcp-table'), tb = t.querySelector('tbody');
+                tb.innerHTML = '';
+                const tr = document.createElement('tr');
+                for (const v of [verdict, j.host, j.resolved, String(j.port), j.ms + ' ms', j.error || '']) tr.appendChild(td(v));
+                tb.appendChild(tr);
+                t.style.display = '';
+            } else if (tool === 'dns') {
                 st.textContent = j.rcode + ' from ' + j.server + ' in ' + j.ms + ' ms' + (j.authenticated_data ? ' (DNSSEC validated)' : '') + (j.truncated ? ' (truncated)' : '');
                 const t = el('dns-table'), tb = t.querySelector('tbody');
                 tb.innerHTML = '';

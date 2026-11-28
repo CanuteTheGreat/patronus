@@ -346,7 +346,7 @@ async function fwFeedDownload() {
             <span class="ui-hint" id="ui-crit-hint">Default {{ ui_default.health_crit_pct }}.</span></div>
         <div class="ui-field"><label for="ui-refresh">Live refresh (seconds)</label>
             <input class="ui-input" id="ui-refresh" name="refresh_secs" type="number" min="0" max="3600" required value="{{ ui.refresh_secs }}" aria-describedby="ui-refresh-hint">
-            <span class="ui-hint" id="ui-refresh-hint">0 = off (pages are snapshots), otherwise 2-3600. Default {{ ui_default.refresh_secs }}.</span></div>
+            <span class="ui-hint" id="ui-refresh-hint">0 = off (pages are snapshots), otherwise 5-3600. Default {{ ui_default.refresh_secs }}.</span></div>
         <div class="ui-actions"><button class="ui-btn primary" id="save-ui" type="submit">Save</button>
             <button class="ui-btn" type="button" onclick="uiPut({reset: true})">Back to defaults</button>
             <span id="ui-status" class="text-sm" role="status"></span></div>
@@ -368,7 +368,7 @@ async function fwFeedDownload() {
         const w = +warn.value, c = +crit.value, s = +ref.value;
         const errs = [[warn, !(w >= 1 && w < c) && 'Must be 1 or more and below the critical value.'],
                       [crit, !(c > w && c <= 100) && 'Must be above the warning value and at most 100.'],
-                      [ref, !(s === 0 || (s >= 2 && s <= 3600)) && '0, or 2 to 3600.']];
+                      [ref, !(s === 0 || (s >= 5 && s <= 3600)) && '0, or 5 to 3600.']];
         let ok = true;
         for (const [el, msg] of errs) {
             const hint = document.getElementById(el.getAttribute('aria-describedby'));

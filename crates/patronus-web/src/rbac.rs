@@ -44,10 +44,22 @@ pub fn area_for_path(path: &str) -> Option<&'static str> {
         return None;
     }
     let p = path.strip_prefix("/api").unwrap_or(path);
+    let versioned;
+    let p = match p.strip_prefix("/v1/") {
+        Some(rest) => {
+            versioned = format!("/{rest}");
+            versioned.as_str()
+        }
+        None => p,
+    };
     let first = p.trim_start_matches('/').split('/').next().unwrap_or("");
+    // the system activity list is a monitoring view, not system administration
+    if p == "/system/activity" {
+        return Some("dashboard");
+    }
     Some(match first {
         "" | "status" | "metrics" | "events" | "monitoring" | "insights" | "telemetry"
-        | "simple" => "dashboard",
+        | "simple" | "dashboard" | "activity" => "dashboard",
         "firewall" => "firewall",
         "interfaces" | "network" => "interfaces",
         "routing" | "uplinks" => "routing",
@@ -271,6 +283,15 @@ mod tests {
         assert_eq!(area_for_path("/api/dhcp/pools"), Some("services"));
         assert_eq!(area_for_path("/api/system/backups"), Some("system"));
         assert_eq!(area_for_path("/api/unknown-thing"), Some("system"));
+        // dashboard widgets and the system activity list belong to the dashboard area
+        assert_eq!(area_for_path("/api/v1/dashboard/layout"), Some("dashboard"));
+        assert_eq!(
+            area_for_path("/api/v1/dashboard/settings"),
+            Some("dashboard")
+        );
+        assert_eq!(area_for_path("/api/v1/system/activity"), Some("dashboard"));
+        assert_eq!(area_for_path("/activity"), Some("dashboard"));
+        assert_eq!(area_for_path("/api/v1/system/other"), Some("system"));
         assert_eq!(area_for_path("/"), Some("dashboard"));
         assert_eq!(area_for_path("/api/auth/password"), None);
         // licenses: open to every signed-in account, whatever its group

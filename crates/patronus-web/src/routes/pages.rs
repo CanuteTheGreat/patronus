@@ -112,7 +112,7 @@ pub async fn login_page(headers: axum::http::HeaderMap) -> Response {
 }
 
 /// Dashboard page (`/`).
-pub async fn dashboard(State(state): State<AppState>) -> Response {
+pub async fn dashboard(State(state): State<AppState>, user: crate::auth::AuthUser) -> Response {
     let interfaces = state.interfaces.list_template().await.unwrap_or_else(|e| {
         tracing::error!("Failed to fetch interfaces: {}", e);
         vec![]
@@ -144,15 +144,42 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
         .ok()
         .and_then(|v| v.get("leases").and_then(|l| l.as_array()).map(|a| a.len()));
     let roles = state.interfaces.roles().await;
-    // Live rates over a short window (same sampler the Monitoring page uses).
-    let sample = host::sample(std::time::Duration::from_millis(300)).await;
-    let rates: std::collections::HashMap<String, String> = state
-        .monitoring
-        .interface_stats_from(&sample)
-        .into_iter()
-        .map(|s| (s.name, format!("{} / {}", s.rx_rate, s.tx_rate)))
+    // The viewer's own widget layout (their saved one, else the default).
+    let (layout, customized) = crate::routes::api::dashboard::resolved(&state, &user.session).await;
+    let drawn = |id: &str| layout.widgets.iter().any(|w| w.id == id && w.on);
+    // Live rates over a short window (same sampler the Monitoring page uses), read once for the
+    // Interfaces table and the Traffic widget; skipped when neither is drawn.
+    let stats = if drawn("interfaces") || drawn("traffic") {
+        let sample = host::sample(std::time::Duration::from_millis(300)).await;
+        state.monitoring.interface_stats_from(&sample)
+    } else {
+        vec![]
+    };
+    let rates: std::collections::HashMap<String, String> = stats
+        .iter()
+        .map(|s| (s.name.clone(), format!("{} / {}", s.rx_rate, s.tx_rate)))
         .collect();
+    let traffic: Vec<crate::templates::DashTraffic> = if drawn("traffic") {
+        stats
+            .into_iter()
+            .filter(|s| s.name != "lo")
+            .map(|s| crate::templates::DashTraffic {
+                name: s.name,
+                rx: s.rx_rate,
+                tx: s.tx_rate,
+            })
+            .collect()
+    } else {
+        vec![]
+    };
     let (iface_rows, hidden_stubs) = dash_iface_rows(&interfaces, &roles, &rates);
+    let (mut widgets, hidden_widgets) = crate::dashboard::split(&layout);
+    // A tile without data draws nothing (no DHCP server, no interface rates).
+    widgets.retain(|w| match w.id {
+        "dhcp" => dhcp_leases.is_some(),
+        "traffic" => !traffic.is_empty(),
+        _ => true,
+    });
     let ui = patronus_config::uiprefs::resolve(&state.config_store).await;
     let (cpu_level, mem_level, disk_level) = (
         ui.level(system_info.cpu_usage as f64),
@@ -190,6 +217,11 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
         disk_label: host::storage_label(),
         health_note,
         health_tone,
+        traffic,
+        widgets,
+        hidden_widgets,
+        layout_json: serde_json::to_string(&layout).unwrap_or_else(|_| "{\"widgets\":[]}".into()),
+        customized,
     };
     render(&template, "dashboard")
 }

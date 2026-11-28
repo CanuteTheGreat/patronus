@@ -1,0 +1,10 @@
+<div class="stat-card{% if internet_gw.is_empty() %} warning{% else %} success{% endif %}" id="internet-card">
+    <h2>Default route <a href="/network">Routes</a></h2>
+    {% if internet_gw.is_empty() %}
+    <div class="value" id="internet-status">No default route</div>
+    <div class="label">This box has no IPv4 route to the internet; set the WAN in <a href="/interfaces">Interfaces</a>.</div>
+    {% else %}
+    <div class="value" id="internet-status">Present</div>
+    <div class="label" title="Whether the internet answers is shown on the Monitoring page (uplink health)">via <span class="mono">{{ internet_gw }}</span> on <strong>{{ internet_dev }}</strong></div>
+    {% endif %}
+</div>

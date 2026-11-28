@@ -5,18 +5,36 @@
 {% block extra_head %}
 {% include "lan_head.html" %}
 <style>
-    /* same 4-column rhythm as the tile row above: interfaces take three columns, health one */
-    .dash-grid { display: grid; gap: var(--s-3); grid-template-columns: minmax(0, 3fr) minmax(260px, 1fr); align-items: start; }
-    .dash-grid .ui-grid td.num, .dash-grid .ui-grid td.mono { white-space: nowrap; }
-    .dash-grid > * { min-width: 0; }
+    .dash-bar { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
+    .dash-bar [hidden], .dash-hidden[hidden] { display: none !important; }
+    .dash-edit-tools { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
+    .dash-grid { align-items: stretch; }
+    .widget { position: relative; min-width: 0; }
+    .widget.widget-wide { grid-column: 1 / -1; }
+    .widget > .widget-body > .stat-card { height: 100%; box-sizing: border-box; }
+    .widget > .widget-body > .ui-panel { margin-bottom: 0; }
+    .widget-tools { display: none; flex-wrap: wrap; gap: 4px; align-items: center; padding: 4px 8px;
+        background: var(--c-surface); border: 1px dashed var(--c-border); border-radius: var(--r-md) var(--r-md) 0 0; color: var(--c-ink); }
+    body.dash-edit .widget-tools { display: flex; }
+    body.dash-edit .widget { outline: 1px dashed var(--c-border); outline-offset: 2px; border-radius: var(--r-md); }
+    .widget-tools .widget-name { font-size: 0.8rem; font-weight: 600; margin-right: auto; }
+    .widget-tools .ui-btn { min-height: 32px; min-width: 32px; }
+    .widget-tools .ui-btn:disabled { opacity: 0.45; cursor: default; }
+    .widget-handle { cursor: grab; touch-action: none; user-select: none; padding: 0 6px; }
+    .widget.dragging { opacity: 0.55; }
+    .dash-hidden { margin-bottom: var(--s-3); }
+    .dash-hidden ul { list-style: none; display: flex; flex-wrap: wrap; gap: var(--s-2); margin: var(--s-2) 0 0; padding: 0; }
+    .dash-status { font-size: 0.85rem; color: var(--c-ink); }
+    .dash-status.dash-error { color: var(--c-crit); font-weight: 600; }
+    .widget .ui-grid td.num, .widget .ui-grid td.mono { white-space: nowrap; }
     /* addresses wrap between entries (a dual-stack bridge carries three or four), names never break inside */
-    .dash-grid .ui-grid td.mono.addrs { white-space: normal; }
-    .dash-grid .ui-grid td:first-child { white-space: nowrap; }
-    @media (max-width: 1100px) { .dash-grid { grid-template-columns: minmax(0, 1fr); } }
+    .widget .ui-grid td.mono.addrs { white-space: normal; }
+    .widget .ui-grid td:first-child { white-space: nowrap; }
     .dash-live { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .stat-card .label + .label { margin-top: 2px; }
-    .stat-card h2 a { margin-left: auto; font-weight: 500; color: var(--c-accent); text-decoration: none; }
-    .stat-card h2 a:hover { text-decoration: underline; }
+    .stat-card h2 a, .ui-panel-head a { font-weight: 500; color: var(--c-accent); text-decoration: none; }
+    .stat-card h2 a { margin-left: auto; }
+    .stat-card h2 a:hover, .ui-panel-head a:hover { text-decoration: underline; }
     .iface-role { margin-right: 4px; }
     .svc-list { display: flex; flex-wrap: wrap; gap: 6px; }
 </style>
@@ -26,220 +44,260 @@
 <div class="ui-page-header">
     <div>
         <h1 class="page-title">Dashboard</h1>
-        <p class="ui-sub">{{ system_info.hostname }} &middot; up <span data-live="uptime">{{ uptime }}</span> &middot;
-            <span class="dash-live" id="dash-live" data-refresh="{{ ui.refresh_secs }}">{% if ui.refresh_secs == 0 %}snapshot (live refresh is off in System &gt; Display){% else %}<span class="ui-dot ok" id="dash-live-dot"></span><span id="dash-live-text">live, every {{ ui.refresh_secs }} s</span><button type="button" class="ui-btn sm" id="dash-live-toggle" aria-pressed="false">Pause</button>{% endif %}</span></p>
+        <p class="ui-sub">{{ system_info.hostname }} &middot; up {{ uptime }} &middot;
+            <span class="dash-live" id="dash-live">{% if ui.refresh_secs == 0 %}snapshot (live refresh is off in System &gt; Display){% else %}<span class="ui-dot ok" id="dash-live-dot"></span><span id="dash-live-text">live, every {{ ui.refresh_secs }} s</span><button type="button" class="ui-btn sm" id="dash-live-toggle" aria-pressed="false">Pause</button>{% endif %}</span></p>
+    </div>
+    <div class="dash-bar">
+        <button type="button" class="ui-btn" id="dash-customize" aria-pressed="false" aria-controls="dash-grid">Customize</button>
+        <span class="dash-edit-tools" id="dash-edit-tools" hidden>
+            <button type="button" class="ui-btn primary" id="dash-done">Done</button>
+            <button type="button" class="ui-btn" id="dash-reset">Reset to default</button>
+            <span class="dash-status" id="dash-status" role="status" aria-live="polite"></span>
+        </span>
     </div>
 </div>
 
 <div data-live="health-note" role="status">{% if !health_note.is_empty() %}<div class="ui-banner {{ health_tone }}" id="health-note">{{ health_note }}. <a href="/monitoring">Monitoring</a></div>{% endif %}</div>
 
-<section class="ui-panel" id="ap-uplink" style="display:none">
-    <div class="ui-panel-head"><h2>Access point</h2><a href="/wifi">Wi-Fi settings and clients</a></div>
+<section class="ui-panel dash-hidden" id="dash-hidden" hidden aria-labelledby="dash-hidden-title">
     <div class="ui-panel-body">
-        <dl class="ui-kv" id="ap-uplink-kv"></dl>
-        <h3 class="text-sm mt-4 mb-2">Radios</h3>
-        <div class="ui-grid-wrap"><table class="ui-grid" id="ap-radios"><thead><tr><th>Radio</th><th>State</th><th>Channel</th><th>Networks (clients)</th></tr></thead><tbody></tbody></table>
-            <div class="ui-grid-state" id="ap-radios-state">Loading…</div></div>
-        <h3 class="text-sm mt-4 mb-2">Uplink ports</h3>
-        <div class="ui-grid-wrap"><table class="ui-grid" id="ap-uplink-ports"><thead><tr><th>Port</th><th>Link</th><th>Speed</th></tr></thead><tbody></tbody></table>
-            <div class="ui-grid-state" id="ap-ports-state" style="display:none">No wired port is a member of the uplink bridge.</div></div>
+        <strong id="dash-hidden-title">Hidden widgets</strong>
+        <ul id="dash-hidden-list">
+            {% for w in hidden_widgets %}<li><button type="button" class="ui-btn" data-add="{{ w.id }}">Add {{ w.title }}</button></li>
+            {% endfor %}
+        </ul>
+        <p class="text-sm" id="dash-hidden-empty"{% if !hidden_widgets.is_empty() %} hidden{% endif %}>Every widget is on the dashboard.</p>
     </div>
 </section>
 
-<div class="stat-grid" data-live="tiles">
-    <div class="stat-card{% if internet_gw.is_empty() %} warning{% else %} success{% endif %}" id="internet-card">
-        <h2>Default route <a href="/network">Routes</a></h2>
-        {% if internet_gw.is_empty() %}
-        <div class="value" id="internet-status">No default route</div>
-        <div class="label">This box has no IPv4 route to the internet; set the WAN in <a href="/interfaces">Interfaces</a>.</div>
-        {% else %}
-        <div class="value" id="internet-status">Present</div>
-        <div class="label" title="Whether the internet answers is shown on the Monitoring page (uplink health)">via <span class="mono">{{ internet_gw }}</span> on <strong>{{ internet_dev }}</strong></div>
-        {% endif %}
+<script type="application/json" id="dash-layout">{{ layout_json|safe }}</script>
+
+<div class="stat-grid dash-grid" id="dash-grid" data-refresh="{{ ui.refresh_secs }}" data-customized="{{ customized }}">
+{% for w in widgets %}
+<section class="widget{% if w.wide %} widget-wide{% endif %}" data-widget-id="{{ w.id }}" data-title="{{ w.title }}" aria-label="{{ w.title }}">
+    <div class="widget-tools">
+        <span class="widget-handle" role="img" aria-label="Drag to move {{ w.title }}" title="Drag to move">&#x283F;</span>
+        <span class="widget-name">{{ w.title }}</span>
+        <button type="button" class="ui-btn sm" data-act="up" aria-label="Move {{ w.title }} up">&uarr;</button>
+        <button type="button" class="ui-btn sm" data-act="down" aria-label="Move {{ w.title }} down">&darr;</button>
+        <button type="button" class="ui-btn sm" data-act="remove" aria-label="Remove {{ w.title }} from the dashboard">Remove</button>
     </div>
-    {% if !ap %}
-    <div class="stat-card">
-        <h2>Firewall <a href="/firewall">Rules</a></h2>
-        <div class="value">{{ active_rules }}</div>
-        <div class="label">active rules</div>
+    <div class="widget-body">
+{% if w.id == "ap-uplink" %}{% include "widgets/ap-uplink.html" %}
+{% else if w.id == "internet" %}{% include "widgets/internet.html" %}
+{% else if w.id == "interfaces" %}{% include "widgets/interfaces.html" %}
+{% else if w.id == "firewall-rules" %}{% include "widgets/firewall-rules.html" %}
+{% else if w.id == "vpn" %}{% include "widgets/vpn.html" %}
+{% else if w.id == "dhcp" %}{% include "widgets/dhcp.html" %}
+{% else if w.id == "traffic" %}{% include "widgets/traffic.html" %}
+{% else if w.id == "system" %}{% include "widgets/system.html" %}
+{% else if w.id == "activity" %}{% include "widgets/activity.html" %}
+{% else if w.id == "network-interfaces" %}{% include "widgets/network-interfaces.html" %}
+{% else if w.id == "services" %}{% include "widgets/services.html" %}
+{% endif %}
     </div>
-    {% if vpn_errors.is_empty() %}
-    <div class="stat-card">
-        <h2>VPN <a href="/vpn">Tunnels</a></h2>
-        <div class="value" id="vpn-connections">{{ vpn_connections }}</div>
-        <div class="label" title="WireGuard peers with a handshake in the last 3 minutes plus established IPsec SAs">tunnels connected</div>
-    </div>
-    {% else %}
-    <div class="stat-card warning" id="vpn-connections-card">
-        <h2>VPN <a href="/vpn">Tunnels</a></h2>
-        <div class="value" id="vpn-connections">{% if vpn_connections > 0 %}at least {{ vpn_connections }}{% else %}unknown{% endif %}</div>
-        <div class="alert-error" id="vpn-errors">VPN state could not be read:
-            {% for e in vpn_errors %}{{ e }}{% if !loop.last %}; {% endif %}{% endfor %}</div>
-        <div class="label">Live tunnels may be missing from this count</div>
-    </div>
-    {% endif %}
-    {% if let Some(n) = dhcp_leases %}
-    <div class="stat-card">
-        <h2>DHCP <a href="/dhcp">Leases</a></h2>
-        <div class="value" id="dhcp-leases">{{ n }}</div>
-        <div class="label">clients holding a lease</div>
-    </div>
-    {% endif %}
-    {% endif %}
+</section>
+{% endfor %}
 </div>
+{% endblock %}
 
-<div class="dash-grid">
-    <section class="ui-panel">
-        <div class="ui-panel-head"><h2>Interfaces</h2><a href="/interfaces">Configure</a></div>
-        {% if iface_rows.is_empty() %}
-        <div class="ui-grid-state">No network interfaces found.</div>
-        {% else %}
-        <div class="ui-grid-wrap" style="border:0;border-radius:0" data-live="ifaces">
-            <table class="ui-grid" data-ui-grid="dash-ifaces">
-                <thead><tr><th data-sort>Interface</th><th data-sort>State</th><th>Addresses</th><th class="num" data-col="rate">Rate &darr; / &uarr;</th><th class="num" data-sort data-type="num">Received</th><th class="num" data-sort data-type="num">Sent</th></tr></thead>
-                <tbody>
-                {% for r in iface_rows %}
-                <tr class="iface-row" data-iface="{{ r.name }}">
-                    <td>{% if !r.role.is_empty() %}<span class="ui-badge info iface-role">{{ r.role }}</span>{% endif %}<strong{% if !r.mac.is_empty() %} title="MAC {{ r.mac }}"{% endif %}>{{ r.name }}</strong></td>
-                    <td>{% if r.up %}<span class="ui-badge ok"><span class="ui-dot ok"></span>up</span>{% else %}<span class="ui-badge"><span class="ui-dot off"></span>down</span>{% endif %}</td>
-                    <td class="mono addrs">{% if r.addrs.is_empty() %}<span class="nil" title="no address">&mdash;</span>{% else %}{{ r.addrs }}{% endif %}</td>
-                    <td class="num" data-col="rate" data-traffic="{{ r.name }}">{% if r.rate.is_empty() %}<span class="nil">&mdash;</span>{% else %}{{ r.rate }}{% endif %}</td>
-                    <td class="num" data-v="{{ r.rx_bytes }}">{{ r.rx }}</td>
-                    <td class="num" data-v="{{ r.tx_bytes }}">{{ r.tx }}</td>
-                </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% if hidden_stubs > 0 %}<div class="ui-grid-foot"><span>{{ hidden_stubs }} kernel placeholder device(s) without an address hidden (gre0, sit0, ...); <a href="/interfaces">all devices</a></span></div>{% endif %}
-        {% endif %}
-    </section>
-
-    <div>
-        <section class="ui-panel" data-live="health">
-            <div class="ui-panel-head"><h2>System</h2><a href="/system">Details</a></div>
-            <div class="ui-panel-body">
-                <dl class="ui-kv">
-                    <dt>CPU</dt><dd><div class="ui-usage {{ cpu_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(system_info.cpu_usage) }}%"></i></span><span class="val">{{ "{:.0}"|format(system_info.cpu_usage) }}%</span></div></dd>
-                    <dt>Memory</dt><dd><div class="ui-usage {{ mem_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(system_info.memory_usage) }}%"></i></span><span class="val">{{ "{:.0}"|format(system_info.memory_usage) }}%</span></div></dd>
-                    <dt>{{ disk_label }}</dt><dd><div class="ui-usage {{ disk_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(system_info.disk_usage) }}%"></i></span><span class="val">{{ "{:.0}"|format(system_info.disk_usage) }}%</span></div></dd>
-                    <dt>Load</dt><dd class="mono">{{ "{:.2}"|format(system_info.load_avg.0) }} &middot; {{ "{:.2}"|format(system_info.load_avg.1) }} &middot; {{ "{:.2}"|format(system_info.load_avg.2) }}</dd>
-                </dl>
-            </div>
-        </section>
-
-        <section class="ui-panel" data-live="services">
-            <div class="ui-panel-head"><h2>Services</h2><a href="/system">Manage</a></div>
-            <div class="ui-panel-body">
-                {% if services.is_empty() %}
-                <p class="empty" title="Patronus controls services through OpenRC or systemd">No services that Patronus manages were found on this system.</p>
-                {% else %}
-                <div class="svc-list">
-                    {% for s in services %}
-                    {% if s.is_running %}<span class="ui-badge ok"><span class="ui-dot ok"></span>{{ s.name }}</span>{% else %}<span class="ui-badge" title="{{ s.status|lower }}"><span class="ui-dot off"></span>{{ s.name }}: {{ s.status|lower }}</span>{% endif %}
-                    {% endfor %}
-                </div>
-                {% endif %}
-            </div>
-        </section>
-    </div>
-</div>
-
+{% block extra_scripts %}
 <script>
-// Builds without VPN hide the VPN tile (also after each live refresh).
-let dashNoVpn = false;
-function dashHideVpn() {
-    if (dashNoVpn) document.querySelectorAll('.stat-card').forEach(c => { if (c.querySelector('#vpn-connections')) c.style.display = 'none'; });
-}
-// An access point: how it is connected (uplink) and what it broadcasts come first.
-fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(async f => {
-    if (!f) return;
-    dashNoVpn = !(f.features || []).some(x => ['wireguard', 'ipsec', 'openvpn', 'l2tp'].includes(x));
-    dashHideVpn();
-    if (f.role !== 'ap') return;
-    const card = document.getElementById('ap-uplink');
-    card.style.display = '';
-    const kv = document.getElementById('ap-uplink-kv');
-    const row = (k, v) => { const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; kv.append(dt, dd); };
-    const u = await fetch('/api/ap/uplink', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).catch(() => null);
-    if (u && u.uplink) {
-        const up = u.uplink;
-        row('Address', ((up.addresses || []).join(', ') || 'none yet') + ' (' + up.addressing + ') on ' + up.bridge);
-        row('Main router', up.gateway ? up.gateway + (up.gateway_reachable ? ' (reachable)' : ' (not answering yet)') : '\u2014');
-        row('DNS', [...new Set(up.dns || [])].join(', ') || '\u2014');
-        const tb = document.querySelector('#ap-uplink-ports tbody');
-        for (const p of up.ports || []) {
-            const tr = document.createElement('tr');
-            for (const v of [p.name, p.link ? 'up' : 'down', p.speed_mbps ? p.speed_mbps + ' Mbit/s ' + (p.duplex || '') : '\u2014']) {
-                const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
-            }
-            tb.appendChild(tr);
-        }
-        if (!(up.ports || []).length) document.getElementById('ap-ports-state').style.display = '';
-    } else row('Uplink', 'could not be read');
-    const st = document.getElementById('ap-radios-state');
-    if (!f.wifi_backend) { st.textContent = 'This unit has no radio that Patronus drives.'; return; }
-    const w = await fetch('/api/wifi', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).catch(() => null);
-    if (!w || !w.radios) { st.textContent = 'Wi-Fi state could not be read.'; st.classList.add('error'); return; }
-    st.style.display = w.radios.length ? 'none' : '';
-    if (!w.radios.length) st.textContent = 'No radios found.';
-    const tb = document.querySelector('#ap-radios tbody');
-    for (const r of w.radios) {
-        const tr = document.createElement('tr');
-        const on = r.state === 'ENABLED';
-        const cells = [r.band === '5' ? '5 GHz' : '2.4 GHz', null, on ? String(r.channel) : '\u2014',
-            on ? (r.bss || []).map(b => b.ssid + ' (' + b.clients + ')').join(', ') : '\u2014'];
-        cells.forEach((v, i) => {
-            const td = document.createElement('td');
-            if (i === 1) {
-                const b = document.createElement('span'); b.className = 'ui-badge' + (on ? ' ok' : '');
-                const d = document.createElement('span'); d.className = 'ui-dot ' + (on ? 'ok' : 'off');
-                b.append(d, document.createTextNode(on ? 'on' : (r.state || 'off').toLowerCase())); td.appendChild(b);
-            } else td.textContent = v;
-            tr.appendChild(td);
-        });
-        tb.appendChild(tr);
-    }
-}).catch(() => {});
-
-// Live refresh: re-read this page every ui.refresh_secs seconds (System > Display) and swap the live regions;
-// paused while the tab is hidden or by the Pause button. A failed read says so instead of showing stale figures.
 (function () {
-    const box = document.getElementById('dash-live');
-    const secs = parseInt(box.dataset.refresh, 10) || 0;
-    if (!secs) return;
-    const dot = document.getElementById('dash-live-dot'), text = document.getElementById('dash-live-text');
-    const btn = document.getElementById('dash-live-toggle');
-    let paused = false, busy = false;
-    btn.addEventListener('click', () => {
-        paused = !paused;
-        btn.textContent = paused ? 'Resume' : 'Pause';
-        btn.setAttribute('aria-pressed', paused ? 'true' : 'false');
-        dot.className = 'ui-dot ' + (paused ? 'off' : 'ok');
-        text.textContent = paused ? 'paused' : 'live, every ' + secs + ' s';
-        if (!paused) tick();
-    });
-    async function tick() {
-        if (paused || busy || document.hidden) return;
-        busy = true;
-        try {
-            const r = await fetch(location.pathname, {credentials: 'same-origin', cache: 'no-store'});
-            if (r.redirected || !r.ok) throw new Error('HTTP ' + r.status);
-            const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
-            document.querySelectorAll('[data-live]').forEach(el => {
-                const n = doc.querySelector('[data-live="' + el.dataset.live + '"]');
-                if (n) { const c = document.importNode(n, true); el.replaceWith(c); if (window.uiKit) uiKit.init(c); }
-            });
-            dashHideVpn();
-            dot.className = 'ui-dot ok';
-            text.textContent = 'live, every ' + secs + ' s, updated ' + new Date().toLocaleTimeString();
-        } catch (e) {
-            dot.className = 'ui-dot warn';
-            text.textContent = 'live refresh failed (' + e.message + '), retrying';
-        } finally { busy = false; }
+    var grid = document.getElementById('dash-grid');
+    var statusEl = document.getElementById('dash-status');
+    var layout = JSON.parse(document.getElementById('dash-layout').textContent).widgets;
+    var editing = false;
+
+    function say(msg, bad) {
+        statusEl.textContent = msg;
+        statusEl.className = 'dash-status' + (bad ? ' dash-error' : '');
     }
-    setInterval(tick, secs * 1000);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+    function domIds() {
+        return Array.prototype.map.call(grid.querySelectorAll(':scope > .widget'), function (w) { return w.dataset.widgetId; });
+    }
+    // the full ordered list: hidden entries keep their place, the drawn ones take the DOM order
+    function syncOrder() {
+        var ids = domIds(), seen = {};
+        ids.forEach(function (i) { seen[i] = true; });
+        var k = 0;
+        layout = layout.map(function (e) { return seen[e.id] ? { id: ids[k++], on: e.on } : e; });
+    }
+    function save() {
+        return fetch('/api/v1/dashboard/layout', {
+            method: 'PUT', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ widgets: layout })
+        }).then(function (r) {
+            return r.json().catch(function () { return {}; }).then(function (j) {
+                if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+                say('Saved.');
+                return j;
+            });
+        }).catch(function (e) { say('Could not save the layout: ' + e.message, true); throw e; });
+    }
+    function updateButtons() {
+        var ws = grid.querySelectorAll(':scope > .widget');
+        Array.prototype.forEach.call(ws, function (w, i) {
+            w.querySelector('[data-act=up]').disabled = i === 0;
+            w.querySelector('[data-act=down]').disabled = i === ws.length - 1;
+        });
+    }
+    function move(w, dir) {
+        var other = dir < 0 ? w.previousElementSibling : w.nextElementSibling;
+        if (!other) return;
+        if (dir < 0) grid.insertBefore(w, other); else grid.insertBefore(other, w);
+        syncOrder(); updateButtons();
+        var name = w.dataset.title;
+        var keep = document.activeElement;
+        save().then(function () {
+            say(name + ' moved to position ' + (domIds().indexOf(w.dataset.widgetId) + 1) + ' of ' + domIds().length + '.');
+            if (keep && keep.disabled) {
+                var alt = w.querySelector('[data-act=' + (dir < 0 ? 'down' : 'up') + ']');
+                if (alt) alt.focus();
+            } else if (keep) { keep.focus(); }
+        }).catch(function () {});
+    }
+    function remove(w) {
+        var id = w.dataset.widgetId, title = w.dataset.title;
+        layout.forEach(function (e) { if (e.id === id) e.on = false; });
+        var next = w.nextElementSibling || w.previousElementSibling;
+        w.remove(); syncOrder(); updateButtons();
+        var li = document.createElement('li'), b = document.createElement('button');
+        b.type = 'button'; b.className = 'ui-btn'; b.dataset.add = id; b.textContent = 'Add ' + title;
+        li.appendChild(b); document.getElementById('dash-hidden-list').appendChild(li);
+        document.getElementById('dash-hidden-empty').hidden = true;
+        var f = next ? next.querySelector('button:not(:disabled)') : null;
+        (f || document.getElementById('dash-done')).focus();
+        save().then(function () { say(title + ' removed. It is in the hidden widgets list.'); }).catch(function () {});
+    }
+    function add(id) {
+        layout.forEach(function (e) { if (e.id === id) e.on = true; });
+        // the page is drawn again on the server; stay in edit mode so several widgets can be added
+        save().then(function () { try { sessionStorage.setItem('dash-edit', '1'); } catch (e) {} location.reload(); }).catch(function () {});
+    }
+    function setEditing(on) {
+        editing = on;
+        try { if (!on) sessionStorage.removeItem('dash-edit'); } catch (e) {}
+        document.body.classList.toggle('dash-edit', on);
+        document.getElementById('dash-customize').setAttribute('aria-pressed', on ? 'true' : 'false');
+        document.getElementById('dash-customize').hidden = on;
+        document.getElementById('dash-edit-tools').hidden = !on;
+        document.getElementById('dash-hidden').hidden = !on;
+        if (on) { updateButtons(); say('Edit mode: use the arrow buttons or drag the handle to move a widget.'); document.getElementById('dash-done').focus(); }
+        else { say(''); document.getElementById('dash-customize').focus(); }
+    }
+
+    document.getElementById('dash-customize').addEventListener('click', function () { setEditing(true); });
+    try { if (sessionStorage.getItem('dash-edit') === '1') { sessionStorage.removeItem('dash-edit'); setEditing(true); } } catch (e) {}
+    document.getElementById('dash-done').addEventListener('click', function () { setEditing(false); });
+    document.getElementById('dash-reset').addEventListener('click', function () {
+        fetch('/api/v1/dashboard/layout', { method: 'DELETE', credentials: 'same-origin' })
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); location.reload(); })
+            .catch(function (e) { say('Could not reset the layout: ' + e.message, true); });
+    });
+    document.getElementById('dash-hidden').addEventListener('click', function (ev) {
+        var b = ev.target.closest('[data-add]'); if (b) add(b.dataset.add);
+    });
+    grid.addEventListener('click', function (ev) {
+        var b = ev.target.closest('[data-act]'); if (!b) return;
+        var w = b.closest('.widget');
+        if (b.dataset.act === 'up') move(w, -1);
+        else if (b.dataset.act === 'down') move(w, 1);
+        else if (b.dataset.act === 'remove') remove(w);
+    });
+
+    // dragging with a mouse or a finger: the handle moves the widget over the others
+    var drag = null;
+    grid.addEventListener('pointerdown', function (ev) {
+        var h = ev.target.closest('.widget-handle'); if (!h || !editing) return;
+        drag = h.closest('.widget'); drag.classList.add('dragging');
+        h.setPointerCapture(ev.pointerId); ev.preventDefault();
+    });
+    grid.addEventListener('pointermove', function (ev) {
+        if (!drag) return;
+        // near the top or bottom edge of the screen the page follows the pointer (a long list on a phone)
+        if (ev.clientY < 40) window.scrollBy(0, -24); else if (ev.clientY > window.innerHeight - 40) window.scrollBy(0, 24);
+        var under = document.elementsFromPoint(ev.clientX, ev.clientY).map(function (e) { return e.closest ? e.closest('.widget') : null; })
+            .filter(function (w) { return w && w !== drag && w.parentNode === grid; })[0];
+        if (!under) return;
+        var r = under.getBoundingClientRect(), d = drag.getBoundingClientRect();
+        var sameRow = Math.abs(d.top - r.top) < 8;
+        var before = sameRow ? (ev.clientX < r.left + r.width / 2) : (ev.clientY < r.top + r.height / 2);
+        if (before) grid.insertBefore(drag, under); else grid.insertBefore(drag, under.nextSibling);
+    });
+    function endDrag() {
+        if (!drag) return;
+        var w = drag; drag = null; w.classList.remove('dragging');
+        syncOrder(); updateButtons();
+        save().then(function () { say(w.dataset.title + ' moved to position ' + (domIds().indexOf(w.dataset.widgetId) + 1) + ' of ' + domIds().length + '.'); }).catch(function () {});
+    }
+    grid.addEventListener('pointerup', endDrag);
+    grid.addEventListener('pointercancel', endDrag);
+
+    // Live refresh: re-read this page every dashboard.refresh_seconds (System > Display) and swap each widget's
+    // body in place (widgets their own script fills, marked data-live, are left alone) plus the health banner;
+    // not while editing, the tab is hidden or the Pause button is on. A failed read says so instead of showing
+    // stale figures as current.
+    var secs = parseInt(grid.dataset.refresh, 10) || 0;
+    if (secs > 0) {
+        var dot = document.getElementById('dash-live-dot'), text = document.getElementById('dash-live-text');
+        var btn = document.getElementById('dash-live-toggle');
+        var paused = false, busy = false;
+        var tick = function () {
+            if (paused || busy || editing || document.hidden) return;
+            busy = true;
+            fetch(location.pathname, { credentials: 'same-origin', cache: 'no-store' })
+                .then(function (r) { if (r.redirected || !r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+                .then(function (t) {
+                    var doc = new DOMParser().parseFromString(t, 'text/html');
+                    Array.prototype.forEach.call(grid.querySelectorAll(':scope > .widget'), function (w) {
+                        if (w.querySelector('[data-live]')) return;
+                        var n = doc.querySelector('.widget[data-widget-id="' + w.dataset.widgetId + '"] .widget-body');
+                        if (n) { var body = w.querySelector('.widget-body'); body.innerHTML = n.innerHTML; if (window.uiKit) uiKit.init(body); }
+                    });
+                    var hn = document.querySelector('[data-live="health-note"]'), nn = doc.querySelector('[data-live="health-note"]');
+                    if (hn && nn) hn.innerHTML = nn.innerHTML;
+                    dot.className = 'ui-dot ok';
+                    text.textContent = 'live, every ' + secs + ' s, updated ' + new Date().toLocaleTimeString();
+                })
+                .catch(function (e) {
+                    dot.className = 'ui-dot warn';
+                    text.textContent = 'live refresh failed (' + e.message + '), retrying';
+                })
+                .then(function () { busy = false; });
+        };
+        btn.addEventListener('click', function () {
+            paused = !paused;
+            btn.textContent = paused ? 'Resume' : 'Pause';
+            btn.setAttribute('aria-pressed', paused ? 'true' : 'false');
+            dot.className = 'ui-dot ' + (paused ? 'off' : 'ok');
+            text.textContent = paused ? 'paused' : 'live, every ' + secs + ' s';
+            if (!paused) tick();
+        });
+        setInterval(tick, secs * 1000);
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) tick(); });
+    }
+
+    // the System activity widget reads the cached sampler
+    var act = document.getElementById('activity-widget-table');
+    if (act) {
+        var fmt = function (b) { return b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GiB' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MiB' : Math.round(b / 1024) + ' KiB'; };
+        var cell = function (tr, text, cls) { var td = document.createElement('td'); td.textContent = text; if (cls) td.className = cls; tr.appendChild(td); };
+        var loadAct = function () {
+            fetch('/api/v1/system/activity?limit=5', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
+                var tb = act.querySelector('tbody'), sum = document.getElementById('activity-widget-summary');
+                tb.innerHTML = '';
+                if (!j.ready) { sum.textContent = 'Collecting the first samples...'; return; }
+                sum.textContent = 'CPU ' + j.cpu_percent.toFixed(1) + '% \u00b7 load ' + j.load.one.toFixed(2) + ' \u00b7 memory ' + fmt(j.memory.total - j.memory.available) + ' of ' + fmt(j.memory.total);
+                j.processes.forEach(function (p) {
+                    var tr = document.createElement('tr');
+                    cell(tr, String(p.pid), 'num'); cell(tr, p.name, 'mono'); cell(tr, p.cpu_percent.toFixed(1) + '%', 'num'); cell(tr, fmt(p.rss_bytes), 'num');
+                    tb.appendChild(tr);
+                });
+            }).catch(function () { document.getElementById('activity-widget-summary').textContent = 'Could not read the activity.'; });
+        };
+        loadAct(); setInterval(function () { if (!editing && !document.hidden) loadAct(); }, 5000);
+    }
 })();
 </script>
 {% endblock %}

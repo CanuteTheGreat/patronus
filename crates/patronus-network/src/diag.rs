@@ -627,7 +627,122 @@ fn sockets() -> Result<Value> {
     Ok(json!({ "command": format!("{bin} {}", args.join(" ")), "sockets": lines }))
 }
 
-/// Entry point: `params.tool` = ping | traceroute | dns | neighbors |
+/// Default connect timeout of the TCP port test (seconds); the web layer
+/// replaces it with the typed `diag.tcp_timeout_secs` setting.
+pub const DEFAULT_TCP_TIMEOUT_SECS: u64 = 3;
+/// Port tests allowed per minute (all callers together): a port scanner
+/// through this page is not what it is for. The web layer passes the typed
+/// `diag.tcp_tests_per_minute` setting as `rate_limit`.
+pub const DEFAULT_TCP_TESTS_PER_MINUTE: usize = 30;
+
+/// Sliding one-minute window of recent test start times.
+fn tcp_rate_ok(now: Instant, recent: &mut Vec<Instant>, limit: usize) -> bool {
+    recent.retain(|t| now.duration_since(*t) < Duration::from_secs(60));
+    if recent.len() >= limit {
+        return false;
+    }
+    recent.push(now);
+    true
+}
+
+static TCP_RECENT: std::sync::Mutex<Vec<Instant>> = std::sync::Mutex::new(Vec::new());
+
+/// What a failed `connect` means for the port.
+fn tcp_state(kind: std::io::ErrorKind, raw: Option<i32>) -> &'static str {
+    use std::io::ErrorKind as K;
+    match kind {
+        K::ConnectionRefused => "closed",
+        K::TimedOut | K::WouldBlock => "filtered",
+        _ => match raw {
+            // ENETDOWN, ENETUNREACH, EHOSTUNREACH: nothing was tried on the wire
+            Some(100) | Some(101) | Some(113) => "unreachable",
+            _ => "error",
+        },
+    }
+}
+
+/// TCP connect test: `host`, `port`, optional `interface` (device to send
+/// through) and `source` (local address), `family`, `timeout` seconds.
+/// Reports `open`, `closed` (refused), `filtered` (no answer in time),
+/// `unreachable` or `error`, with the resolved address and the latency.
+pub fn tcp_test(params: &Value) -> Result<Value> {
+    use socket2::{Domain, Protocol, SockAddr, Socket, Type};
+    use std::net::ToSocketAddrs;
+    let host = valid_target(str_param(params, "host"))?;
+    match params.get("port") {
+        None | Some(Value::Null) => return Err(invalid("port is required (1 to 65535)")),
+        Some(Value::String(s)) if s.trim().is_empty() => {
+            return Err(invalid("port is required (1 to 65535)"))
+        }
+        _ => {}
+    }
+    let port = num(params, "port", 0, 1, 65535)? as u16;
+    let timeout = num(params, "timeout", DEFAULT_TCP_TIMEOUT_SECS, 1, 30)?;
+    let limit = num(
+        params,
+        "rate_limit",
+        DEFAULT_TCP_TESTS_PER_MINUTE as u64,
+        1,
+        600,
+    )? as usize;
+    let fam = family(params)?;
+    let iface = match str_param(params, "interface") {
+        "" => None,
+        i => Some(valid_iface(i)?),
+    };
+    let source: Option<IpAddr> = match str_param(params, "source") {
+        "" => None,
+        s => Some(
+            s.parse()
+                .map_err(|_| invalid("source must be an IP address of this router"))?,
+        ),
+    };
+    let wanted = |a: &SocketAddr| match (fam, source) {
+        (Some(4), _) if !a.is_ipv4() => false,
+        (Some(6), _) if !a.is_ipv6() => false,
+        (_, Some(s)) if s.is_ipv4() != a.is_ipv4() => false,
+        _ => true,
+    };
+    let addr = (host.as_str(), port)
+        .to_socket_addrs()
+        .map_err(|e| invalid(format!("cannot resolve {host}: {e}")))?
+        .find(wanted)
+        .ok_or_else(|| invalid(format!("{host} has no address of the requested IP version")))?;
+    {
+        let mut recent = TCP_RECENT.lock().unwrap_or_else(|e| e.into_inner());
+        if !tcp_rate_ok(Instant::now(), &mut recent, limit) {
+            return Err(invalid(
+                "too many port tests in the last minute, wait a moment",
+            ));
+        }
+    }
+    let sock = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))
+        .map_err(|e| Error::Config(format!("socket: {e}")))?;
+    #[cfg(target_os = "linux")]
+    if let Some(i) = &iface {
+        sock.bind_device(Some(i.as_bytes()))
+            .map_err(|e| invalid(format!("interface {i}: {e}")))?;
+    }
+    if let Some(s) = source {
+        sock.bind(&SockAddr::from(SocketAddr::new(s, 0)))
+            .map_err(|e| invalid(format!("source {s}: {e}")))?;
+    }
+    let start = Instant::now();
+    let res = sock.connect_timeout(&SockAddr::from(addr), Duration::from_secs(timeout));
+    let ms = start.elapsed().as_millis() as u64;
+    let (state, error) = match res {
+        Ok(()) => ("open", String::new()),
+        Err(e) => (tcp_state(e.kind(), e.raw_os_error()), e.to_string()),
+    };
+    Ok(json!({
+        "tool": "tcp", "host": host, "port": port, "resolved": addr.ip().to_string(),
+        "state": state, "ms": ms, "timeout": timeout, "error": error,
+        "interface": iface.unwrap_or_default(),
+        "source": source.map(|s| s.to_string()).unwrap_or_default(),
+    }))
+}
+
+/// Entry point: `params.tool` = ping | traceroute | dns | tcp | neighbors |
 /// routes | sockets.
 pub fn handle(params: &Value) -> Result<Value> {
     match str_param(params, "tool") {
@@ -653,8 +768,9 @@ pub fn handle(params: &Value) -> Result<Value> {
         "neighbors" => neighbors(),
         "routes" => routes(),
         "sockets" => sockets(),
+        "tcp" => tcp_test(params),
         other => Err(invalid(format!(
-            "unknown tool {other:?}: ping, traceroute, dns, neighbors, routes or sockets"
+            "unknown tool {other:?}: ping, traceroute, dns, tcp, neighbors, routes or sockets"
         ))),
     }
 }
@@ -843,5 +959,47 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(e.contains("Invalid"), "{e}");
+    }
+
+    #[test]
+    fn tcp_test_reports_open_closed_and_validates() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let v = tcp_test(&json!({"host":"127.0.0.1","port":port,"rate_limit":600})).unwrap();
+        assert_eq!(v["state"], "open", "{v}");
+        assert_eq!(v["resolved"], "127.0.0.1");
+        drop(l);
+        let v = tcp_test(&json!({"host":"127.0.0.1","port":port,"rate_limit":600})).unwrap();
+        assert_eq!(v["state"], "closed", "{v}");
+        for bad in [
+            json!({"host":"127.0.0.1"}),
+            json!({"host":"127.0.0.1","port":0}),
+            json!({"host":"127.0.0.1","port":70000}),
+            json!({"host":"a;b","port":80}),
+            json!({"host":"-x","port":80}),
+            json!({"host":"127.0.0.1","port":80,"timeout":0}),
+            json!({"host":"127.0.0.1","port":80,"timeout":31}),
+            json!({"host":"127.0.0.1","port":80,"interface":"-x"}),
+            json!({"host":"127.0.0.1","port":80,"source":"not-an-ip"}),
+            json!({"host":"127.0.0.1","port":80,"family":"6"}),
+        ] {
+            let e = tcp_test(&bad).unwrap_err().to_string();
+            assert!(e.contains("Invalid"), "{bad}: {e}");
+        }
+    }
+
+    #[test]
+    fn tcp_failures_are_classified_and_rate_is_limited() {
+        use std::io::ErrorKind as K;
+        assert_eq!(tcp_state(K::ConnectionRefused, Some(111)), "closed");
+        assert_eq!(tcp_state(K::TimedOut, Some(110)), "filtered");
+        assert_eq!(tcp_state(K::Other, Some(113)), "unreachable");
+        assert_eq!(tcp_state(K::Other, None), "error");
+        let t0 = Instant::now();
+        let mut r = Vec::new();
+        assert!(tcp_rate_ok(t0, &mut r, 2));
+        assert!(tcp_rate_ok(t0, &mut r, 2));
+        assert!(!tcp_rate_ok(t0, &mut r, 2));
+        assert!(tcp_rate_ok(t0 + Duration::from_secs(61), &mut r, 2));
     }
 }

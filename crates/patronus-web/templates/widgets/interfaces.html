@@ -1,0 +1,10 @@
+<div class="stat-card">
+    <h2>Interfaces <a href="/interfaces">Configure</a></h2>
+    <div class="value">{{ iface_rows.len() }}</div>
+    {% for r in iface_rows %}
+    <div class="label iface-row" data-iface="{{ r.name }}">
+        {% if !r.role.is_empty() %}<span class="ui-badge info iface-role">{{ r.role }}</span>{% endif %}<strong>{{ r.name }}</strong>
+        {% if r.up %}<span class="ui-dot ok" title="up"></span>{% else %}<span class="ui-dot off" title="down"></span>{% endif %}
+    </div>
+    {% endfor %}
+</div>

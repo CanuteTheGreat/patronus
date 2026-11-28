@@ -180,9 +180,9 @@ Result: 9x faster than FreeBSD!
 | Feature | pfSense | OPNsense | Patronus |
 |---------|---------|----------|----------|
 | **Wireless AP** | ✅ Yes | ✅ Yes | ✅ Yes |
-| **Backend Choice** | ❌ hostapd only | ❌ hostapd only | **✅ hostapd OR iwd** ⚡ |
+| **AP backend** | hostapd | hostapd | hostapd (iwd is not an AP backend; the image carries it for the installer and Patronus stops it on radios it manages) |
 | **WPA2** | ✅ Yes | ✅ Yes | ✅ Yes |
-| **WPA3** | ✅ Yes | ✅ Yes | ✅ Yes |
+| **WPA3** | ✅ Yes | ✅ Yes | ✅ WPA3-SAE via hostapd (a SAE password change restarts the AP); proven on mac80211_hwsim, not yet on real radio hardware |
 | **Enterprise (802.1X)** | ✅ Yes | ✅ Yes | ✅ Yes |
 | **Multiple SSIDs** | ✅ Yes | ✅ Yes | ✅ Yes |
 | **VLAN per SSID** | ✅ Yes | ✅ Yes | ✅ Yes |
@@ -650,7 +650,7 @@ Result: 9x faster than FreeBSD!
 8. **Backend Choice** ⚡
    - DHCP: ISC or Kea
    - DNS: Unbound, BIND, or dnsmasq
-   - WiFi: hostapd or iwd
+   - WiFi: AP = hostapd (no backend choice; uplink = wpa_supplicant)
    - HA: VRRP, Keepalived, or Pacemaker
    - Routing: FRR or BIRD
    - **The Gentoo Way: YOU choose!**

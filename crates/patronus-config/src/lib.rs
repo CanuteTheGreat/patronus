@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub mod accounts;
 pub mod applier;
 pub mod apply;
+pub mod dashboard;
 pub mod declarative;
 pub mod defaults;
 pub mod migrate;

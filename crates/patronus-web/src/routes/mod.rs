@@ -46,6 +46,7 @@ pub fn build_router(
         .route("/monitoring", get(pages::monitoring))
         .route("/system", get(pages::system))
         .route("/diagnostics", get(pages::diagnostics))
+        .route("/activity", get(api::activity::page))
         .merge(api::lan::pages())
         .merge(api::ha::pages())
         .merge(api::qos::pages())
@@ -351,9 +352,12 @@ async fn require_session(
             let mutating = !matches!(parts.method, Method::GET | Method::HEAD | Method::OPTIONS);
             // a read-only account may still log out, change its own
             // password and manage its own second factor
+            // ... and arrange its own dashboard (a display preference, never router configuration;
+            // the handler scopes it to the signed-in user)
             let own_account = path == "/api/auth/logout"
                 || path == "/api/auth/password"
-                || path.starts_with("/api/auth/2fa/");
+                || path.starts_with("/api/auth/2fa/")
+                || path == "/api/v1/dashboard/layout";
             // Group membership replaces the coarse role: an account in a
             // group gets exactly the group's per-area privileges.
             if !session.role.is_admin() && !own_account {
@@ -727,12 +731,17 @@ fn api_routes() -> Router<AppState> {
         .merge(api::wifi::router())
         .merge(api::wifi_uplink::router())
         .merge(api::device::router())
+        .merge(api::activity::router())
+        .merge(api::dashboard::router())
 }
 
 #[cfg(test)]
 mod honesty_tests;
 #[cfg(test)]
 mod insight_api_tests;
+
+#[cfg(test)]
+mod dashboard_tests;
 
 #[cfg(test)]
 mod lane_fh_tests;

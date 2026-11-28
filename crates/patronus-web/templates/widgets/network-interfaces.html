@@ -1,0 +1,25 @@
+<section class="ui-panel">
+    <div class="ui-panel-head"><h2>Network interfaces</h2><a href="/interfaces">Configure</a></div>
+    {% if iface_rows.is_empty() %}
+    <div class="ui-grid-state">No network interfaces found.</div>
+    {% else %}
+    <div class="ui-grid-wrap" style="border:0;border-radius:0">
+        <table class="ui-grid" data-ui-grid="dash-ifaces">
+            <thead><tr><th data-sort>Interface</th><th data-sort>State</th><th>Addresses</th><th class="num" data-col="rate">Rate &darr; / &uarr;</th><th class="num" data-sort data-type="num">Received</th><th class="num" data-sort data-type="num">Sent</th></tr></thead>
+            <tbody>
+            {% for r in iface_rows %}
+            <tr class="iface-row" data-iface="{{ r.name }}">
+                <td>{% if !r.role.is_empty() %}<span class="ui-badge info iface-role">{{ r.role }}</span>{% endif %}<strong{% if !r.mac.is_empty() %} title="MAC {{ r.mac }}"{% endif %}>{{ r.name }}</strong></td>
+                <td>{% if r.up %}<span class="ui-badge ok"><span class="ui-dot ok"></span>up</span>{% else %}<span class="ui-badge"><span class="ui-dot off"></span>down</span>{% endif %}</td>
+                <td class="mono addrs">{% if r.addrs.is_empty() %}<span class="nil" title="no address">&mdash;</span>{% else %}{{ r.addrs }}{% endif %}</td>
+                <td class="num" data-col="rate" data-traffic="{{ r.name }}">{% if r.rate.is_empty() %}<span class="nil">&mdash;</span>{% else %}{{ r.rate }}{% endif %}</td>
+                <td class="num" data-v="{{ r.rx_bytes }}">{{ r.rx }}</td>
+                <td class="num" data-v="{{ r.tx_bytes }}">{{ r.tx }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if hidden_stubs > 0 %}<div class="ui-grid-foot"><span>{{ hidden_stubs }} kernel placeholder device(s) without an address hidden (gre0, sit0, ...); <a href="/interfaces">all devices</a></span></div>{% endif %}
+    {% endif %}
+</section>

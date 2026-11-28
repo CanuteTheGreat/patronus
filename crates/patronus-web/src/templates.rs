@@ -42,6 +42,31 @@ pub struct DashboardTemplate {
     /// One sentence naming what is over a threshold (empty = all fine) and its banner tone.
     pub health_note: String,
     pub health_tone: &'static str,
+    /// Live throughput per non-loopback interface (rate over a short sample window).
+    pub traffic: Vec<DashTraffic>,
+    /// The widgets to draw, in the viewer's order (`crate::dashboard`).
+    pub widgets: Vec<crate::dashboard::DashWidget>,
+    /// Widgets switched off for the viewer: the "add" list of the customize mode.
+    pub hidden_widgets: Vec<crate::dashboard::DashWidget>,
+    /// The resolved layout as JSON, read by the customize mode script.
+    pub layout_json: String,
+    /// The viewer saved their own layout (the "Reset to default" button shows).
+    pub customized: bool,
+}
+
+/// System activity page template (static shell; data from the API).
+#[derive(Template)]
+#[template(path = "activity.html")]
+pub struct ActivityTemplate {
+    pub page: &'static str,
+}
+
+/// One row of the dashboard's Traffic widget.
+#[derive(Debug, Clone)]
+pub struct DashTraffic {
+    pub name: String,
+    pub rx: String,
+    pub tx: String,
 }
 
 /// One row of the dashboard's interface table.
@@ -831,6 +856,14 @@ mod tests {
             disk_label: "Disk /",
             health_note: String::new(),
             health_tone: "",
+            widgets: crate::dashboard::all_on(crate::dashboard::Viewer {
+                role: crate::auth::UserRole::Admin,
+                access_point: false,
+            }),
+            hidden_widgets: vec![],
+            layout_json: "{\"widgets\":[]}".to_string(),
+            customized: false,
+            traffic: vec![],
         }
     }
 
@@ -913,6 +946,11 @@ mod tests {
                     ..Default::default()
                 },
             ],
+            traffic: vec![DashTraffic {
+                name: "enp0s1".into(),
+                rx: "1.5 KB/s".into(),
+                tx: "200 B/s".into(),
+            }],
             hidden_stubs: 3,
             ..dash_base()
         };
@@ -939,7 +977,7 @@ mod tests {
     }
 
     /// Usage values carry their threshold tone and a sentence names what is over it; live refresh follows
-    /// `ui.refresh_secs` (0 = the page says it is a snapshot).
+    /// `dashboard.refresh_seconds` (0 = the page says it is a snapshot).
     #[test]
     fn dashboard_health_thresholds_and_live_refresh() {
         let mut t = DashboardTemplate {
@@ -955,7 +993,7 @@ mod tests {
             "{h}"
         );
         assert!(
-            h.contains(r#"data-refresh="10""#) && h.contains("dash-live-toggle"),
+            h.contains(r#"data-refresh="30""#) && h.contains("dash-live-toggle"),
             "{h}"
         );
         t.ui.refresh_secs = 0;
