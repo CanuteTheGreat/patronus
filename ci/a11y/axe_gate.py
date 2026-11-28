@@ -4,7 +4,8 @@
 Pages, widths, colour schemes, tags and the impact threshold come from a11y-config.json; justified false positives
 from axe-allowlist.json. axe-core is vendored (vendor/axe.min.js, checksum pinned in the config): nothing is fetched
 at test time. A violation whose impact is in `fail_impacts` (default serious + critical) fails the run unless an
-allowlist entry covers it; the other impacts are printed as warnings.
+allowlist entry covers it; the other impacts are printed as warnings. A page entry with "feature" (a Cargo feature /
+USE flag that is off by default) is skipped with a note when the server answers 404 for it, i.e. that build lacks it.
 
 Usage: BASE_URL=https://localhost:8443 E2E_USER=admin E2E_PASSWORD=... axe_gate.py [--config a11y-config.json]
          [--browsers firefox,chromium] [--pages id,id] [--report out.json]
@@ -66,6 +67,7 @@ def main():
     lg = cfg["login"]
 
     failures, warnings, results = [], [], []
+    skipped = set()
     with sync_playwright() as p:
         for kind in browsers:
             browser = getattr(p, kind).launch(headless=True)
@@ -88,8 +90,15 @@ def main():
                         if not pg.get("auth", True) and logged_in:
                             ctx.clear_cookies()
                             logged_in = False
-                        page.goto(base + pg["path"], wait_until="load")
+                        resp = page.goto(base + pg["path"], wait_until="load")
                         label = f"{kind}/{vp}/{scheme}/{pg['id']}"
+                        # A page behind an optional Cargo feature / USE flag ("feature" in the config) is only checked when
+                        # this build serves it: 404 means the feature is not compiled in (e.g. the image's default USE set).
+                        # Pages without "feature" that 404 still fail below (their wait_for never appears).
+                        if pg.get("feature") and resp is not None and resp.status == 404:
+                            skipped.add(f"{pg['id']} (feature {pg['feature']} not in this build)")
+                            log(f"skip {label}: 404, feature {pg['feature']} is not compiled into this build")
+                            continue
                         if pg.get("wait_for"):
                             try:
                                 page.wait_for_selector(pg["wait_for"], state="attached", timeout=30000)
@@ -140,6 +149,11 @@ def main():
         log(f"FAIL: allowlist entry matches nothing (remove it): {e['rule']} on {e['page']}")
     if a.report:
         json.dump({"failures": failures, "warnings": warnings, "results": results, "stale_allowlist": stale}, open(a.report, "w"), indent=1)
+    if skipped:
+        log("skipped (optional feature not built): " + ", ".join(sorted(skipped)))
+    if not results:
+        log("FAIL: no page was checked")
+        return 1
     log(f"axe gate: {len(results)} page runs, {len(failures)} failing node(s) {dict((f'{r}[{i}]', c) for (r, i), c in byrule.items())}, {len(warnings)} warning node(s), {len(stale)} stale allowlist entr(ies)")
     return 1 if failures or stale else 0
 

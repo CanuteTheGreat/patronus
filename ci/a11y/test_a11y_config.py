@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -27,6 +28,18 @@ class A11yConfig(unittest.TestCase):
 
     def test_threshold_blocks_serious_and_critical(self):
         self.assertTrue({"serious", "critical"} <= set(CFG["fail_impacts"]))
+
+    def test_optional_pages_name_an_ebuild_use_flag_that_is_off_by_default(self):
+        # "feature" lets the gate skip a page the build does not serve: only for USE flags that are NOT "+"-default,
+        # so a default page can never be skipped silently.
+        eb = open(os.path.join(HERE, "..", "..", "gentoo", "net-firewall", "patronus", "patronus-9999.ebuild")).read()
+        m = re.search(r'^IUSE="([^"]*)"', eb, re.M)
+        self.assertIsNotNone(m)
+        flags = m.group(1).split()
+        for p in CFG["pages"]:
+            if "feature" in p:
+                self.assertIn(p["feature"], flags, p)
+                self.assertNotIn("+" + p["feature"], flags, p)
 
     def test_allowlist_entries_are_justified(self):
         known = {p["id"] for p in CFG["pages"]} | {"*"}
