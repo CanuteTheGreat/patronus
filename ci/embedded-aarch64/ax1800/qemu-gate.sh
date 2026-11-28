@@ -356,7 +356,7 @@ tftp_enable() { login || return 1
   case "$o" in nobody*) ;; *) echo "the daemon does not run as nobody: $o"; return 1;; esac; }
 tftp_fetch() { want=$(sha256sum "$W/tftp-src.bin" | cut -d' ' -f1); i=0
   while :; do R 'rm -f /tmp/tf.out; tftp -g -r ci-gate.bin -l /tmp/tf.out 127.0.0.1' >/dev/null 2>&1 && break
-    i=$((i+1)); [ $i -ge 10 ] && { echo "tftp fetch failed"; R 'ps -o user,args | grep "[t]ftp"; tail -8 /var/log/messages'; return 1; }; sleep 3; done
+    i=$((i+1)); [ $i -ge 10 ] && { echo "tftp fetch failed"; R 'ps -o user,args | grep "[t]ftp"; echo "-- client:"; tftp -g -r ci-gate.bin -l /tmp/tf.out 127.0.0.1 2>&1 | head -5; echo "-- stats:"; cat /run/patronus/tftp.stats 2>&1 | head -c 600; echo; echo "-- dirs:"; ls -ldn /var/lib/patronus /var/lib/patronus/tftp /var/lib/patronus/tftp/* /var/lib/patronus/net/tftp.json 2>&1; echo "-- conf:"; head -c 600 /var/lib/patronus/net/tftp.json; echo; echo "-- sockets:"; netstat -ulnp 2>&1 | head; echo "-- nft:"; nft list ruleset 2>&1 | grep -n -i -E "tftp|dport 69|iif" | head -12; echo "-- log:"; grep -i tftp /var/log/messages | tail -8'; return 1; }; sleep 3; done
   got=$(R 'sha256sum /tmp/tf.out' | cut -d' ' -f1); [ "$got" = "$want" ] || { echo "fetched file differs: $got, want $want"; return 1; }
   R 'rm -f /tmp/tf.out; tftp -g -b 1400 -r ci-gate.bin -l /tmp/tf.out 127.0.0.1' >/dev/null 2>&1 || { echo "tftp fetch with a negotiated block size failed"; return 1; }
   got=$(R 'sha256sum /tmp/tf.out' | cut -d' ' -f1); [ "$got" = "$want" ] || { echo "fetched file (blksize 1400) differs"; return 1; }; }
