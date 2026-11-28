@@ -98,7 +98,7 @@ if [ "$MODE" = live ] || [ "$MODE" = all ]; then
     printf "interface=$IF\ndriver=nl80211\nssid=lt-live\nhw_mode=g\nchannel=6\n" > /tmp/h.conf
     exec hostapd /tmp/h.conf' >/dev/null
   for i in $(seq 40); do $DOCKER logs "$CT-ap" 2>&1 | grep -q 'AP-ENABLED' && break; sleep 3; done
-  $DOCKER logs "$CT-ap" 2>&1 | grep -q 'AP-ENABLED' && ok "hostapd serves ssid lt-live on a hwsim radio" || { bad "hostapd did not start"; $DOCKER logs "$CT-ap" 2>&1 | tail -5; }
+  $DOCKER logs "$CT-ap" 2>&1 | grep -q 'AP-ENABLED' && ok "hostapd serves ssid lt-live on a hwsim radio" || { bad "hostapd did not start"; $DOCKER logs "$CT-ap" 2>&1 | head -25; }
   refuse_all hostapd
   $DOCKER logs "$CT-ap" 2>&1 | tail -1 | grep -q 'AP-DISABLED\|died' && bad "hostapd was disturbed" || ok "hostapd still running, undisturbed"
   [ "$($DOCKER inspect -f '{{.State.Running}}' "$CT-ap")" = true ] && ok "hostapd container still running" || bad "hostapd container died"

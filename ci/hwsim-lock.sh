@@ -44,7 +44,7 @@ HWSIM_LOADED=
 hwsim_module_loaded() { grep '^mac80211_hwsim ' "${HWSIM_PROCROOT:-/proc}/modules" >/dev/null 2>&1; }
 # The probe runs in the HOST's pid+net namespaces (a throw-away container), because a job container has its own sysfs.
 # Live = any of: use count != 0; a radio (platform device hwsimN) that the host namespace does not see any more (it was
-# moved into a container's namespace: that container is using it); a radio's netdev that is UP; a hostapd/wpa_supplicant/
+# moved into a container's namespace: that container is using it); a radio's netdev with carrier (an unattended wlan0 that the host merely set UP is NOT live); a hostapd/wpa_supplicant/
 # iwd/ap-steer process in any pid namespace. Prints the reason and exits 1 when live, exits 0 when idle.
 HWSIM_PROBE_SH='
 P=${HWSIM_PROCROOT:-/proc}; S=${HWSIM_SYSROOT:-/sys}
@@ -54,8 +54,8 @@ nr=0; for d in "$S"/bus/platform/drivers/mac80211_hwsim/hwsim[0-9]*; do [ -e "$d
 nv=0
 for p in "$S"/class/ieee80211/*; do [ -e "$p" ] || continue
   case $(readlink -f "$p/device" 2>/dev/null) in *hwsim*) nv=$((nv+1));; esac
-  for n in "$p"/device/net/*; do [ -e "$n/flags" ] || continue
-    [ $(( $(cat "$n/flags") & 1 )) -ne 0 ] && { echo "radio netdev ${n##*/} is up"; exit 1; }
+  for n in "$p"/device/net/*; do [ -d "$n" ] || continue
+    [ "$(cat "$n/carrier" 2>/dev/null)" = 1 ] && { echo "radio netdev ${n##*/} has carrier (an AP is beaconing or a station is associated)"; exit 1; }
   done
 done
 [ "$nv" -lt "$nr" ] && { echo "$((nr-nv)) of $nr radios are in another network namespace (in use)"; exit 1; }

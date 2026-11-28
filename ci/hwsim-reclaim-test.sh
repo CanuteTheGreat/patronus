@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Host-side unit test of the leftover-module logic in ci/hwsim-lock.sh (hwsim_module_busy / hwsim_claim_module) against a
 # FAKE /proc and /sys tree and a fake docker: an idle leftover is unloaded, and every sign of a live radio (use count,
-# a radio moved into another namespace, an UP netdev, a hostapd process, a running hwsim container, a live loader
+# a radio moved into another namespace, a netdev with carrier, a hostapd process, a running hwsim container, a live loader
 # container) makes the claim refuse and never unload. No radios, no root, nothing touches the real module.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -13,7 +13,7 @@ mk() { # TOTAL_RADIOS VISIBLE_RADIOS REFCNT
   local i
   for ((i = 0; i < $1; i++)); do mkdir -p "$W/s/bus/platform/drivers/mac80211_hwsim/hwsim$i"; done
   for ((i = 0; i < $2; i++)); do
-    mkdir -p "$W/s/devices/hwsim$i/net/wlan$i"; echo 0x1002 > "$W/s/devices/hwsim$i/net/wlan$i/flags"
+    mkdir -p "$W/s/devices/hwsim$i/net/wlan$i"; echo 0x1003 > "$W/s/devices/hwsim$i/net/wlan$i/flags"   # IFF_UP only: the host brought it up, no carrier
     mkdir -p "$W/s/class/ieee80211/phy$i"; ln -s "$W/s/devices/hwsim$i" "$W/s/class/ieee80211/phy$i/device"   # as in real sysfs
   done
   cat > "$W/bin/docker" <<'D'
@@ -41,7 +41,8 @@ mk 3 3 0; : > "$W/p/modules"; t "module not loaded -> nothing to do" noop
 mk 3 3 2; t "use count != 0 -> refused" refuse
 mk 4 0 0; t "all radios moved into another namespace -> refused" refuse
 mk 4 3 0; t "one radio moved into another namespace -> refused" refuse
-mk 3 3 0; echo 0x1003 > "$W/s/devices/hwsim1/net/wlan1/flags"; t "a radio netdev is UP -> refused" refuse
+mk 3 3 0; echo 1 > "$W/s/devices/hwsim1/net/wlan1/carrier"; t "a radio netdev has carrier -> refused" refuse
+mk 3 3 0; t "radios merely set UP by the host (no carrier) -> idle, unloaded" unload
 mk 3 3 0; mkdir -p "$W/p/4242"; echo hostapd > "$W/p/4242/comm"; t "hostapd running -> refused" refuse
 mk 3 3 0; mkdir -p "$W/p/4243"; echo wpa_supplicant > "$W/p/4243/comm"; t "wpa_supplicant running -> refused" refuse
 mk 3 3 0; mkdir -p "$W/p/4244"; echo bash > "$W/p/4244/comm"; t "unrelated process -> still idle, unloaded" unload
