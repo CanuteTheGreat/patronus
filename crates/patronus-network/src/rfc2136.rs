@@ -352,9 +352,46 @@ impl Applier for Rfc2136Applier {
             "installed": self.nsupdate().is_some(),
             "running": self.sup.is_running(svc::DAEMON_SERVICE, INSTANCE),
             "clients": svc::raw_rows(store, &SPEC.colls[0]).await.map(|r| r.len()).unwrap_or(0),
+            "summary": summary(&stats),
             "stats": stats,
         }))
     }
+}
+
+/// One readable line per client from the engine's status file (what the page shows).
+pub fn summary(stats: &Value) -> Vec<String> {
+    let Some(c) = stats.get("clients").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut rows: Vec<String> = c
+        .values()
+        .map(|v| {
+            let host = v["hostname"].as_str().unwrap_or("?");
+            let addrs = [v["ipv4"].as_str(), v["ipv6"].as_str()]
+                .iter()
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", ");
+            if let Some(e) = v["last_error"].as_str() {
+                format!(
+                    "{host}: FAILED ({} attempt(s)): {e}",
+                    v["failures"].as_u64().unwrap_or(0)
+                )
+            } else if let Some(n) = v["note"].as_str() {
+                format!("{host}: waiting: {n}")
+            } else if v["last_ok"].is_null() {
+                format!("{host}: not sent yet ({addrs})")
+            } else {
+                format!(
+                    "{host}: ok, {addrs}, {} update(s) sent",
+                    v["updates"].as_u64().unwrap_or(0)
+                )
+            }
+        })
+        .collect();
+    rows.sort();
+    rows
 }
 
 /// What nsupdate is told, kept pure so it is unit-tested.
@@ -439,6 +476,25 @@ pub fn pick_v4(addrs: &[Ipv4Addr]) -> Option<Ipv4Addr> {
                 .copied()
                 .find(|a| !a.is_loopback() && !a.is_link_local() && !a.is_unspecified())
         })
+}
+
+/// The address to publish as AAAA: global unicast, not ULA/link-local; a `/128`
+/// (what DHCPv6 IA_NA hands a WAN) wins, otherwise the first one.
+pub fn pick_v6(addrs: &[(Ipv6Addr, u8)]) -> Option<Ipv6Addr> {
+    let global = |a: &Ipv6Addr| {
+        let s0 = a.segments()[0];
+        !a.is_loopback()
+            && !a.is_unspecified()
+            && !a.is_multicast()
+            && (s0 & 0xffc0) != 0xfe80
+            && (s0 & 0xfe00) != 0xfc00
+    };
+    addrs
+        .iter()
+        .filter(|(a, _)| global(a))
+        .find(|(_, p)| *p == 128)
+        .or_else(|| addrs.iter().find(|(a, _)| global(a)))
+        .map(|(a, _)| *a)
 }
 
 pub mod engine {
@@ -583,7 +639,7 @@ pub mod engine {
             let s = st.entry(c.id).or_default();
             let (a4, a6) = host.addrs(&c.devices);
             let want4 = if c.v4 { pick_v4(&a4) } else { None };
-            let want6 = if c.v6 { crate::ddns::pick_v6(&a6) } else { None };
+            let want6 = if c.v6 { super::pick_v6(&a6) } else { None };
             if want4.is_none() && want6.is_none() {
                 s.note = Some("no address on the interface yet".into());
                 continue;
@@ -639,7 +695,7 @@ pub mod engine {
                     "updates": s.updates,
                     "failures": s.fails,
                     "ipv4": pick_v4(&a4).map(|a| a.to_string()),
-                    "ipv6": crate::ddns::pick_v6(&a6).map(|a| a.to_string()),
+                    "ipv6": super::pick_v6(&a6).map(|a| a.to_string()),
                 }),
             );
         }
@@ -762,7 +818,12 @@ mod tests {
         fn addrs(&self, _d: &[String]) -> (Vec<Ipv4Addr>, Vec<(Ipv6Addr, u8)>) {
             (self.v4.borrow().clone(), vec![])
         }
-        fn send(&self, _c: &EngineConf, _c2: &ClientConf, s: &str) -> Result<(), String> {
+        fn send(
+            &self,
+            _c: &EngineConf,
+            _c2: &ClientConf,
+            s: &str,
+        ) -> std::result::Result<(), String> {
             self.sent.borrow_mut().push(s.to_string());
             if *self.fail.borrow() {
                 Err("NOTAUTH".into())
@@ -819,6 +880,10 @@ mod tests {
         assert!(st[&1].last_error.is_none());
         assert!(h.sent.borrow()[3].contains("203.0.113.6"));
         let j = engine::status_json(&conf, &st, &h);
+        assert_eq!(
+            summary(&j),
+            vec!["router.example.net: ok, 203.0.113.6, 3 update(s) sent".to_string()]
+        );
         assert_eq!(j["clients"]["1"]["ok"], true);
         assert_eq!(j["clients"]["1"]["ipv4"], "203.0.113.6");
     }
