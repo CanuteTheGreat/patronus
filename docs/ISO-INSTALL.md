@@ -348,7 +348,7 @@ boot-environment friendly: `rpool/ROOT/horcrux` is the root boot environment (th
 `emerge` run first takes an automatic snapshot, and kernels are kept per boot environment in `/boot/be/<name>/` with a static `grub.cfg`.
 ZFS uses lz4/zstd compression, `ashift=12`, autotrim.
 
-**Kernel updates and ZFS.** `sys-fs/zfs` and `sys-fs/zfs-kmod` are built with `USE=dist-kernel` (written to `/etc/portage/package.use/00-zfs`), so a
+**Kernel updates and ZFS.** `sys-fs/zfs` (OpenZFS 2.4: the kernel module is part of it, `USE=modules`; `sys-fs/zfs-kmod` is retired) is built with `USE=dist-kernel` (written to `/etc/portage/package.use/00-zfs`), so a
 `gentoo-kernel-bin` update rebuilds the module in the same Portage transaction and before the new initramfs is generated. The kernel build tree
 (`/usr/src/linux-<version>`, `/lib/modules/<version>/build`), headers and the compiler toolchain are kept on the installed system for that rebuild.
 

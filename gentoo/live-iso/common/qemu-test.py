@@ -827,6 +827,20 @@ def ssh(port, key, cmd, extra=(), timeout=40):
         return 255, "timeout"
 
 
+def ssh_put(port, key, local, remote, timeout=120):
+    """copy a local file to the guest over the test's ssh session (stdin -> cat), for fixtures too large for a command line"""
+    args = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", "-o", "LogLevel=ERROR", "-p", str(port)]
+    if key:
+        args += ["-i", key, "-o", "IdentitiesOnly=yes"]
+    args += ["root@127.0.0.1", f"cat > {remote}"]
+    try:
+        with open(local, "rb") as f:
+            r = subprocess.run(args, stdin=f, capture_output=True, timeout=timeout)
+        return r.returncode, (r.stdout + r.stderr).decode(errors="replace")
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 255, str(e)
+
+
 def load_secretcheck():
     """the installer's own in-memory password/hash comparison (liveinst/secretcheck.py), loaded without importing the package"""
     import importlib.util
@@ -1352,7 +1366,9 @@ class Runner:
                 bad = vm.expect_raw(r"(ANSWER-FILE-ERROR[^\n]*|No answer file found[^\n]*)", 3, consume=False)
                 self.step("answer-file-accepted", not bad, bad.group(0).decode() if bad else "validated")
                 ok = self.wait_installer(vm, 1700 * (2 if a.fs == "zfs" and SLOW > 1 else 1), stall_retry)   # ZFS under TCG: 2x the budget
-                self.step("installer-finished", ok and b"AUTOINSTALL-OK" in ok.group(0), ok.group(0).decode() if ok else "timeout" + serial_tail(vm))
+                good = bool(ok and b"AUTOINSTALL-OK" in ok.group(0))
+                # a FAILED install names only the command; the command's own output is the lines before it, so print them (run 7208 apple-t2 apply)
+                self.step("installer-finished", good, (ok.group(0).decode() + ("" if good else serial_tail(vm, 40))) if ok else "timeout" + serial_tail(vm))
                 vm.shot("auto-finished")
                 if a.headless_gates:
                     # the live clock started MONTHS off: the installer must have corrected it and written the hardware clock (liveinst/rtc.py `rtc:` line)
@@ -1432,6 +1448,7 @@ class Runner:
                 kb.key("UP")                               # -> 'ZFS layout'
                 kb.key("RIGHT")
                 shot("03b-filesystem-zfs-mirror")
+                kb.key("TAB")                              # -> 'ZFS pool name' (advanced text row under the layout; keeps rpool)
                 kb.key("TAB")
                 if p == "horcrux":
                     kb.key("TAB")                          # -> 'TEST MACHINE: NO disk encryption' (advanced row added by b9d3838; the VGA zfs-mirror run pressed ENTER on 'Show advanced options' and sat on the disk screen for 1700 s)
@@ -1485,6 +1502,8 @@ class Runner:
                 kb.key("TAB"); kb.key("TAB"); kb.key("ENTER", 1)   # 'Show advanced options' -> buttons -> Next
         wait(r"\] Services", "08-services")
         kb.key("TAB")                                      # optional services list -> buttons
+        if installer_profile().get("update_channels") and installer_profile().get("update_channel_file"):
+            kb.key("TAB")                                  # the update channel choice (liveinst updchan.enabled): default kept
         kb.key("ENTER", 1)
         wait(r"\] Security hardening", "09-hardening")
         if a.ssh_password_opt_in or a.console_open:
@@ -2153,6 +2172,9 @@ class Runner:
         dlg = [("Interface to configure", nic), ("IP configuration", "s"), ("IP address/prefix", addr)]
         if a.project == "horcrux":
             dlg += [("Gateway", "10.0.2.2"), ("DNS server", "10.0.2.3")]
+        # the menu asks for the IPv6 mode after the IPv4 answers (484be61c); an unanswered prompt left the menu waiting, dhcpcd.conf was never
+        # written and the step failed with the guest still on its DHCP lease (run 7208). Keep the default (auto).
+        dlg += [("IPv6: \\(a\\)uto", "a")]
         t = self.opt(vm, "2", dlg, timeout=120)
         # dhcpcd re-applies the address and the port-forwarded sshd can be unreachable for a while afterwards: on the aarch64 TCG
         # guest the single immediate ssh failed (run 1302, rc 255 -> "ssh still works" FAIL) while x86 KVM passed. Retry for up to
@@ -2478,7 +2500,7 @@ class Runner:
 
     def storage_gates(self):
         """owner rule 2026-10-29/11-03 on the installed server/firewall: (1) the Portage database matches the disk, (2) a kernel module builds against the running
-        kernel (what zfs-kmod needs after every kernel update), (3) zfs/zfs-kmod carry USE=dist-kernel so a kernel update rebuilds the module in the same transaction,
+        kernel (what the zfs module needs after every kernel update), (3) sys-fs/zfs carries USE="dist-kernel modules" so a kernel update rebuilds the module in the same transaction,
         (4) the disk encryption is exactly what the profile promises: Patronus = ZFS native encryption sealed to a working TPM 2.0 (unattended), else NO encryption."""
         a = self.a
         rc, o = self._b64run("python3", CONTENTS_CHECK)
@@ -2488,9 +2510,17 @@ class Runner:
         self.step("kernel-module-builds-against-running-kernel", "KMOD-OK" in o, re.sub(r"\s+", " ", o).strip()[-300:])
         if a.fs == "zfs":
             rc, o = ssh(FWD_SSH, self.key, "if qlist -I sys-kernel/gentoo-kernel-bin sys-kernel/gentoo-kernel | grep -q .; then "
-                        "grep -qw dist-kernel /var/db/pkg/sys-fs/zfs-kmod-*/USE && grep -qw dist-kernel /var/db/pkg/sys-fs/zfs-[0-9]*/USE && echo DISTKERNEL-OK || echo DISTKERNEL-MISSING; "
-                        "else echo NOT-DIST-KERNEL; fi; qlist -Iv sys-kernel/gentoo-kernel-bin sys-fs/zfs-kmod sys-fs/zfs virtual/dist-kernel; ls /usr/src; uname -r")
-            self.step("zfs-and-zfs-kmod-use-dist-kernel-so-kernel-updates-rebuild-the-module", "DISTKERNEL-OK" in o, re.sub(r"\s+", " ", o).strip()[:300])
+                        "grep -qw dist-kernel /var/db/pkg/sys-fs/zfs-[0-9]*/USE && grep -qw modules /var/db/pkg/sys-fs/zfs-[0-9]*/USE && echo DISTKERNEL-OK || echo DISTKERNEL-MISSING; "
+                        "else echo NOT-DIST-KERNEL; fi; qlist -Iv sys-kernel/gentoo-kernel-bin sys-fs/zfs sys-fs/zfs-kmod virtual/dist-kernel; ls /usr/src; uname -r")
+            # OpenZFS >= 2.4: the module is part of sys-fs/zfs (USE=modules); sys-fs/zfs-kmod is retired and must not be installed
+            self.step("zfs-module-in-sys-fs-zfs-uses-dist-kernel-so-kernel-updates-rebuild-it", "DISTKERNEL-OK" in o and "zfs-kmod" not in o, re.sub(r"\s+", " ", o).strip()[:300])
+            rc, o = ssh(FWD_SSH, self.key, ZFS_VERSION_CHECK)
+            self.step("zfs-userland-and-loaded-module-are-the-same-openzfs-2.4-release", "ZFSVER-OK" in o, re.sub(r"\s+", " ", o).strip()[:300])
+            fx = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "zfs-2.4-block-cloning-endian-pool.img.xz")
+            prc, po = ssh_put(FWD_SSH, self.key, fx, "/var/tmp/hx-foreign-bce.img.xz")
+            rc, o = ssh(FWD_SSH, self.key, BLOCK_CLONING_ENDIAN_CHECK, timeout=int(T(300)))
+            o = f"put rc={prc} {po.strip()[:80]} | " + o
+            self.step("pool-with-block-cloning-endian-active-imports-read-write", "BCE-RW-OK" in o, re.sub(r"\s+", " ", o).strip()[-400:])
         if a.project != "patronus":
             return
         want_enc = a.fs == "zfs" and a.tpm == "swtpm"
@@ -2660,6 +2690,42 @@ printf 'obj-m := hx.o\n' > Kbuild
 make -C /lib/modules/$kv/build M=$d modules > build.log 2>&1 || { tail -15 build.log; echo KMOD-BUILD-FAILED; exit 1; }
 modinfo -F vermagic $d/hx.ko | grep -q "^$kv " && echo KMOD-OK $kv
 cd /; rm -rf $d
+"""
+
+# OpenZFS >= 2.4 (Proxmox VE 9 importer story): userland and the LOADED module are one release, never a 2.3 module under 2.4 tools
+ZFS_VERSION_CHECK = r"""
+u=$(zfs version 2>/dev/null | sed -n 's/^zfs-\([0-9][0-9.]*\).*/\1/p' | head -1); k=$(sed 's/-.*//' /sys/module/zfs/version 2>/dev/null)
+echo "userland=$u module=$k pkgs=$(qlist -Iv sys-fs/zfs sys-fs/zfs-kmod | tr '\n' ' ')"
+case "$u" in 2.[4-9]*|2.[1-9][0-9]*|[3-9].*) [ -n "$k" ] && [ "$u" = "$k" ] && echo ZFSVER-OK;; *) echo "ZFSVER-OLD";; esac
+"""
+
+# a pool with feature@block_cloning_endian ACTIVE (read-only compatible: OpenZFS 2.3 imports it read-only only) must import READ-WRITE:
+# (1) the foreign fixture pool (made by another OpenZFS 2.4 build, fixtures/make-block-cloning-endian-pool.sh), (2) a pool made here and
+# activated with `cp --reflink`. Both are file vdevs under /var/tmp, never imported at boot (cachefile=none), destroyed afterwards.
+BLOCK_CLONING_ENDIAN_CHECK = r"""
+set -u; fail=0
+# the file vdevs live on a private tmpfs (never a file vdev on the root pool itself)
+d=${HX_BCE_DIR:-/run/hx-bce-vdev}; mkdir -p $d; [ -n "${HX_BCE_DIR:-}" ] || mountpoint -q $d || mount -t tmpfs -o size=512M,mode=0700 hx-bce $d
+mv /var/tmp/hx-foreign-bce.img.xz $d/ 2>/dev/null
+feat() { zpool get -H -o property,value feature@block_cloning,feature@block_cloning_endian,feature@dynamic_gang_header,feature@physical_rewrite "$1" | tr '\t\n' '= '; }
+rwcheck() { # $1 pool $2 mountpoint
+  ro=$(zpool get -H -o value readonly "$1"); bce=$(zpool get -H -o value feature@block_cloning_endian "$1")
+  echo "$1: readonly=$ro bce=$bce $(feat "$1")"
+  [ "$ro" = off ] && [ "$bce" = active ] && echo rw-probe > "$2/rw-probe" && sync && zpool sync "$1" || return 1
+}
+rm -f $d/hx-foreign-bce.img; xz -dc $d/hx-foreign-bce.img.xz > $d/hx-foreign-bce.img && rm -f $d/hx-foreign-bce.img.xz
+if zpool import -o cachefile=none -R /run/hx-bce -d $d/hx-foreign-bce.img hxbcefix; then
+  rwcheck hxbcefix /run/hx-bce/hxbcefix && (cd /run/hx-bce/hxbcefix && [ "$(sha256sum < a | cut -d' ' -f1)" = "$(cut -d' ' -f1 SHA256)" ] && cmp a b) && echo FOREIGN-RW-OK || fail=1
+  zpool export hxbcefix || fail=1
+else echo FOREIGN-IMPORT-FAILED; fail=1; fi
+rm -f $d/hx-foreign-bce.img
+p=hxbcelocal; f=$d/hx-local-bce.img; rm -f $f; truncate -s 256M $f
+zpool create -f -o cachefile=none -O mountpoint=/run/hx-bce-local $p $f || fail=1
+head -c 1048576 /dev/urandom > /run/hx-bce-local/a; sync; cp --reflink=always /run/hx-bce-local/a /run/hx-bce-local/b; sync; zpool sync $p
+zpool export $p && zpool import -o cachefile=none -d $f $p && rwcheck $p /run/hx-bce-local && cmp /run/hx-bce-local/a /run/hx-bce-local/b && echo LOCAL-RW-OK || fail=1
+zpool destroy $p 2>/dev/null; rm -f $f
+zpool list -H -o name | tr '\n' ' '; [ -n "${HX_BCE_DIR:-}" ] || { umount $d && rmdir $d; }
+[ $fail = 0 ] && echo BCE-RW-OK
 """
 
 def main():

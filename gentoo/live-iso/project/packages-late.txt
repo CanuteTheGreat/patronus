@@ -1,9 +1,7 @@
 # merged AFTER the kernel: kernel modules are built against the installed gentoo-kernel-bin tree.
-# Root on ZFS is the Patronus default (owner rule 2026-10-29); common/portage/package.use/00-zfs gives both USE=dist-kernel,
+# Root on ZFS is the Patronus default (owner rule 2026-10-29); common/portage/package.use/00-zfs gives sys-fs/zfs USE="dist-kernel modules" (since OpenZFS 2.4 the module is part of sys-fs/zfs; sys-fs/zfs-kmod is retired),
 # so every kernel update rebuilds the module in the same transaction, before the new initramfs.
-# riscv64 is left out on purpose: the official binhost has no zfs/zfs-kmod there and the image would compile them under emulation.
+# riscv64 is left out on purpose: the official binhost has no sys-fs/zfs there and the image would compile them under emulation.
 # The installer then sees no ZFS module (system.zfs_available) and proposes XFS.
-x86_64? sys-fs/zfs-kmod
 x86_64? sys-fs/zfs
-aarch64? sys-fs/zfs-kmod
 aarch64? sys-fs/zfs

@@ -47,7 +47,7 @@ if [ "${APT_DROP_PPAS:-1}" = 1 ]; then
     case $f in *.sources) rm -f "$f" ;; *) sed -i -E '/ppa\.launchpad(content)?\.net/d' "$f" ;; esac
   done
 fi
-host_deps() { apt-get update -qq && apt-get install -y -qq --no-install-recommends $QEMU_PKGS swtpm qemu-utils python3 curl ca-certificates openssh-client sshpass e2fsprogs openssl gnupg gpgv xorriso squashfs-tools gdisk dosfstools mtools binutils >/dev/null; }
+host_deps() { apt-get update -qq && apt-get install -y -qq --no-install-recommends $QEMU_PKGS swtpm qemu-utils python3 curl ca-certificates openssh-client sshpass e2fsprogs openssl gnupg gpgv xorriso squashfs-tools gdisk dosfstools mtools binutils rsync >/dev/null; }
 host_deps || { echo "host deps failed, retrying in 20 s" >&2; sleep 20; host_deps; } || fail deps "apt install failed"
 echo "::endgroup::"
 
@@ -239,7 +239,7 @@ if [ "$result" = pass ]; then
   if [ "$IMG_DE" = server ] && [ "$PROJECT" = horcrux ]; then
     # HEADLESS SERVER GATE (server-first, both architectures): encrypted-ZFS answer-file install, then a REBOOT into the installed system on the SERIAL console only
     # (no VGA, no USB keyboard) with the NIC link down at boot (late network), months-off RTC on every boot, and the same regression gates as the desktop:
-    # chrony steps the clock, package-contents-complete, kernel module builds, zfs-kmod dist-kernel rule, shadow reuse, no autologin, web UI reachable,
+    # chrony steps the clock, package-contents-complete, kernel module builds, zfs module dist-kernel rule, shadow reuse, no autologin, web UI reachable,
     # no display stack installed (qlist + emerge -pv @world), nothing personal (public-forbidden.txt), first boot waits for the network and does not show crashed.
     name=server-headless-zfs-enc
     # a branch run (dispatch on a branch that is not on main yet): the installed system syncs the PUBLISHED overlay (main), which lacks the branch's
