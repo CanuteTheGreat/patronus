@@ -28,6 +28,45 @@
     <p class="text-sm text-muted">DHCP clients are told to use the router as their NTP server while it is on
         (unless a pool lists its own NTP servers).</p>
 </div>
+
+<div class="card" id="ntp-acl">
+    <div class="card-header"><h2 class="card-title">Who may ask for the time</h2></div>
+    <p class="text-sm text-muted">By default the router answers the networks of the interfaces listed above.
+        Add your own allow and deny lists here (addresses or blocks such as 10.9.0.0/24, separated by commas).
+        The most specific entry wins; a block is never wider than /1.</p>
+    <form class="lan-form" id="ntp-acl-form" onsubmit="return submitJson(event, 'PUT', '/api/ntp')">
+        <label>Answer
+            <select name="acl_mode">
+                <option value="interfaces" {% if !acl_explicit %}selected{% endif %}>the served interfaces plus my allow list</option>
+                <option value="explicit" {% if acl_explicit %}selected{% endif %}>only my allow list</option>
+            </select></label>
+        <label>Always allow <input name="acl_allow" value="{{ acl_allow }}" size="40" data-keep-empty="1" placeholder="e.g. 10.9.0.0/24"></label>
+        <label>Never answer <input name="acl_deny" value="{{ acl_deny }}" size="40" data-keep-empty="1" placeholder="e.g. 192.168.50.99"></label>
+        <label>Limit request bursts from one client <input type="checkbox" name="ratelimit" {% if ratelimit %}checked{% endif %}></label>
+        <button class="btn btn-primary btn-sm" type="submit">Save access list</button>
+    </form>
+</div>
+
+<div class="card" id="ntp-gps">
+    <div class="card-header"><h2 class="card-title">GPS / PPS time source</h2></div>
+    <p class="text-sm text-muted">A GPS receiver on a serial port (optionally with its pulse-per-second line on
+        a PPS device) gives the router its own accurate clock, so it keeps serving exact time without the internet.</p>
+    <p class="text-sm" id="gps-status">gpsd: {% if !gpsd_available %}<span class="bad">not installed (USE=gps)</span>{% else if gpsd_running %}<span class="ok">running</span>{% else %}<span class="text-muted">stopped</span>{% endif %}
+        &middot; receiver {{ gps_device }}: {% if gps_device_present %}<span class="ok">present</span>{% else %}<span class="text-muted">not found</span>{% endif %}
+        {% if !gps_pps_device.is_empty() %}&middot; pulse {{ gps_pps_device }}: {% if gps_pps_present %}<span class="ok">present</span>{% else %}<span class="text-muted">not found</span>{% endif %}{% endif %}</p>
+    <form class="lan-form" id="ntp-gps-form" onsubmit="return submitJson(event, 'PUT', '/api/ntp')">
+        <label>Use a GPS time source <input type="checkbox" name="gps_enabled" {% if gps_enabled %}checked{% endif %}></label>
+        <label>Receiver port <input name="gps_device" value="{{ gps_device }}" size="30"></label>
+        <label>Speed
+            <select name="gps_baud">
+            {% for b in gps_baud_list %}<option value="{{ b }}" {% if *b == gps_baud %}selected{% endif %}>{{ b }} baud</option>{% endfor %}
+            </select></label>
+        <label>Pulse (PPS) device <input name="gps_pps_device" value="{{ gps_pps_device }}" size="16" data-keep-empty="1" placeholder="/dev/pps0, optional"></label>
+        <label>Time correction (seconds) <input name="gps_offset" type="number" step="0.001" min="-1" max="1" value="{{ gps_offset }}"></label>
+        <label>Trust it over internet servers <input type="checkbox" name="gps_prefer" {% if gps_prefer %}checked{% endif %}></label>
+        <button class="btn btn-primary btn-sm" type="submit">Save GPS source</button>
+    </form>
+</div>
 {% endblock %}
 
 {% block extra_scripts %}

@@ -60,6 +60,8 @@ cp ci/guest-page-e2e.py "$OUT/"
 cp ci/dashboard-page-e2e.py ci/a11y/vendor/axe.min.js "$OUT/"
 # lane N reverse proxy UI scenario
 cp ci/revproxy-page-e2e.py "$OUT/"
+# lane J NTP UI scenario
+cp ci/ntp-page-e2e.py "$OUT/"
 # lane J XDP data plane: the shipped BPF program source
 cp crates/patronus-ebpf/src/xdp_firewall.bpf.c "$OUT/"
 OLD_ENV=
@@ -98,6 +100,8 @@ apt-get install -y -qq --no-install-recommends haproxy >/dev/null
 apt-get install -y -qq --no-install-recommends wireguard-tools >/dev/null
 # lane F IPsec road warriors (lane-f-ipsec-rw.sh): strongSwan server + a second charon as the client
 apt-get install -y -qq --no-install-recommends strongswan-swanctl charon-systemd libcharon-extra-plugins libcharon-extauth-plugins libstrongswan-extra-plugins libstrongswan-standard-plugins openssl >/dev/null
+# lane J NTP (lane-j-ntp*.sh): chrony + gpsd (not started here; the scenario's rc-service stand-in runs them)
+apt-get install -y -qq --no-install-recommends chrony gpsd >/dev/null
 # lane J XDP data plane (lane-j-xdp.sh): clang (BPF target), libbpf, headers
 apt-get install -y -qq --no-install-recommends clang gcc libc6-dev libbpf-dev linux-libc-dev libelf-dev zlib1g-dev >/dev/null
 # lane T UI (lane-t-guest-ui.sh): Playwright + Firefox are installed HERE, with the other packages while DNS

@@ -2183,6 +2183,7 @@ pub async fn apply_ext(
                 enabled: Some(*on),
                 servers: Some(servers.join(",")),
                 interfaces: Some(ifs.join(",")),
+                ..Default::default()
             },
         )
         .await

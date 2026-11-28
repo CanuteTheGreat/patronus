@@ -26,7 +26,7 @@ IUSE="
 	+web +cli +api
 	dashboard
 	+nftables iptables
-	+dhcp +dns +unbound bind dnsmasq kea +ntp
+	+dhcp +dns +unbound bind dnsmasq kea +ntp gps
 	+vpn wireguard openvpn ipsec
 	+multiwan
 	ha
@@ -54,6 +54,7 @@ REQUIRED_USE="
 	|| ( nftables iptables )
 	|| ( systemd openrc )
 	dns? ( || ( unbound bind dnsmasq ) )
+	gps? ( ntp )
 	vpn? ( || ( wireguard openvpn ipsec ) )
 	intrusion-detection? ( || ( suricata snort ) )
 	certificates? ( || ( acme certbot ) )
@@ -87,6 +88,7 @@ RDEPEND="
 		!kea? ( net-dns/dnsmasq )
 	)
 	ntp? ( net-misc/chrony )
+	gps? ( sci-geosciences/gpsd )
 	dns? (
 		unbound? ( net-dns/unbound )
 		bind? ( net-dns/bind )

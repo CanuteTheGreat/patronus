@@ -832,6 +832,21 @@ mod ntp_routes {
         pub available: bool,
         pub running: bool,
         pub error: String,
+        pub acl_explicit: bool,
+        pub acl_allow: String,
+        pub acl_deny: String,
+        pub ratelimit: bool,
+        pub gps_enabled: bool,
+        pub gps_device: String,
+        pub gps_baud: u32,
+        pub gps_baud_list: Vec<u32>,
+        pub gps_pps_device: String,
+        pub gps_offset: String,
+        pub gps_prefer: bool,
+        pub gpsd_available: bool,
+        pub gpsd_running: bool,
+        pub gps_device_present: bool,
+        pub gps_pps_present: bool,
     }
 
     pub async fn page(State(state): State<AppState>) -> Response {
@@ -852,6 +867,21 @@ mod ntp_routes {
             available: st["available"].as_bool().unwrap_or(false),
             running: st["running"].as_bool().unwrap_or(false),
             error,
+            acl_explicit: s.acl_mode == "explicit",
+            acl_allow: s.acl_allow.join(", "),
+            acl_deny: s.acl_deny.join(", "),
+            ratelimit: s.ratelimit,
+            gps_enabled: s.gps.enabled,
+            gps_device: s.gps.device.clone(),
+            gps_baud: s.gps.baud,
+            gps_baud_list: ntp::GPS_BAUDS.to_vec(),
+            gps_pps_device: s.gps.pps_device.clone(),
+            gps_offset: s.gps.offset.to_string(),
+            gps_prefer: s.gps.prefer,
+            gpsd_available: st["gps"]["available"].as_bool().unwrap_or(false),
+            gpsd_running: st["gps"]["running"].as_bool().unwrap_or(false),
+            gps_device_present: st["gps"]["device_present"].as_bool().unwrap_or(false),
+            gps_pps_present: st["gps"]["pps_present"].as_bool().unwrap_or(false),
         })
     }
 
