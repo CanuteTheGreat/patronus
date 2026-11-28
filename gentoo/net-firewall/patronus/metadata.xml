@@ -35,6 +35,7 @@
 		<flag name="mdns">mDNS repeater: Bonjour/AirPlay/printer discovery across LAN segments (avahi-daemon reflector)</flag>
 		<flag name="nat64">NAT64 / DNS64 for IPv6-only clients (tayga + Unbound)</flag>
 		<flag name="l2tp">L2TP server with PPP users (xl2tpd)</flag>
+		<flag name="pppoe-server">PPPoE server (access concentrator): subscribers dial in on a LAN port with a user name and password, optionally checked against RADIUS (rp-pppoe pppoe-server + pppd)</flag>
 		<flag name="sdwan">SD-WAN edge agent: join a Patronus SD-WAN overlay (WireGuard mesh, endpoint failover, path reporting)</flag>
 		<flag name="netflow">Export NetFlow / IPFIX flow records from an interface (softflowd)</flag>
 		<flag name="dynamic-routing">BGP and OSPF dynamic routing (FRRouting)</flag>

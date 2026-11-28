@@ -73,6 +73,7 @@ Status words: **present** = in the shipped binary, reachable from API/UI, covere
 | GRE, VXLAN | GRE, GRE-TAP, VXLAN (lane-n-overlays) | present |
 | GIF (IP-in-IP), 6in4 / 6rd tunnel broker | none | missing |
 | PPPoE / PPP client, L2TP | PPPoE client, L2TP | present |
+| PPPoE server (access concentrator) | `USE=pppoe-server` (rp-pppoe + pppd, local users or RADIUS, address pool, NAT; lane-j-pppoe-server) | present |
 | Wireless (AP, client) | AP + client, auto channel | present (ahead) |
 | Interface groups usable as rule targets | none | **missing** |
 | Virtual IPs: CARP / IP alias / proxy ARP | VRRP VIPs; proxy ARP only in segmentation | partial: no IP alias / proxy-ARP VIP type |

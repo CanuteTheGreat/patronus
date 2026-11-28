@@ -276,6 +276,9 @@ that are not finished are listed separately under
 - NAT64 / DNS64 (USE=nat64): IPv6-only clients reach IPv4-only servers through
   tayga, and Unbound answers AAAA queries for IPv4-only names with addresses
   in the NAT64 prefix. [C49]
+- PPPoE server (USE=pppoe-server): rp-pppoe + pppd as an access concentrator on the
+  ports you choose, with local users or RADIUS, an address pool, DNS, MTU and
+  session limits, and NAT to the internet. [C1493]
 - L2TP server (USE=l2tp): xl2tpd with PPP MS-CHAPv2 users managed on the L2TP
   page (L2TP itself is not encrypted: pair it with IPsec on untrusted
   networks). [C50]

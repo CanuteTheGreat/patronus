@@ -90,6 +90,13 @@ pub const CATALOG: &[Component] = &[
         binary: "xl2tpd",
     },
     Component {
+        id: "rp-pppoe",
+        feature: "pppoe-server",
+        title: "PPPoE server (rp-pppoe)",
+        atom: "net-dialup/rp-pppoe",
+        binary: "pppoe-server",
+    },
+    Component {
         id: "rsyslog",
         feature: "syslog",
         title: "Remote syslog",

@@ -166,6 +166,7 @@ fn svc_appliers(spec: &patronus_network::svc::Spec) -> Vec<&'static str> {
             | "mdns"
             | "nat64"
             | "l2tp"
+            | "pppoe-server"
             | "upnp"
             | "openvpn"
             | "proxy"

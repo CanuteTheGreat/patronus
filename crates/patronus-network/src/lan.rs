@@ -57,6 +57,7 @@ pub const LAN_TABLES: &[&str] = &[
     "mdns_interfaces",
     "udp_relay_rules",
     "l2tp_users",
+    "pppoe_server_users",
     "proxy_blocked",
     "vrf_instances",
     "vrf_members",
@@ -1007,6 +1008,8 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::nat64::Nat64Applier::default()));
     #[cfg(feature = "l2tp")]
     v.push(Arc::new(crate::l2tp::L2tpApplier::default()));
+    #[cfg(feature = "pppoe-server")]
+    v.push(Arc::new(crate::pppoe_server::PppoeServerApplier::default()));
     #[cfg(feature = "upnp")]
     v.push(Arc::new(crate::upnp::UpnpApplier::default()));
     #[cfg(feature = "reverse-proxy")]

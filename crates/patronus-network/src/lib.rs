@@ -119,6 +119,8 @@ pub mod nat64;
 pub mod guest;
 #[cfg(feature = "l2tp")]
 pub mod l2tp;
+#[cfg(feature = "pppoe-server")]
+pub mod pppoe_server;
 #[cfg(feature = "plugins")]
 pub mod packages;
 #[cfg(feature = "plugins")]

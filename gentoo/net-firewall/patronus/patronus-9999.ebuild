@@ -33,7 +33,7 @@ IUSE="
 	+monitoring prometheus netflow collectd
 	+captive-portal
 	intrusion-detection suricata snort
-	syslog igmp mdns udp-relay nat64 l2tp upnp vrf web-proxy reverse-proxy dynamic-routing sdwan
+	syslog igmp mdns udp-relay nat64 l2tp pppoe-server upnp vrf web-proxy reverse-proxy dynamic-routing sdwan
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp +plugins
@@ -109,6 +109,7 @@ RDEPEND="
 	net-analyzer/traceroute
 	nat64? ( net-proxy/tayga )
 	l2tp? ( net-dialup/xl2tpd net-dialup/ppp )
+	pppoe-server? ( net-dialup/rp-pppoe net-dialup/ppp )
 	upnp? ( net-misc/miniupnpd[nftables] )
 	web-proxy? ( net-proxy/squid )
 	reverse-proxy? ( net-proxy/haproxy )
@@ -251,6 +252,7 @@ src_configure() {
 		$(usex mdns "mdns" "")
 		$(usex nat64 "nat64" "")
 		$(usex l2tp "l2tp" "")
+		$(usex pppoe-server "pppoe-server" "")
 		$(usex upnp "upnp" "")
 		$(usex vrf "vrf" "")
 		$(usex web-proxy "web-proxy" "")
@@ -401,6 +403,7 @@ src_install() {
 		use mdns && webfeatures+=( mdns )
 		use nat64 && webfeatures+=( nat64 )
 		use l2tp && webfeatures+=( l2tp )
+		use pppoe-server && webfeatures+=( pppoe-server )
 		use upnp && webfeatures+=( upnp )
 		use vrf && webfeatures+=( vrf )
 		use openvpn && webfeatures+=( openvpn )

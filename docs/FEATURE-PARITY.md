@@ -184,7 +184,7 @@ Last generated: 2026-11-17 (279 features).
 | SNMP agent (v2c/v3, community, location) | pfS/OPN/OWrt/UniFi | tested | missing | missing | v3 users not covered by the page. | P2 |
 | NetFlow / IPFIX export (softflowd) | pfS/OPN/OWrt/UniFi | tested | missing | missing | Export only; no built-in collector/ntopng view (Insights does its own conntrack aggregation). | P2 |
 | Remote syslog forwarding (UDP/TCP/TLS, facility filters) | pfS/OPN/OWrt/UniFi/Fort | tested | missing | missing | TLS syslog and per-source filters not covered. | P1 |
-| PPPoE server (for LAN clients/ISP-in-a-box) | pfS/OPN | missing | missing | missing | Add pppoe-server Svc (S-M). | P2 |
+| PPPoE server (for LAN clients/ISP-in-a-box) | pfS/OPN | tested | missing | missing | `USE=pppoe-server` (lane-j-pppoe-server): local users or RADIUS, pool, fixed addresses, NAT, session devices in their own range. Router-image tier not done (needs rp-pppoe in the image). | P2 |
 | L2TP server (LNS, with IPsec) | pfS/OPN/OWrt/Fort | tested | missing | missing | ebuild: USE l2tp not default. | P2 |
 | LLDP/CDP neighbour discovery | OPN/OWrt/UniFi | missing | missing | missing | Svc `lldp` rendering lldpd.conf + neighbour table from `lldpcli -f json` (S). | P2 |
 | UPS monitoring (NUT) | pfS/OPN/OWrt | missing | missing | missing | Svc `nut` (ups.conf driver, upsd, upsmon shutdown) (M). Needs USB HW to really test - netlab with dummy-ups driver. | P2 |

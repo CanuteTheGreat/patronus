@@ -188,6 +188,8 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     v.push(Arc::new(crate::nat64::Nat64Svc));
     #[cfg(feature = "l2tp")]
     v.push(Arc::new(crate::l2tp::L2tpSvc));
+    #[cfg(feature = "pppoe-server")]
+    v.push(Arc::new(crate::pppoe_server::PppoeServerSvc));
     #[cfg(feature = "upnp")]
     v.push(Arc::new(crate::upnp::UpnpSvc));
     #[cfg(feature = "vrf")]
@@ -283,6 +285,7 @@ pub const SVC_TABLES: &[&str] = &[
     "mdns_interfaces",
     "udp_relay_rules",
     "l2tp_users",
+    "pppoe_server_users",
     "proxy_blocked",
     "vrf_instances",
     "vrf_members",

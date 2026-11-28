@@ -38,6 +38,8 @@ mdns = []
 udp-relay = []
 nat64 = []
 l2tp = []
+# PPPoE access concentrator (rp-pppoe pppoe-server + pppd, optional RADIUS)
+pppoe-server = []
 upnp = []
 # guest network: isolated VLAN/Wi-Fi network with its own DHCP/DNS, caps, schedule and vouchers
 # (RDEPEND net-dns/dnsmasq, iproute2, nftables; net-wireless/hostapd for the guest SSID)

@@ -52,6 +52,56 @@ fn safe_dev(d: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
 }
 
+/// The PPPoE server's session devices `ppp<base>` .. `ppp<base+n-1>` as exact
+/// names (a prefix glob such as `ppp100*` would also match `ppp1000`).
+pub fn pppoe_unit_patterns(base: u64, n: u64) -> Vec<String> {
+    (base..base + n).map(|u| format!("ppp{u}")).collect()
+}
+
+/// The session device patterns for the stored `pppoe-server.*` settings
+/// (pool size = the address range, capped by `max_sessions`).
+fn pppoe_server_patterns(m: &BTreeMap<String, String>) -> Vec<String> {
+    let ip = |k: &str| -> Option<u32> {
+        m.get(k)
+            .and_then(|v| v.trim().parse::<std::net::Ipv4Addr>().ok())
+            .map(u32::from)
+    };
+    let (Some(a), Some(b)) = (ip("range_start"), ip("range_end")) else {
+        return Vec::new();
+    };
+    if a > b {
+        return Vec::new();
+    }
+    let mut n = (b - a) as u64 + 1;
+    let max: u64 = m
+        .get("max_sessions")
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0);
+    if max > 0 {
+        n = n.min(max);
+    }
+    let base: u64 = m
+        .get("unit_base")
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(1000);
+    pppoe_unit_patterns(base, n.min(4000))
+}
+
+/// nft set expression of those devices: `{ "ppp1000", "ppp1001" }`.
+fn pppoe_server_set(m: &BTreeMap<String, String>) -> Option<String> {
+    let v = pppoe_server_patterns(m);
+    if v.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{{ {} }}",
+        v.iter()
+            .map(|d| format!("\"{d}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
 /// `tcp/853,udp/123,tcp/8000-8010` -> [("tcp", ["853", "8000-8010"]), ("udp", ["123"])];
 /// anything that is not proto/digits[-digits] is dropped.
 fn guest_ports(s: &str) -> Vec<(&'static str, Vec<String>)> {
@@ -484,6 +534,60 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- PPPoE server: the session devices (ppp<unit_base>.., a range of their
+    // own) reach what the settings allow; discovery/session frames are L2 and
+    // never reach these hooks
+    let pp = settings(store, "pppoe-server").await?;
+    if on(&pp, "enabled") {
+        let pats: Vec<String> = pppoe_server_set(&pp).into_iter().collect();
+        let ports = guest_ports(pp.get("router_ports").map(String::as_str).unwrap_or(""));
+        for p in &pats {
+            out.filter.push(format!(
+                "add rule {t} input iifname {p} icmp type echo-request accept comment \"PPPoE server ping\""
+            ));
+            for (proto, list) in &ports {
+                out.filter.push(format!(
+                    "add rule {t} input iifname {p} {proto} dport {{ {} }} accept comment \"PPPoE server router service\"",
+                    list.join(", ")
+                ));
+            }
+            if on(&pp, "lan_access") {
+                for c in devices(store, "@lan").await {
+                    out.filter.push(format!(
+                        "add rule {t} forward iifname {p} oifname \"{c}\" accept comment \"PPPoE clients to the LAN\""
+                    ));
+                }
+            }
+            if on(&pp, "internet") {
+                let wan_spec = pp
+                    .get("internet_interface")
+                    .map(String::as_str)
+                    .filter(|b| !b.is_empty())
+                    .unwrap_or("@wan");
+                for w in devices(store, wan_spec).await {
+                    out.filter.push(format!(
+                        "add rule {t} forward iifname {p} oifname \"{w}\" accept comment \"PPPoE clients to the internet\""
+                    ));
+                }
+            }
+        }
+        // masquerade by session device, so fixed addresses outside the pool work too
+        if on(&pp, "internet") && on(&pp, "nat") {
+            let wan_spec = pp
+                .get("internet_interface")
+                .map(String::as_str)
+                .filter(|b| !b.is_empty())
+                .unwrap_or("@wan");
+            for w in devices(store, wan_spec).await {
+                for p in &pats {
+                    out.nat_exempt.push(format!(
+                        "add rule {t} postrouting iifname {p} oifname \"{w}\" masquerade comment \"PPPoE clients\""
+                    ));
+                }
+            }
+        }
+    }
+
     // --- dynamic routing (FRR): BGP sessions from the configured neighbours, OSPF on its interfaces
     let f = settings(store, "frr").await?;
     if on(&f, "bgp_enabled") {
@@ -574,6 +678,74 @@ mod tests {
         .execute(s.pool().unwrap())
         .await
         .unwrap();
+    }
+
+    #[test]
+    fn pppoe_unit_patterns_are_exact_names() {
+        assert_eq!(
+            pppoe_unit_patterns(1000, 3),
+            vec!["ppp1000", "ppp1001", "ppp1002"]
+        );
+        assert!(pppoe_unit_patterns(1000, 0).is_empty());
+    }
+
+    #[tokio::test]
+    async fn pppoe_server_rules_follow_the_settings() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth0", Some("wan")).await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
+        for (k, v) in [
+            ("pppoe-server.enabled", "1"),
+            ("pppoe-server.range_start", "10.70.0.10"),
+            ("pppoe-server.range_end", "10.70.0.19"),
+            ("pppoe-server.unit_base", "2000"),
+            ("pppoe-server.internet", "1"),
+            ("pppoe-server.nat", "1"),
+            ("pppoe-server.router_ports", "udp/53,tcp/22"),
+        ] {
+            put(&s, k, v).await;
+        }
+        let r = svc_rules(&s).await.unwrap();
+        let f = r.filter.join("\n");
+        let set = format!(
+            "{{ {} }}",
+            (2000..2010)
+                .map(|u| format!("\"ppp{u}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        assert!(
+            f.contains(&format!(
+                "input iifname {set} icmp type echo-request accept"
+            )),
+            "{f}"
+        );
+        assert!(
+            f.contains(&format!("input iifname {set} udp dport {{ 53 }} accept")),
+            "{f}"
+        );
+        assert!(
+            f.contains(&format!("forward iifname {set} oifname \"eth0\" accept")),
+            "{f}"
+        );
+        assert!(
+            !f.contains("ppp0") && !f.contains("oifname \"eth1\""),
+            "{f}"
+        );
+        assert!(r.nat_exempt.join("\n").contains(&format!(
+            "postrouting iifname {set} oifname \"eth0\" masquerade"
+        )));
+        put(&s, "pppoe-server.lan_access", "1").await;
+        put(&s, "pppoe-server.nat", "0").await;
+        let r = svc_rules(&s).await.unwrap();
+        assert!(r
+            .filter
+            .join("\n")
+            .contains(&format!("forward iifname {set} oifname \"eth1\" accept")));
+        assert!(r.nat_exempt.is_empty());
+        put(&s, "pppoe-server.enabled", "0").await;
+        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
     }
 
     #[tokio::test]
