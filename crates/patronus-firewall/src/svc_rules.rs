@@ -484,6 +484,50 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- IP tunnels (IPIP / 6in4 / GIF): the encapsulated protocol from each
+    // enabled tunnel's remote endpoint (and to its local one when pinned), and
+    // ICMP / ICMPv6 on the tunnel link (path MTU discovery, neighbour discovery,
+    // ping). Everything else over a tunnel is the user's firewall rules.
+    if let Ok(rows) = sqlx::query(
+        "SELECT name, kind, remote, local FROM ip_tunnels WHERE enabled = 1 ORDER BY id",
+    )
+    .fetch_all(store.pool()?)
+    .await
+    {
+        for r in rows {
+            let (name, kind, remote, local): (String, String, String, Option<String>) =
+                (r.get(0), r.get(1), r.get(2), r.get(3));
+            let Ok(remote) = remote.parse::<std::net::Ipv4Addr>() else {
+                continue;
+            };
+            if name.is_empty()
+                || name.len() > 11
+                || !name
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+            {
+                continue;
+            }
+            let proto = match kind.as_str() {
+                "ipip" => "4",
+                "sit" => "41",
+                "gif" => "{ 4, 41 }",
+                _ => continue,
+            };
+            let to = local
+                .as_deref()
+                .and_then(|l| l.parse::<std::net::Ipv4Addr>().ok())
+                .map(|l| format!(" ip daddr {l}"))
+                .unwrap_or_default();
+            out.filter.push(format!(
+                "add rule {t} input ip saddr {remote}{to} meta l4proto {proto} accept comment \"tunnel {name}\""
+            ));
+            out.filter.push(format!(
+                "add rule {t} input iifname \"tn-{name}\" meta l4proto {{ icmp, ipv6-icmp }} accept comment \"tunnel {name} ICMP\""
+            ));
+        }
+    }
+
     // --- dynamic routing (FRR): BGP sessions from the configured neighbours, OSPF on its interfaces
     let f = settings(store, "frr").await?;
     if on(&f, "bgp_enabled") {
@@ -760,6 +804,33 @@ mod tests {
             svc_rules(&s).await.unwrap().filter.is_empty(),
             "unsafe device names are dropped"
         );
+    }
+
+    #[tokio::test]
+    async fn tunnels_accept_their_protocol_from_the_remote_endpoint_only() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        sqlx::query(
+            "INSERT INTO ip_tunnels (name, kind, remote, local, enabled, updated_at) VALUES \
+             ('he', 'sit', '203.0.113.9', '198.51.100.2', 1, 0), \
+             ('site', 'ipip', '203.0.113.20', NULL, 1, 0), \
+             ('both', 'gif', '203.0.113.30', NULL, 1, 0), \
+             ('off', 'sit', '203.0.113.40', NULL, 0, 0), \
+             ('bad;x', 'sit', '203.0.113.50', NULL, 1, 0), \
+             ('junk', 'sit', 'not-an-ip', NULL, 1, 0)",
+        )
+        .execute(s.pool().unwrap())
+        .await
+        .unwrap();
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(
+            f.contains("input ip saddr 203.0.113.9 ip daddr 198.51.100.2 meta l4proto 41 accept"),
+            "{f}"
+        );
+        assert!(f.contains("input ip saddr 203.0.113.20 meta l4proto 4 accept"), "{f}");
+        assert!(f.contains("input ip saddr 203.0.113.30 meta l4proto { 4, 41 } accept"), "{f}");
+        assert!(f.contains("input iifname \"tn-he\" meta l4proto { icmp, ipv6-icmp } accept"), "{f}");
+        assert!(!f.contains("203.0.113.40"), "disabled tunnels open nothing: {f}");
+        assert!(!f.contains("bad;x") && !f.contains("203.0.113.50") && !f.contains("not-an-ip"), "{f}");
     }
 
     #[tokio::test]
