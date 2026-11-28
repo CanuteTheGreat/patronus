@@ -2,7 +2,7 @@
 # Host-side runner for ci/netlab/lane-s-wifi-hwsim.sh (per-device Wi-Fi credentials
 # on mac80211_hwsim), lane-s-wifi-chan-hwsim.sh (automatic channel choice), lane-t-guest-wifi.sh (the guest SSID) and lane-s-wifi-client-hwsim.sh (a Wi-Fi
 # uplink as failover WAN); HWSIM_SCENARIOS picks others. The kernel module is host-global, so this
-#   1. takes a lock and refuses to run if mac80211_hwsim is already loaded,
+#   1. takes a lock; refuses to run if mac80211_hwsim is loaded and in use (an idle leftover is unloaded),
 #   2. loads it with 6 radios (modprobe: sudo when not root),
 #   3. moves the new phys into the test container's network namespace
 #      (`iw phy X set netns <pid>`, run by a throw-away --net=host --pid=host
@@ -32,25 +32,16 @@ OWN=
 . ci/hwsim-lock.sh
 trap 'hwsim_lock_drop' EXIT
 hwsim_lock_take || exit 1
-if grep -q '^mac80211_hwsim ' /proc/modules; then
-  echo "mac80211_hwsim is already loaded on this host (another user?): refusing to touch it"; exit 1
-fi
-# load/unload the host-global module: directly (root or sudo on the host) or, from an unprivileged CI
-# job container, through a throw-away privileged sibling that sees the host's /lib/modules
-modctl() { # load|unload
-  local cmd="rmmod mac80211_hwsim"
-  [ "$1" = load ] && cmd="modprobe mac80211_hwsim radios=$RADIOS"
-  if $SUDO $cmd >/dev/null 2>&1; then return 0; fi
-  docker run --rm --privileged -v /lib/modules:/lib/modules:ro "$IMAGE" sh -c \
-    "command -v modprobe >/dev/null || (apt-get update -qq >/dev/null && apt-get install -y -qq kmod >/dev/null); $cmd" >/dev/null 2>&1
-}
-modctl load || hwsim_skip_or_fail "this kernel has no mac80211_hwsim (rw-man-01's 6.8 kernel has none)"
+HWSIM_KMOD_IMAGE=$IMAGE
+# a leftover module (a run that died before its cleanup) is unloaded when provably idle; one in use is never touched
+hwsim_claim_module "${HWSIM_MODULE_WAIT_MIN:-0}" || exit 1
+hwsim_load "$RADIOS" ci/netlab/wifi-hwsim.sh || hwsim_skip_or_fail "this kernel has no mac80211_hwsim (rw-man-01's 6.8 kernel has none)"
 
 cleanup() {
   [ -n "$OWN" ] && docker rm -fv "$C" >/dev/null 2>&1 || true
   # phys that were moved into the container's namespaces come back to the host when those die
   sleep 1
-  modctl unload || { sleep 2; modctl unload || echo "::warning::could not unload mac80211_hwsim"; }
+  hwsim_unload
   hwsim_lock_drop
 }
 trap cleanup EXIT

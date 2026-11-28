@@ -35,19 +35,20 @@ SUDO=; [ "$(id -u)" = 0 ] || SUDO=sudo
 DOCKER="${DOCKER:-$SUDO docker}"
 HWSIM_DOCKER=$DOCKER; . ../../hwsim-lock.sh
 C=steer-hwsim-$$
-LOADED=
 WD=$(agent-workdir new steer-hwsim 2>/dev/null || mktemp -d)
 cleanup() { rc=$?
   if [ "${KEEP:-0}" = 1 ]; then echo "KEEP=1: container $C, workdir $WD, module and lock left in place"; exit $rc; fi
   $DOCKER exec "$C" iw reg set 00 >/dev/null 2>&1 || true
   $DOCKER rm -fv "$C" >/dev/null 2>&1 || true
-  if [ -n "$LOADED" ]; then sleep 1; $SUDO rmmod mac80211_hwsim 2>/dev/null || { sleep 3; $SUDO rmmod mac80211_hwsim || echo "could not unload mac80211_hwsim"; }; fi
+  sleep 1; hwsim_unload
   hwsim_lock_drop
   command -v agent-workdir >/dev/null 2>&1 && agent-workdir done "$WD" >/dev/null 2>&1 || rm -rf "$WD"
   exit $rc; }
 trap cleanup EXIT
-if grep -q '^mac80211_hwsim ' /proc/modules; then echo "mac80211_hwsim is already loaded (another user?): pick another host"; exit 1; fi
 hwsim_lock_take || exit 1
+HWSIM_KMOD_IMAGE=$IMAGE
+# a leftover is unloaded when provably idle; a module in use (another user's radios) is never touched
+hwsim_claim_module "${HWSIM_MODULE_WAIT_MIN:-0}" || exit 1
 echo "--- container $C ($IMAGE), packages"
 $DOCKER run -d --name "$C" --privileged --security-opt apparmor=unconfined "$IMAGE" sleep infinity >/dev/null
 $DOCKER exec "$C" sh -c 'apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq hostapd wpasupplicant iw iproute2 bridge-utils python3-minimal iputils-ping procps >/dev/null 2>&1; hostapd -v 2>&1 | head -1; wpa_supplicant -v | head -1'
@@ -55,8 +56,7 @@ $DOCKER exec "$C" sh -c 'apt-get update -qq >/dev/null && DEBIAN_FRONTEND=nonint
 tar -cf "$WD/ov.tar" overlay/usr/libexec/patronus/ap overlay/usr/libexec/patronus/ap-steer overlay/usr/libexec/patronus/ap-event overlay/etc/patronus/board.sh
 $DOCKER exec "$C" mkdir -p /w/ov && $DOCKER exec -i "$C" tar -xf - -C /w/ov < "$WD/ov.tar"
 sed -n '/^#--INNER-BEGIN/,/^#--INNER-END/p' "$SELF" > "$WD/inner.sh"; $DOCKER cp "$WD/inner.sh" "$C:/w/inner.sh"
-$SUDO modprobe mac80211_hwsim radios=3 || { echo "SKIP: no mac80211_hwsim on this kernel"; exit 0; }
-LOADED=1
+hwsim_load 3 ci/embedded-aarch64/ax1800/tests/steer-hwsim.sh || { echo "SKIP: no mac80211_hwsim on this kernel"; exit 0; }
 PHYS=$(ls /sys/class/ieee80211 | sort -V | tail -n 3); [ "$(echo $PHYS | wc -w)" = 3 ] || { echo "expected 3 hwsim radios, got: $PHYS"; exit 1; }
 PID=$($DOCKER inspect -f '{{.State.Pid}}' "$C")
 # iw is not on the hosts: a throw-away container in the host's net+pid namespace moves the radios

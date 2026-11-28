@@ -33,6 +33,89 @@ hwsim_lock_drop() {
   [ "${HWSIM_LOCK_HELD:-}" = 1 ] || return 0
   ${HWSIM_DOCKER:-docker} network rm "${HWSIM_LOCK_NAME:-patronus-hwsim-lock}" >/dev/null 2>&1; HWSIM_LOCK_HELD=; }
 
+# --- the host-global module: load, record the loader, reclaim a stale leftover, unload (all under the lock) -----------
+# A run that dies without its EXIT trap (cancelled job, killed container) leaves mac80211_hwsim loaded, and every later
+# run then waited the full HWSIM_WAIT_MIN for a module nobody uses. A leftover is reclaimed only when it is PROVABLY idle
+# (hwsim_module_busy finds nothing alive); anything doubtful is left alone, because radios are host-global and an
+# rmmod pulls them out from under a running hostapd/wpa_supplicant of some other job. Callers hold the lock (hwsim_lock_take).
+# Settings: HWSIM_KMOD_IMAGE (image of the throw-away privileged sibling that sees /lib/modules, default debian:trixie),
+# HWSIM_LOADER_NAME (record network), HWSIM_SYSROOT/HWSIM_PROCROOT + HWSIM_PROBE_LOCAL=1 (probe a fake tree, for the unit test).
+HWSIM_LOADED=
+hwsim_module_loaded() { grep '^mac80211_hwsim ' "${HWSIM_PROCROOT:-/proc}/modules" >/dev/null 2>&1; }
+# The probe runs in the HOST's pid+net namespaces (a throw-away container), because a job container has its own sysfs.
+# Live = any of: use count != 0; a radio (platform device hwsimN) that the host namespace does not see any more (it was
+# moved into a container's namespace: that container is using it); a radio's netdev that is UP; a hostapd/wpa_supplicant/
+# iwd/ap-steer process in any pid namespace. Prints the reason and exits 1 when live, exits 0 when idle.
+HWSIM_PROBE_SH='
+P=${HWSIM_PROCROOT:-/proc}; S=${HWSIM_SYSROOT:-/sys}
+rc=$(awk '"'"'$1=="mac80211_hwsim"{print $3}'"'"' "$P/modules" 2>/dev/null)
+[ -n "$rc" ] && [ "$rc" != 0 ] && { echo "module use count $rc"; exit 1; }
+nr=0; for d in "$S"/bus/platform/drivers/mac80211_hwsim/hwsim[0-9]*; do [ -e "$d" ] && nr=$((nr+1)); done
+nv=0
+for p in "$S"/class/ieee80211/*; do [ -e "$p" ] || continue
+  case $(readlink -f "$p/device" 2>/dev/null) in *hwsim*) nv=$((nv+1));; esac
+  for n in "$p"/device/net/*; do [ -e "$n/flags" ] || continue
+    [ $(( $(cat "$n/flags") & 1 )) -ne 0 ] && { echo "radio netdev ${n##*/} is up"; exit 1; }
+  done
+done
+[ "$nv" -lt "$nr" ] && { echo "$((nr-nv)) of $nr radios are in another network namespace (in use)"; exit 1; }
+for c in "$P"/[0-9]*/comm; do [ -r "$c" ] || continue
+  case $(cat "$c" 2>/dev/null) in hostapd|wpa_supplicant|iwd|ap-steer) echo "$(cat "$c") is running (pid ${c%/comm})"; exit 1;; esac
+done
+exit 0'
+# hwsim_module_busy: 0 (and the reason on stdout) when something may still be using the module, 1 when it is provably idle.
+hwsim_module_busy() {
+  _d=${HWSIM_DOCKER:-docker}; _why=
+  _run=$($_d ps -q --filter name=hwsim 2>/dev/null | head -n 1)       # a running xbss-/bandsteer-/steer-/hwsim-<pid> container
+  if [ -n "$_run" ]; then echo "a running hwsim test container exists ($_run)"; return 0; fi
+  _h=$($_d network inspect -f '{{index .Labels "patronus.hwsim-loader-holder"}}' "${HWSIM_LOADER_NAME:-patronus-hwsim-loader}" 2>/dev/null)
+  if [ -n "$_h" ] && [ "$_h" != "$(hostname)" ] && $_d container inspect "$_h" >/dev/null 2>&1; then
+    echo "the loader's job container $_h still exists"; return 0; fi
+  if [ "${HWSIM_PROBE_LOCAL:-0}" = 1 ]; then _why=$(sh -c "$HWSIM_PROBE_SH" 2>&1); _r=$?
+  else _why=$($_d run --rm --pid=host --net=host -e HWSIM_PROCROOT -e HWSIM_SYSROOT "${HWSIM_KMOD_IMAGE:-debian:trixie}" sh -c "$HWSIM_PROBE_SH" 2>&1); _r=$?; fi
+  if [ "$_r" != 0 ]; then echo "${_why:-probe failed (rc=$_r)}"; return 0; fi   # a probe that cannot run counts as busy
+  return 1; }
+# hwsim_modctl load RADIOS | unload: directly (root, or sudo on the host) or, from an unprivileged CI job container, through
+# a throw-away privileged sibling that sees the host's /lib/modules.
+hwsim_modctl() {
+  _d=${HWSIM_DOCKER:-docker}; _s=; [ "$(id -u)" = 0 ] || _s=sudo
+  _cmd="rmmod mac80211_hwsim"; [ "$1" = load ] && _cmd="modprobe mac80211_hwsim radios=${2:-3}"
+  if $_s $_cmd >/dev/null 2>&1; then return 0; fi
+  $_d run --rm --privileged -v /lib/modules:/lib/modules:ro "${HWSIM_KMOD_IMAGE:-debian:trixie}" sh -c \
+    "command -v modprobe >/dev/null || (apt-get update -qq >/dev/null && apt-get install -y -qq kmod >/dev/null); $_cmd" >/dev/null 2>&1; }
+# hwsim_claim_module WAIT_MIN: make sure the module is NOT loaded, so this run can load its own. A leftover that
+# hwsim_module_busy calls idle is unloaded at once; a busy one is waited for up to WAIT_MIN minutes, then refused.
+hwsim_claim_module() {
+  _wm=${1:-0}; _t0=$(date +%s)
+  while hwsim_module_loaded; do
+    if _why=$(hwsim_module_busy); then
+      [ $(( $(date +%s) - _t0 )) -ge $(( _wm * 60 )) ] && { echo "mac80211_hwsim is loaded and in use ($_why): refusing to touch it"; return 1; }
+      echo "mac80211_hwsim is loaded and in use ($_why): waiting"; sleep 20; continue; fi
+    echo "mac80211_hwsim is loaded but idle (a leftover; loader record: $(hwsim_loader_show)): unloading it"
+    hwsim_modctl unload || { echo "could not unload the leftover mac80211_hwsim"; return 1; }
+    hwsim_loader_clear; sleep 1
+  done
+  return 0; }
+# hwsim_loader_show: the recorded loader (who/where/when), or "none".
+hwsim_loader_show() {
+  ${HWSIM_DOCKER:-docker} network inspect -f '{{index .Labels "patronus.hwsim-loader-script"}}@{{index .Labels "patronus.hwsim-loader-holder"}} since {{index .Labels "patronus.hwsim-loader-time"}}' \
+    "${HWSIM_LOADER_NAME:-patronus-hwsim-loader}" 2>/dev/null || echo none; }
+hwsim_loader_clear() { ${HWSIM_DOCKER:-docker} network rm "${HWSIM_LOADER_NAME:-patronus-hwsim-loader}" >/dev/null 2>&1 || true; }
+# hwsim_load RADIOS SCRIPT: load the module and record the loader (a docker network, like the lock, so it outlives this
+# job container); sets HWSIM_LOADED=1. Returns non-zero when the module cannot be loaded (callers skip or fail).
+hwsim_load() {
+  hwsim_loader_clear
+  hwsim_modctl load "$1" || return 1
+  HWSIM_LOADED=1
+  ${HWSIM_DOCKER:-docker} network create --label "patronus.hwsim-loader-script=${2:-unknown}" --label "patronus.hwsim-loader-holder=$(hostname)" \
+    --label "patronus.hwsim-loader-time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" --label "patronus.hwsim-loader-radios=$1" \
+    "${HWSIM_LOADER_NAME:-patronus-hwsim-loader}" >/dev/null 2>&1 || echo "::warning::could not record the mac80211_hwsim loader"; }
+# hwsim_unload: unload ONLY a module this run loaded (never one a neighbour loaded), and drop the record.
+hwsim_unload() {
+  [ -n "$HWSIM_LOADED" ] || return 0
+  hwsim_modctl unload || { sleep 3; hwsim_modctl unload || echo "::warning::could not unload mac80211_hwsim"; }
+  hwsim_loader_clear; HWSIM_LOADED=; }
+
 # --- skip policy and scenario accounting (bash; sourced by ci/netlab/wifi-hwsim.sh and xbss-hwsim.sh) -------------------
 # A Wi-Fi job that cannot load mac80211_hwsim proves nothing, so in CI it FAILS: it is routed to the hwsim-x86_64 runner
 # lane (rw-man-02/03, declared in redweek-devops runners-expected.json) whose kernel package ships the module, and a
