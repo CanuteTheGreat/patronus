@@ -223,10 +223,12 @@ def run_view(p, kind, scheme, vp_name, size, listener_port):
     check(f"[{tag}] activity page shows CPU, load and memory", page.text_content("#act-cpu").strip().endswith("%") and page.text_content("#act-mem").strip().endswith("%"))
     page.click("#act-procs th button[data-sort=memory]")
     page.wait_for_function("document.querySelector('#act-procs th[aria-sort=descending] button').dataset.sort === 'memory'")
+    page.wait_for_function("/sorted by memory/.test(document.querySelector('#act-status').textContent)", timeout=30000)
     mem = page.eval_on_selector_all("#act-procs tbody tr", "rs => rs.map(r => r.children[4].textContent)")
     check(f"[{tag}] clicking a column header sorts (aria-sort follows)", len(mem) > 1, mem)
     page.click("#act-procs th button[data-sort=pid]")
     page.wait_for_function("document.querySelector('#act-procs th[aria-sort=ascending] button').dataset.sort === 'pid'")
+    page.wait_for_function("/sorted by pid \\(low to high\\)/.test(document.querySelector('#act-status').textContent)", timeout=30000)
     pids = [int(x) for x in page.eval_on_selector_all("#act-procs tbody tr", "rs => rs.map(r => r.children[0].textContent)")]
     check(f"[{tag}] PID sort is ascending", pids == sorted(pids), pids)
     daemons = page.locator("#act-daemons tbody tr").count()

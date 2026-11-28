@@ -163,13 +163,16 @@ active_minute() { # HH:MM: the clock moves, the ticker closes the previous minut
   clock "2026-10-12 $1"; sync_tick
   for _ in 1 2 3; do C curl -s -m 3 -o /dev/null "http://$NL_WWW:8080/" || true; done
   sync_tick
+  # curl's connection teardown (FIN/ACK) can still be in flight; settle it into
+  # THIS minute so it cannot spill >100 B into the idle minute that follows
+  sleep 2; sync_tick
 }
 sync_tick   # 16:00's traffic (the restore check above) is polled while the clock still says 16:00
 active_minute 16:01   # closes 16:00 (it had traffic)
 clock "2026-10-12 16:02"; sync_tick   # closes 16:01 (traffic): 16:00 and 16:01 were active
 [ "$(used)" = 2 ] || nl_fail "expected 2 active minutes so far, got $(used)"
 clock "2026-10-12 16:03"; sync_tick   # 16:02 had no traffic: closed, not counted
-[ "$(used)" = 2 ] || nl_fail "an idle minute was counted: $(used)"
+[ "$(used)" = 2 ] || nl_fail "an idle minute was counted: $(used); client conntrack: $(R cat /proc/net/nf_conntrack 2>&1 | grep "$NL_CLIENT" | tr '\n' '|' | cut -c1-1500)"
 nl_ok "two active minutes counted (16:00, 16:01); the idle minute 16:02 was not"
 
 # bring the quota to the limit with traffic in consecutive minutes

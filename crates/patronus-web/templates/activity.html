@@ -11,6 +11,7 @@
     .act-table td.num, .act-table th.num { text-align: right; }
     .act-table td.cmd { max-width: 34em; overflow-wrap: anywhere; font-size: 0.8rem; }
     .act-scroll { overflow-x: auto; }
+    .act-scroll > table.act-table { display: table; overflow: visible; width: 100%; }
     .act-controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin-bottom: 0.75rem; }
 </style>
 {% endblock %}
@@ -46,7 +47,7 @@
         <label>Only daemon <select id="act-daemon"><option value="">(all processes)</option></select></label>
         <span class="text-sm" id="act-status" role="status" aria-live="polite"></span>
     </div>
-    <div class="act-scroll">
+    <div class="act-scroll" tabindex="0" role="region" aria-label="Processes table">
     <table class="lan act-table" id="act-procs">
         <thead><tr>
             <th scope="col" class="num" aria-sort="none"><button type="button" data-sort="pid">PID</button></th>
