@@ -374,6 +374,12 @@ that are not finished are listed separately under
   filtered (no answer in time) with the resolved address and the latency,
   optionally through a chosen interface or source address, with a configurable
   timeout and a rate limit. [C873]
+- Dynamic DNS for your own DNS server (RFC 2136, USE=rfc2136): the router keeps
+  A and AAAA records in a BIND/Knot/PowerDNS zone equal to an interface's
+  address, signed with a TSIG key (HMAC-SHA256/384/512, UDP or TCP); the zone
+  follows an address change and a reboot, a wrong secret is reported on the
+  page and writes nothing, and the secret never appears in the API, a
+  command line or a log. [C2136]
 - Gentoo: installed by the in-tree ebuild (an `emerge` runs in CI), and every
   USE flag that maps to a cargo feature compiles on its own. [C12]
 - The installer partitions a real disk, installs, and the installed system
