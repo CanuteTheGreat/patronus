@@ -73,7 +73,8 @@
     }
     // band / generation / width pickers of one radio, kept consistent with each other and with what it supports
     function genPickers(f, st, ifIn, cur, notes) {
-        const wrap = mk('div', {class: 'wifi-gen-pickers'});
+        // display: contents keeps the three pickers in the form's own grid, next to the other fields
+        const wrap = mk('div', {class: 'wifi-gen-pickers', style: 'display: contents'});
         const note = mk('div', {class: 'seg-note', id: 'wifi-gen-note'});
         const render = () => {
             const keep = {band: (f.elements['band'] || {}).value || cur.band, standard: (f.elements['standard'] || {}).value || cur.standard, width: (f.elements['width'] || {}).value || cur.width};

@@ -469,6 +469,19 @@ impl WifiApplier {
         let c = radio::parse_caps(&self.iw.phy_info(&n.ifname).ok()?);
         (!c.bands.is_empty()).then_some(c)
     }
+    /// Remove `<name>-linkN.conf` files of a multi-link set that is no longer configured (all of them with `keep`
+    /// empty).
+    fn drop_stale_links(&self, name: &str, keep: &[PathBuf]) {
+        let prefix = format!("{name}-link");
+        if let Ok(rd) = std::fs::read_dir(&self.dir) {
+            for e in rd.flatten() {
+                let f = e.file_name().to_string_lossy().to_string();
+                if f.starts_with(&prefix) && f.ends_with(".conf") && !keep.contains(&e.path()) {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+    }
     fn mlo_marker(&self, name: &str) -> PathBuf {
         self.dir.join(format!("{name}.mlo-failed"))
     }
@@ -1042,6 +1055,8 @@ impl Applier for WifiApplier {
                 for f in self.files(&inst) {
                     let _ = std::fs::remove_file(f);
                 }
+                self.drop_stale_links(&inst, &[]);
+                let _ = std::fs::remove_file(self.mlo_marker(&inst));
                 rep.applied(format!("Wi-Fi network {inst} stopped"));
             }
         }
@@ -1159,6 +1174,8 @@ impl Applier for WifiApplier {
                     ));
                 }
             }
+            let keep: Vec<PathBuf> = spec.files.iter().map(|f| f.0.clone()).collect();
+            self.drop_stale_links(&n.name, &keep);
             if restarted {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -2504,6 +2521,16 @@ mod tests {
         let p = pid(&l);
         let r = a.apply(&l.store).await.unwrap();
         assert_eq!(pid(&l), p, "no restart loop");
+        // links that are no longer asked for leave no configuration behind
+        l.iw.down.lock().unwrap().clear();
+        i.gen.mlo_links = Some("6g/21/160".into());
+        seg_wifi::update_network(&l.store, id, &i).await.unwrap();
+        a.apply(&l.store).await.unwrap();
+        assert!(l.dir.join("home-link1.conf").exists());
+        i.gen.mlo_links = Some(String::new());
+        seg_wifi::update_network(&l.store, id, &i).await.unwrap();
+        a.apply(&l.store).await.unwrap();
+        assert!(!l.dir.join("home-link1.conf").exists(), "a stale link configuration was left");
         assert!(
             r.warnings
                 .iter()

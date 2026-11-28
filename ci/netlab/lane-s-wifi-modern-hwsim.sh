@@ -276,7 +276,7 @@ if [ -x /usr/sbin/hostapd ] && ! grep -a eht_oper_chwidth /usr/sbin/hostapd >/de
   OLD=$(/usr/sbin/hostapd -v 2>&1 | head -1 || true)
   mkdir -p /opt/wifi/old; ln -sf /usr/sbin/hostapd /opt/wifi/old/hostapd; ln -sf /usr/sbin/hostapd_cli /opt/wifi/old/hostapd_cli
   PATH=/opt/wifi/old:$PATH nl_apply "$DB" || { cat "$NL_OUT"; nl_fail "apply with the old hostapd failed"; }
-  grep -q 'CONFIG_IEEE80211BE' "$NL_OUT" && grep -q 'AP MLD' "$NL_OUT" || { cat "$NL_OUT"; nl_fail "the apply does not name the missing hostapd build options"; }
+  grep -q 'CONFIG_IEEE80211BE' "$NL_OUT" && grep -q 'multi-link (MLO)' "$NL_OUT" || { cat "$NL_OUT"; nl_fail "the apply does not name the missing hostapd build options"; }
   nl_wait 30 ap_up || nl_fail "the old hostapd did not start the network"
   conf_has ieee80211ax=1
   ! grep -x ieee80211be=1 /var/lib/patronus/net/hostapd/home.conf >/dev/null || nl_fail "Wi-Fi 7 was configured on a hostapd without it"
