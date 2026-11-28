@@ -19,7 +19,18 @@ user arranges their own dashboard:
   decide what to show.
 - The numbers refresh in place every `dashboard.refresh_seconds` (not while
   editing, not on a hidden tab); widgets that update themselves (System
-  activity, Access point) are left alone.
+  activity, Access point) are left alone. The header line says "live, every
+  N s" with a **Pause** button, or "snapshot" when the setting is 0; a failed
+  re-read says so instead of leaving stale figures. The same key is the
+  "Live refresh" field of System > Display (`/api/system/ui` `refresh_secs`):
+  one setting, two views.
+- A CPU, memory or disk value over the Display thresholds (`ui.health_*_pct`)
+  turns its bar amber/red and a banner above the widgets names it.
+- On an access point the router-only widgets (firewall rules, DHCP leases,
+  VPN) do not exist (registry gate `Router` / `RouterAnyFeature`): the unit
+  forwards nothing of its own, so they are neither drawn nor offered.
+- Widgets are drawn with the shared ui-kit (panels, usage bars, badges,
+  sortable tables), so they follow light/dark like every other page.
 
 ### Where layouts live
 

@@ -127,8 +127,9 @@ def run(p, kind):
     if ap:
         page.goto(BASE + "/")
         page.wait_for_selector("#ap-uplink", state="visible", timeout=30000)
-        summ = page.inner_text("#ap-uplink-summary")
-        check(f"{kind}: dashboard uplink card (address + gateway)", "Address" in summ and "gateway" in summ, summ)
+        page.wait_for_function("() => document.querySelectorAll('#ap-uplink-kv dt').length > 0", timeout=30000)
+        summ = page.inner_text("#ap-uplink-kv")
+        check(f"{kind}: dashboard uplink card (address + main router)", "Address" in summ and "Main router" in summ, summ)
         page.goto(BASE + "/dhcp")
         check(f"{kind}: /dhcp explains the access point", "This unit is an access point" in page.content())
     page.goto(BASE + "/system")

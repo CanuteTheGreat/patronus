@@ -415,7 +415,10 @@ mod tests {
             .any(|w| w.id == "ap-uplink"));
         let ap = Layout::resolve(None, AP);
         for router_only in ["firewall-rules", "dhcp", "vpn"] {
-            assert!(!ids(&ap).contains(&router_only), "{router_only} on an access point");
+            assert!(
+                !ids(&ap).contains(&router_only),
+                "{router_only} on an access point"
+            );
         }
         assert!(d.is_default_for(ADMIN));
     }
