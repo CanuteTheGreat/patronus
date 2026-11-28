@@ -75,6 +75,11 @@ if [ -z "$C" ]; then
     docker cp ci/netlab/build-hostapd.sh "$C:/t/"
     docker exec "$C" bash /t/build-hostapd.sh "$HWSIM_HOSTAPD_SRC"
   fi
+  if [ "${HWSIM_PLAYWRIGHT:-0}" = 1 ]; then
+    # browser checks of the Wi-Fi page (ci/wifi-modern-page-e2e.py): Playwright + Firefox in /opt/pw, as ci/netlab/run.sh does
+    docker exec "$C" bash -c 'export DEBIAN_FRONTEND=noninteractive; apt-get install -y -qq --no-install-recommends python3-venv python3-pip >/dev/null && python3 -m venv /opt/pw && for i in 1 2 3; do /opt/pw/bin/pip install -q playwright && /opt/pw/bin/playwright install --with-deps firefox >/dev/null 2>&1 && exit 0; sleep 15; done; exit 1'
+    docker cp ci/wifi-modern-page-e2e.py "$C:/t/"
+  fi
   docker cp "$BIN/patronus-cli" "$C:/t/patronus"; docker cp "$BIN/patronus-web" "$C:/t/patronus-web"
   docker cp ci/netlab/lib.sh "$C:/t/"; for s in $SCENARIOS; do docker cp "ci/netlab/$s" "$C:/t/"; done
 fi
@@ -92,6 +97,6 @@ docker run --rm --net=host --pid=host --cap-add NET_ADMIN "$IMAGE" sh -c \
   "command -v iw >/dev/null || (apt-get update -qq >/dev/null && apt-get install -y -qq iw >/dev/null); for p in ${PHYS[*]}; do iw phy \$p set netns $PID || exit 1; done"
 echo "--- ${#PHYS[@]} radios (${PHYS[*]}) moved into $C"
 for s in $SCENARIOS; do
-  hwsim_run "$s" docker exec -e PATH="/opt/wifi/wrap:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" "$C" bash -c "cd /t; bash ./$s"
+  hwsim_run "$s" docker exec -e HWSIM_REQUIRE_UI="${HWSIM_REQUIRE_UI:-0}" -e PATH="/opt/wifi/wrap:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" "$C" bash -c "cd /t; bash ./$s"
 done
 hwsim_summary

@@ -121,7 +121,7 @@ expect_assoc() { # WHAT FLAG FREQ
   nl_wait 10 has_flag "$2" || { echo "station flags: $(sta_flags)"; nl_fail "$1: the association is not $2"; }
   sta_ip; nl_wait 15 sta_pings || nl_fail "$1: the station cannot ping the router"
 }
-conf_has() { local l; for l in "$@"; do grep -x -- "$l" /var/lib/patronus/net/hostapd/home.conf >/dev/null || { cat /var/lib/patronus/net/hostapd/home.conf | grep -v -E '^(sae_password|wpa_psk)'; nl_fail "hostapd.conf lacks: $l"; }; done; }
+conf_has() { local l; for l in "$@"; do grep -Fx -- "$l" /var/lib/patronus/net/hostapd/home.conf >/dev/null || { cat /var/lib/patronus/net/hostapd/home.conf | grep -v -E '^(sae_password|wpa_psk)'; nl_fail "hostapd.conf lacks: $l"; }; done; }
 
 # --- boot -------------------------------------------------------------------------------------------------------------
 CC=DE    # DE opens 6 GHz (LPI, 5945-6425 MHz) for an access point in wireless-regdb; US does not (passive scan)
@@ -164,10 +164,28 @@ assert g["standard"] == "ax" and g["width"] == 80 and not g["warnings"], g
 assert 1 <= g["bss_color"] <= 63, g
 PY
 nl_ok "API: the radio supports Wi-Fi 7, 2.4/5/6 GHz, 320 MHz, WPA3; hostapd has AX+BE+MLD; the network runs Wi-Fi 6 at 80 MHz"
+CLI=$(R "$P" --db "$DB" wifi-chan radios 2>&1) || { echo "$CLI"; nl_fail "patronus wifi-chan radios failed"; }
+grep -q "hostapd 2.12: Wi-Fi 6 yes, Wi-Fi 7 yes, multi-link yes" <<<"$CLI" && grep -q "Wi-Fi 7, 2.4 / 5 / 6 GHz, 320 MHz" <<<"$CLI" \
+  && grep -q "network home: ax at 80 MHz" <<<"$CLI" || { echo "$CLI"; nl_fail "the CLI does not show the radio, hostapd and the network's plan"; }
+nl_ok "CLI: patronus wifi-chan radios names the hostapd build, the radio's capabilities and what the network runs"
 conf_has hw_mode=a channel=36 ieee80211h=1 ieee80211ax=1 he_oper_chwidth=1 he_oper_centr_freq_seg0_idx=42 ieee80211w=2
 sta_start "$SECRET"
 expect_assoc "5 GHz Wi-Fi 6 at 80 MHz" HE 5180
 nl_ok "Wi-Fi 6 (802.11ax) at 80 MHz on 5 GHz: the station associated with HE on 5180 MHz with its own SAE password and pings the router"
+
+# --- 1b. ui: the Wi-Fi page in a real browser (Playwright + Firefox, HWSIM_PLAYWRIGHT=1) --------------------------------
+PW=/opt/pw
+if [ -x "$PW/bin/playwright" ] && [ -f /t/wifi-modern-page-e2e.py ]; then
+  out=$(C env BASE_URL="$NL_UI" E2E_USER=admin E2E_PASSWORD="$NL_PASS" E2E_RADIO="$IF1" E2E_EXPECT="Wi-Fi 7,320 MHz" \
+        E2E_SHOTS=/t/wifi-modern-shots "$PW/bin/python" /t/wifi-modern-page-e2e.py firefox 2>&1) && rc=0 || rc=$?
+  echo "$out" | sed 's/^/    /'
+  [ "$rc" = 0 ] || nl_fail "the Wi-Fi page browser check failed (exit $rc)"
+  nl_ok "Wi-Fi page in Firefox: the radio's capabilities are shown and the band/generation/width pickers offer only what it supports; 6 GHz forces WPA3 with the reason inline ($(grep -c '^PASS:' <<<"$out") checks)"
+elif [ "${HWSIM_REQUIRE_UI:-0}" = 1 ]; then
+  nl_fail "Playwright is not installed at $PW (wifi-hwsim.sh HWSIM_PLAYWRIGHT=1)"
+else
+  echo "    (no Playwright in this container: the browser check of the Wi-Fi page runs where HWSIM_PLAYWRIGHT=1)"
+fi
 
 # --- 2. ax160: 160 MHz on 5 GHz (36-64 holds radar channels: hostapd waits out the 60 s availability check) -----------
 if [ "$MLO" = Y ]; then
@@ -191,7 +209,7 @@ nl_ok "a WPA2 network on 6 GHz is refused (400) with the reason and what per-dev
 put_net '"band":"6g","channel":37,"width":160,"security":"wpa3","standard":"ax"'
 nl_wait 30 ap_up || nl_fail "hostapd did not come up on 6 GHz"
 conf_has op_class=134 channel=37 he_oper_chwidth=2 he_oper_centr_freq_seg0_idx=47 sae_pwe=1 ieee80211w=2
-grep -x "sae_password=$SECRET|mac=$SMAC" /var/lib/patronus/net/hostapd/home.conf >/dev/null || nl_fail "no per-MAC SAE password line on 6 GHz"
+grep -Fx "sae_password=$SECRET|mac=$SMAC" /var/lib/patronus/net/hostapd/home.conf >/dev/null || nl_fail "no per-MAC SAE password line on 6 GHz"
 sta_start "$SECRET"
 expect_assoc "6 GHz Wi-Fi 6E at 160 MHz" HE 6135
 nl_ok "Wi-Fi 6E: WPA3-SAE (H2E) on 6 GHz channel 37 at 160 MHz with the device's own MAC-bound password: associated with HE on 6135 MHz, pings"
@@ -220,7 +238,19 @@ nl_ok "Wi-Fi 7 (802.11be) at 320 MHz on 6 GHz: associated with EHT, the radio re
 
 # --- 6. mlo: one SSID over 5 GHz and 6 GHz -----------------------------------------------------------------------------------
 if [ "$MLO" != Y ]; then
-  echo "    (mlo=0 radios: the multi-link case runs in the mlo=1 pass)"
+  # radios without multi-link support: the same request must fall back to one link and say why
+  put_net '"band":"5g","channel":36,"width":80,"security":"wpa3","standard":"be","mlo_links":"6g/37/160","mlo_wait":10'
+  fell_back() { [ -f /var/lib/patronus/net/hostapd/home.mlo-failed ] && ap_up && [ ! -e /var/lib/patronus/net/hostapd/home-link1.conf ]; }
+  nl_wait 60 fell_back || { ls -la /var/lib/patronus/net/hostapd/; nl_fail "a radio without multi-link support did not fall back to one link"; }
+  gen_json
+  python3 - "$NL_OUT" <<'PY' || nl_fail "the API does not say that multi-link did not come up"
+import json, sys
+g = json.load(open(sys.argv[1]))["status"]["networks"][0]["generation"]
+assert g["standard"] == "be" and g["links"] == [] and any("did not come up" in w for w in g["warnings"]), g
+PY
+  sta_start "$SECRET"
+  expect_assoc "Wi-Fi 7 on one link after the multi-link fallback" EHT 5180
+  nl_ok "radios without multi-link: the network falls back to one Wi-Fi 7 link (EHT on 5180 MHz), the warning says multi-link did not come up, no retry loop"
 else
 put_net '"band":"5g","channel":36,"width":80,"security":"wpa3","standard":"be","mlo_links":"6g/37/160"'
 two_links() { [ "$(R ls "$CTRL" 2>/dev/null | grep -c "^${IF1}_link")" -ge 2 ] && R hostapd_cli -p "$CTRL" -i "${IF1}_link1" status 2>/dev/null | grep 'state=ENABLED' >/dev/null; }

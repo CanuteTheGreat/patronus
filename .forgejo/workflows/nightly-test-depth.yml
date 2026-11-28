@@ -212,6 +212,8 @@ jobs:
           NETLAB_IMAGE: ubuntu:24.04
           HWSIM_RADIOS: 4
           HWSIM_HOSTAPD_SRC: "2.12"
+          HWSIM_PLAYWRIGHT: 1
+          HWSIM_REQUIRE_UI: 1
           HWSIM_SCENARIOS: lane-s-wifi-modern-hwsim.sh
         run: ci/netlab/wifi-hwsim.sh
       - name: Wi-Fi 7 multi-link on simulated radios (mac80211_hwsim mlo=1)

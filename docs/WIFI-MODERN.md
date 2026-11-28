@@ -26,6 +26,13 @@ runs), `wireless.rs` + `wifichan.rs` (hostapd.conf, channel switch). Migration `
 Existing networks get `standard = auto`: after the upgrade a Wi-Fi 6 radio with a hostapd built with 802.11ax runs
 Wi-Fi 6 on the same channel and width.
 
+Where to see it: the Wi-Fi tab of the Segmentation page lists every radio ("Wi-Fi 7 · 2.4 / 5 / 6 GHz · 320 MHz ·
+WPA3", and per band what an access point can use or why not) and the hostapd build; the band, generation and width
+pickers of a network only offer what its radio supports, and choosing 6 GHz switches security to WPA3 with the reason
+shown next to it. Each network says what it runs ("Runs Wi-Fi 7 (802.11be) at 320 MHz") and every warning. On the
+box: `patronus wifi-chan radios` (add `--json` for the API's view); `patronus apply --dry-run` prints the hostapd
+configuration with the warnings as comments.
+
 ## Rules
 
 - **auto climbs, explicit never lies.** `auto` runs the newest generation both the radio (`HE Iftypes: AP`,

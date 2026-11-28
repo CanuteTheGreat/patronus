@@ -425,13 +425,42 @@ pub fn hostapd_caps_of(bin: &[u8], version: &str) -> HostapdCaps {
     }
 }
 
-/// Probe the installed hostapd (its binary only: nothing is executed, so a wrapper or a stuck binary
-/// cannot hang an apply). The version is the `hostapd vX.Y` banner compiled into it.
+/// Probe the installed hostapd: the build options from its binary; the version from a literal banner in it, else
+/// (hostapd prints `hostapd v%s`) from `hostapd -v`, run only when the binary is a real hostapd and given at most
+/// two seconds, so a wrapper script or a stuck binary cannot hang an apply.
 pub fn hostapd_caps(bin: &Path) -> HostapdCaps {
     let Ok(b) = std::fs::read(bin) else {
         return HostapdCaps::default();
     };
-    hostapd_caps_of(&b, &banner_version(&b))
+    let mut v = banner_version(&b);
+    if v.is_empty() && b.windows(11).any(|w| w == b"hostapd v%s") {
+        v = run_version(bin).unwrap_or_default();
+    }
+    hostapd_caps_of(&b, &v)
+}
+
+fn run_version(bin: &Path) -> Option<String> {
+    use std::io::Read;
+    let mut c = Command::new(bin)
+        .arg("-v")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+    for _ in 0..20 {
+        if c.try_wait().ok().flatten().is_some() {
+            let mut t = String::new();
+            c.stderr.take()?.read_to_string(&mut t).ok()?;
+            let mut o = String::new();
+            let _ = c.stdout.take()?.read_to_string(&mut o);
+            return Some(banner_version((t + &o).as_bytes()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let _ = c.kill();
+    let _ = c.wait();
+    None
 }
 
 /// `2.12` from the `hostapd v2.12` banner in a binary (empty when absent).
@@ -440,6 +469,9 @@ pub fn banner_version(bin: &[u8]) -> String {
     let Some(i) = bin.windows(k.len()).position(|w| w == k) else {
         return String::new();
     };
+    if !bin.get(i + k.len()).is_some_and(|c| c.is_ascii_digit()) {
+        return String::new();
+    }
     bin[i + k.len()..]
         .iter()
         .take_while(|c| c.is_ascii_alphanumeric() || **c == b'.' || **c == b'-')
@@ -599,6 +631,7 @@ mod tests {
         assert!(!hostapd_caps_of(b"", "").installed);
         assert_eq!(banner_version(b"\0hostapd v2.12\nUser space"), "2.12");
         assert_eq!(banner_version(b"#!/bin/sh\nsleep 300\n"), "");
+        assert_eq!(banner_version(b"\0hostapd v%s\n"), "", "the format string is not a version");
     }
 
     #[test]

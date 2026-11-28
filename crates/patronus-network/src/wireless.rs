@@ -1109,10 +1109,22 @@ impl Applier for WifiApplier {
             if was_running && !self.sup.up_to_date(&spec) {
                 self.debounce_wait(&stamp);
             }
-            let mut restarted = self.sup.ensure(&spec).await?;
+            // a hostapd that cannot start the links (no multi-link in the driver) may exit at once
+            let (mut restarted, refused) = match self.sup.ensure(&spec).await {
+                Ok(r) => (r, None),
+                Err(e) if !plan.links.is_empty() => {
+                    let m = e.to_string();
+                    (true, Some(format!("hostapd refused the links: {}", m.chars().take(200).collect::<String>())))
+                }
+                Err(e) => return Err(e),
+            };
             if restarted && !plan.links.is_empty() {
                 // the driver's multi-link support only shows by trying: every link must come up
-                if let Some(why) = self.mlo_failed(n, plan.links.len()).await {
+                let failed = match refused {
+                    Some(r) => Some(r),
+                    None => self.mlo_failed(n, plan.links.len()).await,
+                };
+                if let Some(why) = failed {
                     let _ = write_atomic(
                         &self.mlo_marker(&n.name),
                         &format!("{}\n{why}\n", n.gen.mlo_links),
@@ -2494,4 +2506,31 @@ mod tests {
             r.warnings
         );
     }
+    #[tokio::test]
+    async fn a_hostapd_that_refuses_the_links_falls_back_to_one_link() {
+        let l = lab().await;
+        *l.iw.phy.lock().unwrap() = Some(PHY_DE.into());
+        // a hostapd that exits at once when it is given more than one link configuration (no MLO in the driver)
+        let picky = l._d.path().join("picky-hostapd");
+        std::fs::write(&picky, "#!/bin/sh\n[ $# -gt 1 ] && exit 1\nsleep 300\n").unwrap();
+        std::fs::set_permissions(&picky, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        let a = WifiApplier { hcaps: Some(HostapdCaps::full()), ..l.apply.clone() }.binaries(
+            picky,
+            l._d.path().join("hostapd_cli"),
+            l._d.path().join("patronus"),
+        );
+        let mut i = NetworkInput { band: Some("5g".into()), channel: Some(36), country: Some("DE".into()), ..net_in("wpa3") };
+        i.chan.width = Some(80);
+        i.gen.mlo_links = Some("6g/37/160".into());
+        i.gen.mlo_wait = Some(5);
+        seg_wifi::create_network(&l.store, &i).await.unwrap();
+        let r = a.apply(&l.store).await.unwrap();
+        assert!(r.warnings.iter().any(|w| w.contains("does not support it")), "{r:?}");
+        assert!(a.sup.is_running(SVC_HOSTAPD, "home"), "one link runs");
+        assert!(!l.dir.join("home-link1.conf").exists());
+        let st = a.status(&l.store).await.unwrap();
+        let g = &st["networks"][0]["generation"];
+        assert!(g["links"].as_array().unwrap().is_empty() && g["warnings"][0].as_str().unwrap().contains("did not come up"), "{g}");
+    }
+
 }
