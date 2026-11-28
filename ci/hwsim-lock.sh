@@ -66,7 +66,9 @@ exit 0'
 # hwsim_module_busy: 0 (and the reason on stdout) when something may still be using the module, 1 when it is provably idle.
 hwsim_module_busy() {
   _d=${HWSIM_DOCKER:-docker}; _why=
-  _run=$($_d ps -q --filter name=hwsim 2>/dev/null | head -n 1)       # a running xbss-/bandsteer-/steer-/hwsim-<pid> container
+  # a running container of one of the four scripts (xbss-/bandsteer-/steer-hwsim-<pid>, hwsim-<pid>); NOT any container with
+  # "hwsim" in its name: a waiting CI job's own container is called after the job and often contains it
+  _run=$($_d ps -q --filter 'name=^/?(xbss-hwsim|bandsteer-hwsim|steer-hwsim|hwsim)-[0-9]+$' 2>/dev/null | head -n 1)
   if [ -n "$_run" ]; then echo "a running hwsim test container exists ($_run)"; return 0; fi
   _h=$($_d network inspect -f '{{index .Labels "patronus.hwsim-loader-holder"}}' "${HWSIM_LOADER_NAME:-patronus-hwsim-loader}" 2>/dev/null)
   if [ -n "$_h" ] && [ "$_h" != "$(hostname)" ] && $_d container inspect "$_h" >/dev/null 2>&1; then
@@ -98,8 +100,8 @@ hwsim_claim_module() {
   return 0; }
 # hwsim_loader_show: the recorded loader (who/where/when), or "none".
 hwsim_loader_show() {
-  ${HWSIM_DOCKER:-docker} network inspect -f '{{index .Labels "patronus.hwsim-loader-script"}}@{{index .Labels "patronus.hwsim-loader-holder"}} since {{index .Labels "patronus.hwsim-loader-time"}}' \
-    "${HWSIM_LOADER_NAME:-patronus-hwsim-loader}" 2>/dev/null || echo none; }
+  _l=$(${HWSIM_DOCKER:-docker} network inspect -f '{{index .Labels "patronus.hwsim-loader-script"}}@{{index .Labels "patronus.hwsim-loader-holder"}} since {{index .Labels "patronus.hwsim-loader-time"}}' \
+    "${HWSIM_LOADER_NAME:-patronus-hwsim-loader}" 2>/dev/null) && [ -n "$_l" ] && echo "$_l" || echo none; }
 hwsim_loader_clear() { ${HWSIM_DOCKER:-docker} network rm "${HWSIM_LOADER_NAME:-patronus-hwsim-loader}" >/dev/null 2>&1 || true; }
 # hwsim_load RADIOS SCRIPT: load the module and record the loader (a docker network, like the lock, so it outlives this
 # job container); sets HWSIM_LOADED=1. Returns non-zero when the module cannot be loaded (callers skip or fail).
