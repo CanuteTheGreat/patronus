@@ -2530,7 +2530,10 @@ mod tests {
         i.gen.mlo_links = Some(String::new());
         seg_wifi::update_network(&l.store, id, &i).await.unwrap();
         a.apply(&l.store).await.unwrap();
-        assert!(!l.dir.join("home-link1.conf").exists(), "a stale link configuration was left");
+        assert!(
+            !l.dir.join("home-link1.conf").exists(),
+            "a stale link configuration was left"
+        );
         assert!(
             r.warnings
                 .iter()
