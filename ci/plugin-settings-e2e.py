@@ -162,7 +162,12 @@ def run_combo(p, kind, width, scheme, mode):
                               color_scheme=scheme)
     page = ctx.new_page()
     errors = []
-    page.on("pageerror", lambda e: errors.append(str(e)))
+    # Firefox reports a fetch that is cut off by a reload/navigation (or by the plugin
+    # service restarting during a save) as a pageerror "NetworkError when attempting to
+    # fetch resource."; that is the browser aborting a request, not a script defect.
+    # Every other pageerror (TypeError, ReferenceError, ...) still fails the check.
+    page.on("pageerror", lambda e: errors.append(str(e))
+            if "NetworkError when attempting to fetch resource" not in str(e) else None)
     login(page)
     open_settings(page)
     page.add_style_tag(content="*{transition:none!important}")
