@@ -505,6 +505,13 @@ enum WifiChanCommands {
     },
     /// The channel of every network and the last decisions
     Status,
+    /// What every radio and the installed hostapd support (Wi-Fi 4-7, bands, widths, 6 GHz regulatory),
+    /// and what each network runs and why (docs/WIFI-MODERN.md)
+    Radios {
+        /// print JSON instead of text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -843,6 +850,7 @@ async fn main() -> anyhow::Result<()> {
                 commands::wifi::chan_recheck(cli.db, network).await?
             }
             WifiChanCommands::Status => commands::wifi::chan_status(cli.db).await?,
+            WifiChanCommands::Radios { json } => commands::wifi::radios(cli.db, json).await?,
         },
 
         #[cfg(feature = "wifi-ap")]

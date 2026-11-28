@@ -39,4 +39,4 @@ CONFIG_DEBUG_FILE=y'
 mkdir -p "$PREFIX"
 install -m755 "$W/hostapd-$V/hostapd/hostapd" "$W/hostapd-$V/hostapd/hostapd_cli" "$PREFIX/"
 install -m755 "$W/wpa_supplicant-$V/wpa_supplicant/wpa_supplicant" "$W/wpa_supplicant-$V/wpa_supplicant/wpa_cli" "$PREFIX/"
-"$PREFIX/hostapd" -v 2>&1 | head -1
+echo "built: $("$PREFIX/hostapd" -v 2>&1 | head -1 || true)"   # hostapd -v exits 1

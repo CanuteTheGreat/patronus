@@ -187,3 +187,82 @@ pub async fn chan_status(db: Option<PathBuf>) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// `patronus wifi-chan radios`: radio + hostapd capabilities and every network's effective plan.
+#[cfg(feature = "wifi-ap")]
+pub async fn radios(db: Option<PathBuf>, as_json: bool) -> anyhow::Result<()> {
+    use patronus_network::radio;
+    use patronus_network::wireless::WifiApplier;
+    let store = apply::open_store(db.as_deref()).await?;
+    let a = WifiApplier::default();
+    let h = a.hostapd_caps();
+    let radios = radio::radios();
+    let nets = seg_wifi::list_networks(&store)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut plans = Vec::new();
+    for n in &nets {
+        // reading a network's radio sets its country's regulatory domain first (as an apply does)
+        plans.push(match a.plan_of(n, &h) {
+            Ok(p) => serde_json::json!({"network": n.name, "plan": p}),
+            Err(e) => serde_json::json!({"network": n.name, "error": e.to_string()}),
+        });
+    }
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({"hostapd": h, "radios": radios, "networks": plans}))?
+        );
+        return Ok(());
+    }
+    if h.installed {
+        println!(
+            "hostapd {}: Wi-Fi 6 {}, Wi-Fi 7 {}, multi-link {}",
+            h.version,
+            if h.ax { "yes" } else { "no" },
+            if h.be { "yes" } else { "no" },
+            if h.mld { "yes" } else { "no" }
+        );
+    } else {
+        println!("hostapd: not installed");
+    }
+    for r in &radios {
+        println!("{} ({}): {}", r.phy, r.ifaces.join(", "), r.supports.join(", "));
+        for o in &r.offer {
+            match &o.reason {
+                None => println!(
+                    "  {}: up to {} at {} MHz",
+                    o.band,
+                    o.max_standard,
+                    o.widths.iter().max().unwrap_or(&20)
+                ),
+                Some(why) => println!("  {}: not available: {why}", o.band),
+            }
+        }
+    }
+    for p in &plans {
+        let name = p["network"].as_str().unwrap_or("");
+        if let Some(e) = p["error"].as_str() {
+            println!("network {name}: NOT STARTED: {e}");
+            continue;
+        }
+        let pl = &p["plan"];
+        println!(
+            "network {name}: {} at {} MHz{}",
+            pl["standard"].as_str().unwrap_or(""),
+            pl["width"],
+            pl["links"]
+                .as_array()
+                .filter(|l| !l.is_empty())
+                .map(|l| format!(", multi-link +{} link(s)", l.len()))
+                .unwrap_or_default()
+        );
+        for w in pl["warnings"].as_array().into_iter().flatten() {
+            println!("  warning: {}", w.as_str().unwrap_or(""));
+        }
+        for w in pl["notes"].as_array().into_iter().flatten() {
+            println!("  {}", w.as_str().unwrap_or(""));
+        }
+    }
+    Ok(())
+}

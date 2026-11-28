@@ -191,6 +191,16 @@ that are not finished are listed separately under
   disconnect. Proven on the simulated radios of mac80211_hwsim; the real
   measurement (neighbours heard, airtime) depends on the radio's driver.
   [C84]
+- Wi-Fi 6, 6E and 7 on the access point: each network runs the newest
+  generation its radio and the installed hostapd really support (read from
+  `iw phy` and from hostapd's build), on 2.4, 5 or 6 GHz, at up to 160 MHz
+  (320 MHz on 6 GHz with Wi-Fi 7), and a Wi-Fi 7 network can span 5 and 6 GHz
+  as one multi-link access point. 6 GHz is WPA3-only with per-device SAE
+  passwords, stays off where the regulatory database does not open it (with
+  the reason shown), and the UI offers only what the radio supports. Proven
+  with real associations on the simulated radios of mac80211_hwsim (hostapd
+  2.12 built with Gentoo's options); no real Wi-Fi 6E or Wi-Fi 7 card has been
+  tested yet (docs/WIFI-MODERN.md). [C1370]
 - The web UI answers where a router's UI is expected, on the standard ports
   of every tier: `https://router-address` (HTTPS on 443) and
   `http://router-address` (port 80, which only redirects to HTTPS and serves

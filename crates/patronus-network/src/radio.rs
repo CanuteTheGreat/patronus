@@ -22,6 +22,24 @@ pub struct Radio {
     pub caps: RadioCaps,
     /// one-line labels for the UI: "Wi-Fi 6E", "160 MHz", ...
     pub supports: Vec<String>,
+    /// per band: what the UI may offer (generation, widths) and why a band cannot be used
+    pub offer: Vec<BandOffer>,
+}
+
+/// What a network on one band of a radio can be configured with (the UI's pickers are limited to this).
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+pub struct BandOffer {
+    pub band: String,
+    /// an access point can run here now
+    pub ap: bool,
+    /// newest generation: n | ac | ax | be
+    pub max_standard: String,
+    /// generations to offer, oldest first (6 GHz: ax/be only)
+    pub standards: Vec<String>,
+    /// channel widths (MHz) at the newest generation
+    pub widths: Vec<i64>,
+    /// why `ap` is false
+    pub reason: Option<String>,
 }
 
 /// One 20 MHz channel of a band, as the regulatory domain in force allows it.
@@ -279,6 +297,47 @@ impl RadioCaps {
             .find(|c| c.channel == ch)
             .map(|c| c.usable)
     }
+    /// Per band: what a network there can be configured with.
+    pub fn offer(&self) -> Vec<BandOffer> {
+        self.bands
+            .iter()
+            .map(|b| {
+                let band = b.band.as_str();
+                let max = self.max_standard(band);
+                let mw = self.max_width(band, max);
+                let standards: Vec<String> = STANDARDS
+                    .iter()
+                    .filter(|s| std_rank(s) <= std_rank(max))
+                    .filter(|s| !(band == "2g" && **s == "ac"))
+                    .filter(|s| band != "6g" || matches!(**s, "ax" | "be"))
+                    .map(|s| s.to_string())
+                    .collect();
+                let widths = patronus_config::seg_wifi_chan::band_widths(band)
+                    .iter()
+                    .copied()
+                    .filter(|w| *w <= mw)
+                    .collect();
+                let ap = self.ap_band(band);
+                let reason = (!ap).then(|| {
+                    if !self.ap {
+                        "this radio has no access point mode".to_string()
+                    } else if band == "6g" && !b.he {
+                        "no 802.11ax access point capability on 6 GHz".to_string()
+                    } else {
+                        "the regulatory domain in force allows no access point channel here (set the network's country; e.g. US marks 6 GHz passive-scan in wireless-regdb)".to_string()
+                    }
+                });
+                BandOffer {
+                    band: band.to_string(),
+                    ap,
+                    max_standard: max.to_string(),
+                    standards,
+                    widths,
+                    reason,
+                }
+            })
+            .collect()
+    }
     /// One-line labels: generation (with 6E), bands, widest channel, WPA3, and why 6 GHz is unavailable.
     pub fn supports(&self) -> Vec<String> {
         if !self.ap {
@@ -435,6 +494,7 @@ pub fn radios() -> Vec<Radio> {
             ap: caps.ap,
             bands: caps.bands.iter().map(|b| b.band.clone()).collect(),
             supports: caps.supports(),
+            offer: caps.offer(),
             caps,
         });
     }
@@ -488,6 +548,14 @@ mod tests {
             c.supports(),
             ["Wi-Fi 7", "2.4 / 5 / 6 GHz", "320 MHz", "WPA3"]
         );
+        let o = c.offer();
+        let six = o.iter().find(|x| x.band == "6g").unwrap();
+        assert!(six.ap && six.reason.is_none());
+        assert_eq!(six.standards, ["ax", "be"]);
+        assert_eq!(six.widths, [20, 40, 80, 160, 320]);
+        let two = o.iter().find(|x| x.band == "2g").unwrap();
+        assert_eq!(two.standards, ["n", "ax", "be"]);
+        assert_eq!(two.widths, [20, 40]);
     }
 
     #[test]
@@ -496,6 +564,8 @@ mod tests {
         assert_eq!(c.usable("6g", 37), Some(false));
         assert_eq!(c.usable("5g", 36), Some(false), "no IR before a country is set");
         assert!(!c.ap_band("6g"));
+        let six = c.offer().into_iter().find(|x| x.band == "6g").unwrap();
+        assert!(!six.ap && six.reason.unwrap().contains("regulatory"));
         assert!(
             c.supports().iter().any(|s| s.contains("6 GHz blocked")),
             "{:?}",
@@ -512,6 +582,8 @@ mod tests {
         assert_eq!(c.max_width("5g", "ac"), 160, "hwsim's VHT160");
         assert_eq!(c.max_width("5g", "n"), 40);
         assert_eq!(c.supports()[0], "Wi-Fi 5");
+        let five = c.offer().into_iter().find(|x| x.band == "5g").unwrap();
+        assert_eq!(five.standards, ["n", "ac"]);
     }
 
     #[test]

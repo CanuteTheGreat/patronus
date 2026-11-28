@@ -22,7 +22,7 @@
     // ---- automatic channel: why this channel, history, settings ---------------------
     const CHAN_FIELDS = [
         ['chanlist', 'Candidate channels (empty = the band default)', 'text'],
-        ['width', 'Width (MHz: 20, 40, 80 on 5 GHz)', 'number'],
+        ['width', 'Width (MHz: 20, 40; 80 and 160 on 5/6 GHz; 320 on 6 GHz, Wi-Fi 7)', 'number'],
         ['recheck_time', 'Nightly re-check at (HH:MM, empty = never)', 'text'],
         ['hysteresis', 'Move only if better by this many % ...', 'number'],
         ['min_gain', '... and by this many score points', 'number'],
@@ -36,6 +36,82 @@
         ['min_signal', 'Ignore neighbours weaker than (dBm)', 'number'],
         ['history', 'History entries kept', 'number'],
     ];
+    // ---- Wi-Fi generation (docs/WIFI-MODERN.md): what the radio supports, limited pickers ----------
+    const STD_NAMES = {auto: 'automatic (newest the radio and hostapd support)', n: 'Wi-Fi 4 (802.11n)', ac: 'Wi-Fi 5 (802.11ac)', ax: 'Wi-Fi 6/6E (802.11ax)', be: 'Wi-Fi 7 (802.11be)'};
+    const BAND_NAMES = {'2g': '2.4 GHz', '5g': '5 GHz', '6g': '6 GHz'};
+    function radioOf(st, ifname) { return (st.radios || []).find(r => (r.ifaces || []).includes(ifname)); }
+    function offerOf(st, ifname, band) { const r = radioOf(st, ifname); return r ? (r.offer || []).find(o => o.band === band) : null; }
+    function optSel(name, opts, cur) { // opts: [[value, label, disabled]]
+        const s = document.createElement('select'); s.name = name;
+        for (const [v, l, dis] of opts) { const o = document.createElement('option'); o.value = v; o.textContent = l; if (dis) o.disabled = true; s.appendChild(o); }
+        if (cur !== undefined && opts.some(x => String(x[0]) === String(cur) && !x[2])) s.value = String(cur);
+        return s;
+    }
+    function radiosPanel(root, st) {
+        const radios = st.radios || [];
+        root.appendChild(mk('h3', {text: 'Radios'}));
+        if (!radios.length) { root.appendChild(mk('p', {class: 'empty', text: 'No Wi-Fi radio found on this router.'})); return; }
+        const h = st.hostapd || {};
+        if (st.hostapd_installed !== false) root.appendChild(mk('div', {class: 'seg-note', id: 'wifi-hostapd', text: 'hostapd ' + (h.version || '') + ': Wi-Fi 6 ' + (h.ax ? 'yes' : 'no (built without CONFIG_IEEE80211AX)') + ', Wi-Fi 7 ' + (h.be ? 'yes' : 'no (needs hostapd 2.11+ with CONFIG_IEEE80211BE)') + ', multi-link ' + (h.mld ? 'yes' : 'no') + '.'}));
+        const t = mk('table', {class: 'lan', id: 'seg-wifi-radios-table'});
+        t.appendChild(mk('thead', {}, (() => { const tr = document.createElement('tr'); for (const x of ['Radio', 'Interfaces', 'Supports', 'Bands an access point can use']) tr.appendChild(mk('th', {text: x})); return tr; })()));
+        const b = document.createElement('tbody');
+        for (const r of radios) {
+            const tr = document.createElement('tr');
+            tr.appendChild(mk('td', {class: 'mono', text: r.phy}));
+            tr.appendChild(mk('td', {text: (r.ifaces || []).join(', ') || '(no interface)'}));
+            tr.appendChild(mk('td', {class: 'wifi-supports', text: (r.supports || []).join(' · ')}));
+            const bd = document.createElement('td');
+            for (const o of (r.offer || [])) {
+                const line = mk('div', {text: BAND_NAMES[o.band] + ': ' + (o.ap ? 'up to ' + STD_NAMES[o.max_standard] + ', ' + Math.max(...o.widths) + ' MHz' : 'not available: ' + o.reason)});
+                if (!o.ap) line.className = 'warn';
+                bd.appendChild(line);
+            }
+            tr.appendChild(bd); b.appendChild(tr);
+        }
+        t.appendChild(b); root.appendChild(mk('div', {class: 'seg-wrap'}, t));
+    }
+    // band / generation / width pickers of one radio, kept consistent with each other and with what it supports
+    function genPickers(f, st, ifIn, cur, notes) {
+        const wrap = mk('div', {class: 'wifi-gen-pickers'});
+        const note = mk('div', {class: 'seg-note', id: 'wifi-gen-note'});
+        const render = () => {
+            const keep = {band: (f.elements['band'] || {}).value || cur.band, standard: (f.elements['standard'] || {}).value || cur.standard, width: (f.elements['width'] || {}).value || cur.width};
+            wrap.innerHTML = '';
+            const r = radioOf(st, ifIn.value);
+            const offers = r ? (r.offer || []) : [];
+            const bands = offers.length ? offers.map(o => [o.band, BAND_NAMES[o.band] + (o.ap ? '' : ' (not available)'), !o.ap]) : [['2g', '2.4 GHz'], ['5g', '5 GHz'], ['6g', '6 GHz']];
+            const bs = optSel('band', bands, keep.band); wrap.appendChild(field('Band', bs));
+            const o = offers.find(x => x.band === bs.value);
+            const stds = [['auto', STD_NAMES.auto]].concat((o ? o.standards : ['n', 'ac', 'ax', 'be']).map(x => [x, STD_NAMES[x]]));
+            const ss = optSel('standard', stds, keep.standard); wrap.appendChild(field('Wi-Fi generation', ss));
+            const widths = o ? o.widths : [20, 40, 80, 160, 320];
+            const ws = optSel('width', widths.map(w => [w, w + ' MHz']), keep.width); wrap.appendChild(field('Channel width', ws));
+            note.textContent = r ? ('This radio supports: ' + (r.supports || []).join(' · ') + '.') : 'This interface is not a known radio: every choice is offered, the router checks it when the network starts.';
+            if (bs.value === '6g') {
+                note.textContent += ' ' + notes.six_ghz;
+                const sec = f.elements['security']; if (sec) { sec.value = 'wpa3'; for (const opt of sec.options) opt.disabled = opt.value !== 'wpa3'; }
+            } else { const sec = f.elements['security']; if (sec) for (const opt of sec.options) opt.disabled = false; }
+            bs.onchange = render; ss.onchange = render;
+        };
+        ifIn.addEventListener('change', render);
+        f.appendChild(wrap); f.appendChild(note);
+        return render;
+    }
+    const GEN_FIELDS = [
+        ['bss_color', 'BSS colour (1-63, 0 = automatic)', 'number'],
+        ['discovery', '6 GHz discovery frames (auto, probe, fils, off)', 'text'],
+        ['discovery_interval', 'Discovery interval (time units, 1-20)', 'number'],
+        ['mlo_links', 'Wi-Fi 7 multi-link: extra links band/channel/width (e.g. 6g/37/320), empty = one link', 'text'],
+        ['mlo_wait', 'Seconds the links get to come up before falling back to one link', 'number'],
+    ];
+    function genBox(box, run) {
+        const g = run && run.generation; if (!g) return;
+        if (g.error) { box.appendChild(mk('div', {class: 'seg-note warn wifi-gen-error', text: 'Not running: ' + g.error})); return; }
+        box.appendChild(mk('div', {class: 'wifi-gen', text: 'Runs ' + g.standard_name + ' at ' + g.width + ' MHz' + (g.links && g.links.length ? ', multi-link with ' + g.links.map(l => BAND_NAMES[l.band] + ' ' + l.channel + '/' + l.width).join(', ') : '') + (g.bss_color ? ', BSS colour ' + g.bss_color : '') + (g.discovery ? ', 6 GHz discovery by ' + g.discovery.kind : '') + '.'}));
+        for (const w of (g.warnings || [])) box.appendChild(mk('div', {class: 'seg-note warn', text: w}));
+        for (const n of (g.notes || [])) box.appendChild(mk('div', {class: 'seg-wide', text: n}));
+    }
     function chanPanels(root, d, st) {
         for (const n of d.networks) {
             const run = (st.networks || []).find(x => x.network === n.name);
@@ -43,6 +119,7 @@
             const box = mk('div', {class: 'seg-note', id: 'wifi-chan-' + n.id});
             box.appendChild(mk('strong', {text: n.name + ': ' + (n.channel === 'auto' ? 'automatic channel' : 'fixed channel ' + n.channel)}));
             const c = run && run.channel ? run.channel : null;
+            genBox(box, run);
             if (n.channel === 'auto') {
                 const sx = info && info.state;
                 box.appendChild(mk('div', {text: 'On channel ' + ((c && c.channel) || (sx && sx.channel) || '?') + ' at ' + (n.width + ' MHz') + '. ' + ((sx && sx.reason) || 'Not measured yet: it is measured when the radio starts.')}));
@@ -61,7 +138,7 @@
             }
             if (CAN_MODIFY) {
                 if (n.channel === 'auto') box.appendChild(btn('Re-check now', '', async () => { const r = await segCall('POST', '/api/segmentation/wifi/networks/' + n.id + '/recheck-channel'); if (r) { alert('Re-check requested: it runs within seconds and takes a few minutes. Open this page again to see the result.'); wifiLoad(); } }));
-                box.appendChild(btn('Channel settings', '', () => chanForm(box, n)));
+                box.appendChild(btn('Channel and generation settings', '', () => chanForm(box, n)));
             }
             root.appendChild(box);
         }
@@ -70,14 +147,18 @@
         if (box.querySelector('form')) return;
         const f = document.createElement('form'); f.className = 'lan-form';
         f.appendChild(field('Channel (auto or a number)', inp('channel', 'auto', String(n.channel))));
-        for (const [k, label, type] of CHAN_FIELDS) { const i = inp(k, '', n[k === 'recheck_time' ? 'recheck_time' : k]); if (type === 'number') i.type = 'number'; f.appendChild(field(label, i)); }
+        const sec = sel('security', ['wpa2', 'wpa2_wpa3', 'wpa3'], n.security); f.appendChild(field('Security', sec));
+        const ifIn = inp('ifname', '', n.ifname); ifIn.type = 'hidden'; f.appendChild(ifIn);
+        const st = (WIFI && WIFI.status) || {};
+        genPickers(f, st, ifIn, {band: n.band, standard: n.standard, width: n.width}, WIFI.notes)();
+        for (const [k, label, type] of CHAN_FIELDS.filter(x => x[0] !== 'width').concat(GEN_FIELDS)) { const i = inp(k, '', n[k]); if (type === 'number') i.type = 'number'; f.appendChild(field(label, i)); }
         const rc = document.createElement('input'); rc.type = 'checkbox'; rc.name = 'recheck'; rc.checked = !!n.recheck; f.appendChild(field('Re-check every night', rc));
         f.appendChild(mk('button', {class: 'btn btn-primary', type: 'submit', text: 'Save channel settings'}));
         f.onsubmit = async (ev) => {
             ev.preventDefault();
-            const b = {name: n.name, ifname: n.ifname, ssid: n.ssid, band: n.band, country: n.country, security: n.security, segment: n.segment, unknown_policy: n.unknown_policy, enabled: n.enabled};
+            const b = {name: n.name, ifname: n.ifname, ssid: n.ssid, band: f.elements['band'].value, country: n.country, security: f.elements['security'].value, segment: n.segment, unknown_policy: n.unknown_policy, enabled: n.enabled, standard: f.elements['standard'].value, width: Number(f.elements['width'].value)};
             const ch = f.elements['channel'].value.trim(); b.channel = (ch === 'auto' || ch === '') ? 'auto' : Number(ch);
-            for (const [k, , type] of CHAN_FIELDS) { const v = f.elements[k].value; b[k] = type === 'number' ? Number(v) : v; }
+            for (const [k, , type] of CHAN_FIELDS.filter(x => x[0] !== 'width').concat(GEN_FIELDS)) { const v = f.elements[k].value; b[k] = type === 'number' ? Number(v) : v; }
             b.recheck = f.elements['recheck'].checked;
             const r = await segCall('PUT', '/api/segmentation/wifi/networks/' + n.id, b); if (r) wifiLoad();
             return false;
@@ -95,6 +176,7 @@
         // issued secret (shown once)
         root.appendChild(mk('div', {id: 'wifi-issued'}));
 
+        radiosPanel(root, st);
         root.appendChild(mk('h3', {text: 'Networks'}));
         const nt = mk('table', {class: 'lan', id: 'seg-wifi-networks-table'});
         nt.appendChild(mk('thead', {}, (() => { const tr = document.createElement('tr'); for (const h of ['Name', 'SSID', 'Radio', 'Band / channel', 'Security', 'Unknown devices', 'State', '']) tr.appendChild(mk('th', {text: h})); return tr; })()));
@@ -105,7 +187,9 @@
             const tr = document.createElement('tr');
             const liveCh = run && run.channel ? run.channel.channel : null;
             const chText = n.channel === 'auto' ? 'auto' + (liveCh ? ' (channel ' + liveCh + ')' : ' (not measured yet)') : String(n.channel);
-            for (const v of [n.name, n.ssid, n.ifname, n.band + ' / ' + chText, n.security, n.unknown_policy]) {
+            const g = run && run.generation;
+            const genText = g && !g.error ? ', ' + g.standard_name.split(' (')[0] + ', ' + g.width + ' MHz' : '';
+            for (const v of [n.name, n.ssid, n.ifname, (BAND_NAMES[n.band] || n.band) + ' / ' + chText + genText, n.security, n.unknown_policy]) {
                 const td = mk('td', {text: v});
                 if (v === n.security && n.restart_on_credential_change) td.appendChild(mk('span', {class: 'seg-wide', text: ' (credential changes restart the Wi-Fi)'}));
                 tr.appendChild(td);
@@ -137,15 +221,15 @@
             f.appendChild(field('Name', inp('name', 'home', undefined, true)));
             f.appendChild(field('SSID', inp('ssid', 'HomeNet', undefined, true)));
             f.appendChild(field('Radio interface', ifIn)); f.appendChild(dl);
-            f.appendChild(field('Band', sel('band', ['2g', '5g'], '2g')));
+            f.appendChild(field('Security', sel('security', ['wpa2', 'wpa2_wpa3', 'wpa3'], 'wpa2')));
+            genPickers(f, st, ifIn, {band: '2g', standard: 'auto', width: 20}, d.notes)();
             f.appendChild(field('Channel (auto or a number)', inp('channel', 'auto', 'auto')));
             f.appendChild(field('Country', inp('country', 'US', 'US')));
-            f.appendChild(field('Security', sel('security', ['wpa2', 'wpa2_wpa3', 'wpa3'], 'wpa2')));
             const segSel = document.createElement('select'); segSel.name = 'segment'; for (const s of (SEG ? SEG.segments : [])) { const o = document.createElement('option'); o.value = s.segment; o.textContent = s.segment; segSel.appendChild(o); }
             f.appendChild(field('Joins segment (bridge)', segSel));
             f.appendChild(field('Unknown devices', sel('unknown_policy', ['reject', 'enrol'], 'reject')));
             f.appendChild(mk('button', {class: 'btn btn-primary', type: 'submit', text: 'Add network'}));
-            f.onsubmit = async (ev) => { ev.preventDefault(); const b = formBody(f); if (b.channel && b.channel !== 'auto') b.channel = Number(b.channel); const r = await segCall('POST', '/api/segmentation/wifi/networks', b); if (r) wifiLoad(); return false; };
+            f.onsubmit = async (ev) => { ev.preventDefault(); const b = formBody(f); if (b.channel && b.channel !== 'auto') b.channel = Number(b.channel); if (b.width) b.width = Number(b.width); const r = await segCall('POST', '/api/segmentation/wifi/networks', b); if (r) wifiLoad(); return false; };
             root.appendChild(f);
         }
 

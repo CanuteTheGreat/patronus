@@ -65,6 +65,8 @@ impl LanManager {
                 "pending": "A device created without a MAC joins with its own passphrase once; the router learns its MAC at that join and binds the passphrase to it. Unused passphrases expire after 24 hours.",
                 "unknown": "'enrol' lets unknown devices join with a shared secret that grants nothing: they get an address and reach DHCP/DNS/ping only (quarantine) until you approve them.",
                 "auto_channel": "An automatic channel is measured when the radio starts (every channel is scanned the same way, our own traffic is subtracted, neighbouring access points cost points) and re-checked every night: the radio only moves when another channel is clearly and repeatedly better, by a channel switch announcement so connected devices follow without disconnecting. A driver without that feature moves by restarting the radio.",
+                "six_ghz": patronus_config::seg_wifi_gen::SIX_GHZ_SECURITY,
+                "generation": "The generation (Wi-Fi 4 to 7), the bands and the channel widths offered for a network are what its radio reports it can do as an access point, and what the installed hostapd was built with; 'automatic' runs the newest both support. Anything asked for above that runs at the best supported level with a warning that names the missing piece.",
                 "random_mac": "A phone that uses a new random MAC on every connection cannot be bound to a MAC: turn on 'fixed' or 'private per network' in its Wi-Fi settings.",
             },
         }))

@@ -171,7 +171,7 @@ jobs:
     # package carries the module; the job FAILS (never skips) if the module or a scenario is missing, and its log ends
     # with a "HWSIM SUMMARY: ... executed=N" line.
     runs-on: hwsim-x86_64
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       CARGO_BUILD_JOBS: 4
       CARGO_PROFILE_DEV_DEBUG: 0
@@ -203,4 +203,15 @@ jobs:
         env:
           NETLAB_BIN_DIR: target/debug
           NETLAB_IMAGE: ubuntu:24.04
+        run: ci/netlab/wifi-hwsim.sh
+      - name: Wi-Fi 6/6E/7 and multi-link on simulated radios (hostapd 2.12 with the Gentoo ebuild's options)
+        # a second load of the module with mlo=1 (multi-link radios); Debian/Ubuntu hostapd has no 802.11be, so
+        # ci/netlab/build-hostapd.sh builds the pinned upstream release the way net-wireless/hostapd does
+        env:
+          NETLAB_BIN_DIR: target/debug
+          NETLAB_IMAGE: ubuntu:24.04
+          HWSIM_MODPARAMS: mlo=1
+          HWSIM_RADIOS: 4
+          HWSIM_HOSTAPD_SRC: "2.12"
+          HWSIM_SCENARIOS: lane-s-wifi-modern-hwsim.sh
         run: ci/netlab/wifi-hwsim.sh

@@ -12,6 +12,7 @@
 //! - 6 GHz discovery frames are sent only when the driver advertises them;
 //! - multi-link (MLO) needs Wi-Fi 7 on every link, a hostapd with AP MLD support, and finally the driver,
 //!   which `iw` does not report: the applier tries it and falls back to one link (`mlo_failed`).
+//!
 //! With no radio information (no `iw`, a radio that is not there yet) nothing is narrowed and `auto` keeps
 //! the pre-Wi-Fi 6 behaviour (HT, plus VHT at 80 MHz and wider on 5 GHz).
 
