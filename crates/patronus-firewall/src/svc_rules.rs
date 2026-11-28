@@ -255,6 +255,66 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- DHCPv6 relay: clients' messages (ff02::1:2 or unicast, udp/547) on
+    // each client-facing interface; the Relay-reply of each server (udp/547
+    // from its address, also when the Relay-forward went out as multicast and
+    // conntrack therefore cannot match the answer)
+    let d6 = settings(store, "dhcp6-relay").await?;
+    if on(&d6, "enabled") {
+        let rows = sqlx::query(
+            "SELECT iface, server, upstream FROM dhcp6_relay_rules WHERE enabled = 1",
+        )
+        .fetch_all(store.pool()?)
+        .await
+        .unwrap_or_default();
+        let mut seen: Vec<String> = Vec::new();
+        for r in rows {
+            let (iface, server, upstream): (String, String, Option<String>) =
+                (r.get(0), r.get(1), r.get(2));
+            let Ok(server) = server.parse::<std::net::Ipv6Addr>() else {
+                continue;
+            };
+            for d in devices(store, &iface).await {
+                let line = format!(
+                    "add rule {t} input iifname \"{d}\" meta nfproto ipv6 udp dport 547 accept comment \"DHCPv6 relay clients\""
+                );
+                if !seen.contains(&line) {
+                    seen.push(line.clone());
+                    out.filter.push(line);
+                }
+            }
+            if server.is_multicast() {
+                continue;
+            }
+            let ups = devices(store, upstream.as_deref().unwrap_or("")).await;
+            if ups.is_empty() {
+                out.filter.push(format!(
+                    "add rule {t} input ip6 saddr {server} udp sport 547 udp dport 547 accept comment \"DHCPv6 relay server\""
+                ));
+            }
+            for u in ups {
+                out.filter.push(format!(
+                    "add rule {t} input iifname \"{u}\" ip6 saddr {server} udp sport 547 udp dport 547 accept comment \"DHCPv6 relay server\""
+                ));
+            }
+        }
+        // multicast rules: any server on the upstream link may answer
+        let mrows = sqlx::query(
+            "SELECT upstream FROM dhcp6_relay_rules WHERE enabled = 1 AND lower(server) = 'ff02::1:2'",
+        )
+        .fetch_all(store.pool()?)
+        .await
+        .unwrap_or_default();
+        for r in mrows {
+            let up: Option<String> = r.get(0);
+            for u in devices(store, up.as_deref().unwrap_or("")).await {
+                out.filter.push(format!(
+                    "add rule {t} input iifname \"{u}\" udp sport 547 udp dport 547 accept comment \"DHCPv6 relay servers\""
+                ));
+            }
+        }
+    }
+
     // --- NAT64
     let n = settings(store, "nat64").await?;
     if on(&n, "enabled") {
@@ -735,6 +795,38 @@ mod tests {
             "never on the WAN: {f}"
         );
         put(&s, "mdns.enabled", "0").await;
+        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
+    }
+
+    #[tokio::test]
+    async fn dhcp6_relay_opens_547_for_clients_and_the_servers_replies_only() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth0", Some("wan")).await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        put(&s, "dhcp6-relay.enabled", "1").await;
+        sqlx::query("INSERT INTO dhcp6_relay_rules (iface, server, upstream, enabled, updated_at) VALUES ('@lan', '2001:db8:1::53', NULL, 1, 0), ('@lan', 'ff02::1:2', '@wan', 1, 0), ('eth2', 'fe80::53', 'eth3', 1, 0), ('eth4', 'not-an-ip', NULL, 1, 0), ('eth5', '2001:db8:1::99', NULL, 0, 0)")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(f.contains("input iifname \"eth1\" meta nfproto ipv6 udp dport 547"), "{f}");
+        assert!(f.contains("input iifname \"eth2\" meta nfproto ipv6 udp dport 547"), "{f}");
+        assert!(
+            f.contains("input ip6 saddr 2001:db8:1::53 udp sport 547 udp dport 547 accept"),
+            "{f}"
+        );
+        assert!(
+            f.contains("input iifname \"eth3\" ip6 saddr fe80::53 udp sport 547 udp dport 547 accept"),
+            "{f}"
+        );
+        assert!(
+            f.contains("input iifname \"eth0\" udp sport 547 udp dport 547 accept"),
+            "{f}"
+        );
+        assert_eq!(f.matches("iifname \"eth1\" meta nfproto ipv6 udp dport 547").count(), 1, "deduplicated: {f}");
+        assert!(!f.contains("eth4") && !f.contains("eth5") && !f.contains("not-an-ip"), "{f}");
+        assert!(!f.contains("2001:db8:1::99"), "{f}");
+        put(&s, "dhcp6-relay.enabled", "0").await;
         assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
     }
 

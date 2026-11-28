@@ -205,6 +205,12 @@ enum Commands {
         action: GuestCommands,
     },
 
+    /// DHCPv6 relay agent (USE=dhcp6-relay)
+    Dhcp6Relay {
+        #[command(subcommand)]
+        action: Dhcp6RelayCommands,
+    },
+
     /// UDP broadcast relay (USE=udp-relay)
     UdpRelay {
         #[command(subcommand)]
@@ -435,6 +441,21 @@ pub enum GuestCommands {
     Vouchers,
     /// Delete a voucher by id
     VoucherDelete { id: i64 },
+}
+
+#[derive(Subcommand)]
+enum Dhcp6RelayCommands {
+    /// Run the relay (what the patronus-daemon@dhcp6-relay service does)
+    Run {
+        /// Generated relay configuration (JSON)
+        #[arg(long)]
+        conf: PathBuf,
+        /// Where to write the counters (JSON), refreshed every 2 s
+        #[arg(long)]
+        stats: Option<PathBuf>,
+    },
+    /// Print the configuration the relay would run with, from the store
+    Show,
 }
 
 #[derive(Subcommand)]
@@ -785,6 +806,9 @@ async fn main() -> anyhow::Result<()> {
             commands::guest::run(action, cli.db).await?;
         }
 
+        Commands::Dhcp6Relay { action } => {
+            commands::dhcp6relay::run(action, cli.db).await?;
+        }
         Commands::UdpRelay { action } => {
             commands::udprelay::run(action, cli.db).await?;
         }

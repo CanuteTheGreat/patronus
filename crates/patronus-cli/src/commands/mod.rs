@@ -26,6 +26,7 @@ pub mod policy;
 pub mod site;
 pub mod status;
 pub mod tunnel;
+pub mod dhcp6relay;
 pub mod udprelay;
 pub mod users;
 pub mod validate;

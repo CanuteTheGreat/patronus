@@ -109,6 +109,8 @@ pub mod netflow;
 pub mod igmp;
 #[cfg(feature = "mdns")]
 pub mod mdns;
+#[cfg(feature = "dhcp6-relay")]
+pub mod dhcp6relay;
 #[cfg(feature = "udp-relay")]
 pub mod udprelay;
 

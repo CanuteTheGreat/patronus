@@ -56,6 +56,7 @@ pub const LAN_TABLES: &[&str] = &[
     "igmp_interfaces",
     "mdns_interfaces",
     "udp_relay_rules",
+    "dhcp6_relay_rules",
     "l2tp_users",
     "proxy_blocked",
     "vrf_instances",
@@ -1003,6 +1004,8 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::mdns::MdnsApplier::default()));
     #[cfg(feature = "udp-relay")]
     v.push(Arc::new(crate::udprelay::UdpRelayApplier::default()));
+    #[cfg(feature = "dhcp6-relay")]
+    v.push(Arc::new(crate::dhcp6relay::Dhcp6RelayApplier::default()));
     #[cfg(feature = "nat64")]
     v.push(Arc::new(crate::nat64::Nat64Applier::default()));
     #[cfg(feature = "l2tp")]

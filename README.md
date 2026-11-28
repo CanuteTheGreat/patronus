@@ -315,6 +315,17 @@ that are not finished are listed separately under
   the web UI's port or another listener's port is refused with the reason.
   Every value is a setting in the configuration (export, history, rollback),
   the API and the page. [C1201]
+- DHCPv6 relay (Services page, Gentoo and ISO tiers, not in the embedded
+  router images): clients on a LAN segment get their DHCPv6 address from a
+  server on another network. Each rule names the interface the clients are on
+  and the server (a unicast address, or `ff02::1:2` on an upstream interface);
+  the relay passes the messages on as RFC 8415 Relay-forward messages (the
+  interface address as link-address, the client as peer-address, the interface
+  name as Interface-Id), returns the answers on the right interface, passes
+  another relay's messages on with a higher hop count and drops them at the hop
+  limit, and ignores answers from any host that is not the server. It opens
+  UDP 547 on the client interfaces only, comes back after a restart, and every
+  value is a setting in the configuration, the API and the page. [C1308]
 - Packet capture (admin API `POST /api/system/capture`): captures packets on one
   interface with tcpdump, filtered by protocol, host and port (at most 500
   packets or 30 seconds), and returns the decoded lines. [C72]
