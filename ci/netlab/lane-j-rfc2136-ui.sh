@@ -18,7 +18,7 @@ PW=/opt/pw
 nl_write_installer_toml
 nl_kill_daemons
 ND=$NL_T/named
-NS_IP=$NL_DNS
+NS_IP=198.51.100.54
 KEY=$(head -c 32 /dev/urandom | base64 -w0)
 KEY512=$(head -c 64 /dev/urandom | base64 -w0)
 WRONG=$(head -c 32 /dev/urandom | base64 -w0)

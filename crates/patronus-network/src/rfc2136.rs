@@ -48,9 +48,9 @@ static FIELDS: [Field; 4] = [
 ];
 
 static CLIENT_FIELDS: [Field; 13] = [
-    Field::new("hostname", "Host name", Kind::Host)
-        .req()
-        .help("the full name to keep up to date, e.g. router.example.net (must be inside the zone)"),
+    Field::new("hostname", "Host name", Kind::Host).req().help(
+        "the full name to keep up to date, e.g. router.example.net (must be inside the zone)",
+    ),
     Field::new("zone", "Zone", Kind::Host)
         .req()
         .help("the DNS zone the server is authoritative for, e.g. example.net"),
@@ -154,7 +154,7 @@ pub fn render_public(c: &EngineConf) -> String {
 /// (`nsupdate` would reject anything else with a parse error that names no field).
 pub fn valid_base64_secret(s: &str) -> bool {
     let b = s.as_bytes();
-    if b.len() < 12 || b.len() % 4 != 0 {
+    if b.len() < 12 || !b.len().is_multiple_of(4) {
         return false;
     }
     let pad = b.iter().rev().take_while(|c| **c == b'=').count();
@@ -418,12 +418,7 @@ pub mod script {
     /// The update: replace the RRset of each wanted family with the current address.
     pub fn update(c: &ClientConf, v4: Option<Ipv4Addr>, v6: Option<Ipv6Addr>) -> String {
         let h = fqdn(&c.hostname);
-        let mut s = format!(
-            "server {} {}\nzone {}\n",
-            c.server,
-            c.port,
-            fqdn(&c.zone)
-        );
+        let mut s = format!("server {} {}\nzone {}\n", c.server, c.port, fqdn(&c.zone));
         if let Some(a) = v4 {
             s.push_str(&format!(
                 "update delete {h} A\nupdate add {h} {} A {a}\n",
@@ -531,8 +526,7 @@ pub mod engine {
                     }
                     if let Some(ad) = a.address.as_ref().and_then(|x| x.as_sockaddr_in()) {
                         v4.push(ad.ip());
-                    } else if let Some(ad) = a.address.as_ref().and_then(|x| x.as_sockaddr_in6())
-                    {
+                    } else if let Some(ad) = a.address.as_ref().and_then(|x| x.as_sockaddr_in6()) {
                         let plen = a
                             .netmask
                             .as_ref()

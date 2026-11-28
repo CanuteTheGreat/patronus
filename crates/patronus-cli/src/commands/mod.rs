@@ -23,9 +23,9 @@ pub mod metrics;
 #[cfg(feature = "plugins")]
 pub mod plugin;
 pub mod policy;
+pub mod rfc2136;
 pub mod site;
 pub mod status;
-pub mod rfc2136;
 pub mod tunnel;
 pub mod udprelay;
 pub mod users;

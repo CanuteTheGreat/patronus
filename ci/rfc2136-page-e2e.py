@@ -13,7 +13,7 @@ E2E_ZONE) it also, through the page only:
   5. adds a good client through the form, the row is listed with the secret shown only as "set";
   6. switches the service on (interval 5 s); the status card reports the client ok with the WAN address;
   7. a wrong secret in a second client is reported as FAILED on the page while the first stays ok;
-  8. deleting both clients through the table and switching the service off leaves the status saying it is not running.
+  8. switching the service off leaves the status saying it is not running; both clients are then deleted through the table.
 
 Usage: BASE_URL=https://192.0.2.1:8443 E2E_USER=admin E2E_PASSWORD=... [E2E_WRITE=1 E2E_SERVER=198.51.100.53
        E2E_ZONE=example.net E2E_KEY_NAME=ddns-key E2E_KEY_SECRET=... E2E_WRONG_SECRET=...] rfc2136-page-e2e.py [firefox,chromium]
@@ -179,14 +179,15 @@ def run(p, kind):
         page.wait_for_selector("#svc-settings-form [name=enabled]")
         st = status_text(page)
         check(tag + "the good client is still ok next to the failing one", "e2e." + ZONE + ": ok" in st, st[:400])
-        for r in api(page, "/api/svc/rfc2136")["json"]["collections"]["clients"]:
-            page.locator(f"[data-coll=clients] tr[data-id='{r['id']}'] button", has_text="Delete").click()
-            page.wait_for_function(f"() => !document.querySelector(\"[data-coll=clients] tr[data-id='{r['id']}']\")", timeout=30000)
-        check(tag + "both clients were deleted through the page", True)
+        # the last enabled client cannot be deleted while the service is on (refused on the page); switch off first
         page.locator("#svc-settings-form [name=enabled]").set_checked(False)
         page.click("#svc-settings-form button[type=submit]")
         page.wait_for_function("() => /running\\s*no/i.test(document.getElementById('svc-status').innerText)", timeout=30000)
         check(tag + "switched off through the page: the status says it is not running", True)
+        for r in api(page, "/api/svc/rfc2136")["json"]["collections"]["clients"]:
+            page.locator(f"[data-coll=clients] tr[data-id='{r['id']}'] button", has_text="Delete").click()
+            page.wait_for_function(f"() => !document.querySelector(\"[data-coll=clients] tr[data-id='{r['id']}']\")", timeout=30000)
+        check(tag + "both clients were deleted through the page", True)
 
     check(tag + "no JavaScript error", not errors, errors)
     browser.close()

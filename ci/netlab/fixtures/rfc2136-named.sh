@@ -1,6 +1,8 @@
 # Real BIND for the RFC 2136 lanes (sourced by lane-j-rfc2136.sh and lane-j-rfc2136-ui.sh).
 # Needs KEY / KEY512 (base64 TSIG secrets), ND (work dir), NS_IP (address in the INET namespace).
 named_start() {
+  # its own address: the netlab INET namespace already runs a stand-in DNS (TCP too) on $NL_DNS
+  INET ip addr add "$NS_IP/24" dev inet0 2>/dev/null || true
   rm -rf "$ND"; mkdir -p "$ND"
   cat > "$ND/example.net.zone" <<ZONE
 \$TTL 60
@@ -35,8 +37,9 @@ named_stop() { [ -s "$ND/named.pid" ] && kill "$(cat "$ND/named.pid")" 2>/dev/nu
 
 # answer of the real server for NAME TYPE
 dnsq() { INET dig +short +time=2 +tries=1 @"$NS_IP" "$1" "$2" 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//'; }
+dns_is() { [ "$(dnsq "$1" "$2")" = "$3" ]; }
 want_dns() { # NAME TYPE VALUE DESC
-  nl_wait 40 test "$(dnsq "$1" "$2")" = "$3" || nl_fail "$4: the server answers '$(dnsq "$1" "$2")' for $1 $2, want '$3'"
+  nl_wait 40 dns_is "$1" "$2" "$3" || nl_fail "$4: the server answers '$(dnsq "$1" "$2")' for $1 $2, want '$3'"
   nl_ok "$4"
 }
 

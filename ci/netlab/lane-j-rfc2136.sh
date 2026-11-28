@@ -21,13 +21,38 @@ rm -f "$DB"
 nl_write_installer_toml
 nl_kill_daemons
 ND=$NL_T/named
-NS_IP=$NL_DNS
+NS_IP=198.51.100.54
 KEY=$(head -c 32 /dev/urandom | base64 -w0)
 BADKEY=$(head -c 32 /dev/urandom | base64 -w0)
 KEY512=$(head -c 64 /dev/urandom | base64 -w0)
 
 . "$NL_T/fixtures/rfc2136-named.sh"
-trap named_stop EXIT
+diag() {
+  set +e
+  echo "--- diag: engine status"; cat /var/lib/patronus/net/run/rfc2136.stats /run/patronus/rfc2136.stats 2>/dev/null
+  echo "--- diag: engine processes"; ps -eo pid,stat,args | grep '[r]fc2136'
+  echo "--- diag: nsupdate -d for client 2"
+  python3 - /var/lib/patronus/net/rfc2136.json "$NL_T" <<'PY'
+import json, sys
+c = [x for x in json.load(open(sys.argv[1]))["clients"] if x["hostname"].startswith("v6.")][0]
+open(sys.argv[2] + "/dbg.key", "w").write('key "%s" { algorithm %s; secret "%s"; };\n' % (c["key_name"], c["key_algo"], c["key_secret"]))
+open(sys.argv[2] + "/dbg.txt", "w").write("server %s %s\nzone %s.\nupdate delete %s. A\nupdate add %s. 300 A 203.0.113.9\nsend\n" % (c["server"], c["port"], c["zone"], c["hostname"], c["hostname"]))
+print(c["key_algo"], c["tcp"], c["port"], c["server"])
+PY
+  R nsupdate -d -k "$NL_T/dbg.key" -v "$NL_T/dbg.txt" 2>&1 | tail -30
+  R nsupdate -d -k "$NL_T/dbg.key" "$NL_T/dbg.txt" 2>&1 | tail -8
+  echo "--- diag: named log"; tail -15 "$ND"/*.log 2>/dev/null
+  echo "--- diag: web log"; tail -10 "$NL_T/nl-web.log" 2>/dev/null
+  echo "--- diag: zone"; INET dig +noall +answer @"$NS_IP" example.net AXFR 2>&1 | head -20
+}
+trap 'rc=$?; named_stop; [ $rc = 0 ] || diag' EXIT
+
+# swap the WAN address; promote_secondaries keeps the new one when the old primary goes
+wan_renumber() { # NEW OLD
+  R sh -c 'echo 1 > /proc/sys/net/ipv4/conf/rtr-wan/promote_secondaries'
+  R ip addr add "$1/24" dev rtr-wan
+  R ip addr del "$2/24" dev rtr-wan
+}
 
 nl_up
 named_start
@@ -90,8 +115,7 @@ ls "$RUNDIR" > "$NL_T/rundir.txt"
 nl_ok "secret: masked in the API/show, mode 0600 engine file, never on a command line or in the log, no key file left behind"
 
 echo "=== the address changes: the zone follows"
-R ip addr add 203.0.113.9/24 dev rtr-wan
-R ip addr del $NL_RTR_WAN/24 dev rtr-wan
+wan_renumber 203.0.113.9 $NL_RTR_WAN
 want_dns r.example.net A "203.0.113.9" "renumbered WAN: A follows to 203.0.113.9"
 
 echo "=== AAAA + TCP + SHA-512 on a second client"
@@ -130,8 +154,7 @@ nl_wait 10 sh -c '! pgrep -f "[r]fc2136 run"' || nl_fail "engine survived the si
 named_stop
 nl_up
 named_start
-R ip addr add 203.0.113.5/24 dev rtr-wan   # a different address after the "reboot"
-R ip addr del $NL_RTR_WAN/24 dev rtr-wan
+wan_renumber 203.0.113.5 $NL_RTR_WAN   # a different address after the "reboot"
 nl_apply "$DB" || { cat "$NL_OUT"; nl_fail "boot apply"; }
 nl_wait 10 pgrep -f '[r]fc2136 run' || nl_fail "engine not started by the boot apply"
 want_dns r.example.net A "203.0.113.5" "after reboot the zone follows the new address"
@@ -140,8 +163,7 @@ echo "=== disable: engine stops"
 nl_web_start "$DB"; nl_login
 nl_api_ok "disable" PUT /svc/rfc2136 '{"enabled":false}'
 nl_wait 10 sh -c '! pgrep -f "[r]fc2136 run"' || nl_fail "engine still running"
-R ip addr add 203.0.113.77/24 dev rtr-wan
-R ip addr del 203.0.113.5/24 dev rtr-wan
+wan_renumber 203.0.113.77 203.0.113.5
 sleep 8
 [ "$(dnsq r.example.net A)" = 203.0.113.5 ] || nl_fail "an update was sent after disabling"
 nl_ok "disabled: engine stopped, no further updates"
