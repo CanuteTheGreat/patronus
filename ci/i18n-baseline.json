@@ -17,11 +17,12 @@
   "routes/mod.rs": 6
  },
  "templates": {
+  "activity.html": 35,
   "ap_notice.html": 11,
-  "dashboard.html": 49,
+  "dashboard.html": 11,
   "device.html": 43,
   "dhcp.html": 153,
-  "diagnostics.html": 77,
+  "diagnostics.html": 105,
   "dns.html": 102,
   "firewall.html": 394,
   "first_run.html": 14,

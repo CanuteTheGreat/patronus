@@ -156,6 +156,9 @@ err-password-short = Ungültiges Passwort muss mindestens { $v1 } Zeichen lang s
 err-bad-role = Ungültige Rolle { $v1 }: admin, operator oder readonly
 err-bad-username = Ungültiger Benutzername { $v1 }: 1-32 Buchstaben, Ziffern, '.', '_' oder '-'
 err-bad-language = Ungültige Sprache '{ $v1 }': Dafür gibt es keinen Katalog
+err-activity-sort = sort muss einer von diesen sein: { $v1 }
+err-activity-order = order muss asc oder desc sein
+err-activity-limit = limit muss zwischen 1 und { $v1 } liegen
 err-bad-language-tag = Ungültige Sprache '{ $v1 }': Verwenden Sie ein Sprachkürzel wie en oder de, oder auto
 err-key-no-language = API-Schlüssel haben keine eigene Sprache: Stellen Sie sie am Konto ein
 
@@ -172,6 +175,7 @@ wait-minutes =
     }
 
 nav-reverse-proxy = Reverse-Proxy
+nav-activity = Systemaktivität
 hw-title = Hardware-Einstellungen
 hw-intro = Einstellungen, die das Image dieses Geräts für seine Hardware wählt, mit dem Grund für jeden Standardwert.
 hw-col-setting = Einstellung

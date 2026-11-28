@@ -163,6 +163,9 @@ err-password-short = Invalid password must be at least { $v1 } characters
 err-bad-role = Invalid role { $v1 }: admin, operator or readonly
 err-bad-username = Invalid username { $v1 }: 1-32 letters, digits, '.', '_' or '-'
 err-bad-language = Invalid language '{ $v1 }': no catalog for it
+err-activity-sort = sort must be one of: { $v1 }
+err-activity-order = order must be asc or desc
+err-activity-limit = limit must be from 1 to { $v1 }
 err-bad-language-tag = Invalid language '{ $v1 }': use a language tag such as en or de, or auto
 err-key-no-language = API keys have no language of their own: set it on the account instead
 
@@ -179,6 +182,7 @@ wait-minutes =
     }
 
 nav-reverse-proxy = Reverse proxy
+nav-activity = System activity
 hw-title = Hardware settings
 hw-intro = Settings this device's image chooses for its hardware, with the reason for each default.
 hw-col-setting = Setting

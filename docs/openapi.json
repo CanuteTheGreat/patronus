@@ -2172,6 +2172,40 @@
         ],
         "type": "object"
       },
+      "Params": {
+        "properties": {
+          "daemon": {
+            "description": "only the processes of this managed service (a `daemons[].name`)",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "description": "processes returned (default: the `dashboard.activity_top` setting)",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "order": {
+            "description": "desc (default) or asc",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort": {
+            "description": "cpu (default), memory, pid, name, user, threads",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "PeerInput": {
         "properties": {
           "allowed_ips": {
@@ -14896,7 +14930,7 @@
     },
     "/api/system/diag": {
       "post": {
-        "description": "POST /api/system/diag -- ping, traceroute, DNS lookup, neighbour\ntable, routing tables, listening sockets (admins). Body:\n`{\"tool\":\"ping\",\"target\":\"192.0.2.1\",\"count\":3,\"family\":\"auto\",\"interface\":\"\"}`,\n`{\"tool\":\"traceroute\",\"target\":\"example.com\",\"max_hops\":15}`,\n`{\"tool\":\"dns\",\"name\":\"example.com\",\"type\":\"AAAA\",\"server\":\"\"}`,\n`{\"tool\":\"neighbors\"|\"routes\"|\"sockets\"}`. Every field is validated\n(patronus_network::diag); nothing reaches a shell.",
+        "description": "POST /api/system/diag -- ping, traceroute, DNS lookup, neighbour\ntable, routing tables, listening sockets (admins). Body:\n`{\"tool\":\"ping\",\"target\":\"192.0.2.1\",\"count\":3,\"family\":\"auto\",\"interface\":\"\"}`,\n`{\"tool\":\"traceroute\",\"target\":\"example.com\",\"max_hops\":15}`,\n`{\"tool\":\"dns\",\"name\":\"example.com\",\"type\":\"AAAA\",\"server\":\"\"}`,\n`{\"tool\":\"tcp\",\"host\":\"example.com\",\"port\":443,\"interface\":\"\",\"source\":\"\",\"family\":\"auto\",\"timeout\":3}`\n(TCP connect test: open / closed / filtered, resolved address, latency),\n`{\"tool\":\"neighbors\"|\"routes\"|\"sockets\"}`. Every field is validated\n(patronus_network::diag); nothing reaches a shell.",
         "operationId": "post_api_system_diag",
         "requestBody": {
           "content": {
@@ -17393,6 +17427,271 @@
         "x-patronus-handler": "routes/api/insight_history::uplink_status"
       }
     },
+    "/api/v1/dashboard/layout": {
+      "delete": {
+        "description": "DELETE /api/v1/dashboard/layout: back to the default layout.",
+        "operationId": "delete_api_v1_dashboard_layout",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Back to the default layout.",
+        "tags": [
+          "v1"
+        ],
+        "x-patronus-handler": "routes/api/dashboard::delete_layout"
+      },
+      "get": {
+        "operationId": "get_api_v1_dashboard_layout",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get layout (v1/dashboard/layout)",
+        "tags": [
+          "v1"
+        ],
+        "x-patronus-handler": "routes/api/dashboard::get_layout"
+      },
+      "put": {
+        "operationId": "put_api_v1_dashboard_layout",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Put layout (v1/dashboard/layout)",
+        "tags": [
+          "v1"
+        ],
+        "x-patronus-handler": "routes/api/dashboard::put_layout"
+      }
+    },
+    "/api/v1/dashboard/settings": {
+      "get": {
+        "operationId": "get_api_v1_dashboard_settings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get settings (v1/dashboard/settings)",
+        "tags": [
+          "v1"
+        ],
+        "x-patronus-handler": "routes/api/dashboard::get_settings"
+      },
+      "put": {
+        "description": "PUT /api/v1/dashboard/settings (administrators): any of `refresh_seconds`,\n`activity_sample_secs`, `activity_top`, `tcp_timeout_secs`, `tcp_tests_per_minute`.",
+        "operationId": "put_api_v1_dashboard_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Any of `refresh_seconds`, `activity_sample_secs`, `activity_top`, `tcp_timeout_secs`, `tcp_tests_per_minute`.",
+        "tags": [
+          "v1"
+        ],
+        "x-patronus-handler": "routes/api/dashboard::put_settings"
+      }
+    },
+    "/api/v1/system/activity": {
+      "get": {
+        "operationId": "get_api_v1_system_activity",
+        "parameters": [
+          {
+            "description": "only the processes of this managed service (a `daemons[].name`)",
+            "in": "query",
+            "name": "daemon",
+            "required": false,
+            "schema": {
+              "description": "only the processes of this managed service (a `daemons[].name`)",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "processes returned (default: the `dashboard.activity_top` setting)",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "description": "processes returned (default: the `dashboard.activity_top` setting)",
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "desc (default) or asc",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "description": "desc (default) or asc",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "cpu (default), memory, pid, name, user, threads",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "description": "cpu (default), memory, pid, name, user, threads",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get activity (v1/system/activity)",
+        "tags": [
+          "v1"
+        ],
+        "x-patronus-handler": "routes/api/activity::get_activity"
+      }
+    },
     "/api/vpn": {
       "get": {
         "operationId": "get_api_vpn",
@@ -19168,6 +19467,9 @@
     },
     {
       "name": "uplinks"
+    },
+    {
+      "name": "v1"
     },
     {
       "name": "vpn"

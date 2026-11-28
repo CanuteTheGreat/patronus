@@ -44,22 +44,24 @@ pub async fn get_activity(
 ) -> Response {
     let sort = p.sort.as_deref().unwrap_or("cpu");
     if !activity::SORT_KEYS.contains(&sort) {
-        return error(
+        return crate::i18n::api_error(
             StatusCode::BAD_REQUEST,
-            format!("sort must be one of: {}", activity::SORT_KEYS.join(", ")),
+            "err-activity-sort",
+            &[("v1", activity::SORT_KEYS.join(", "))],
         );
     }
     let descending = match p.order.as_deref().unwrap_or("desc") {
         "desc" => true,
         "asc" => false,
-        _ => return error(StatusCode::BAD_REQUEST, "order must be asc or desc"),
+        _ => return crate::i18n::api_error(StatusCode::BAD_REQUEST, "err-activity-order", &[]),
     };
     let settings = patronus_config::dashboard::load(&state.config_store).await;
     let limit = p.limit.unwrap_or(settings.activity_top as usize);
     if limit == 0 || limit > MAX_LIMIT {
-        return error(
+        return crate::i18n::api_error(
             StatusCode::BAD_REQUEST,
-            format!("limit must be from 1 to {MAX_LIMIT}"),
+            "err-activity-limit",
+            &[("v1", MAX_LIMIT.to_string())],
         );
     }
     let Some(snap) = Sampler::global().latest(&state.config_store) else {
