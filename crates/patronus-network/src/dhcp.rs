@@ -673,6 +673,17 @@ pub fn render_kea4(
     ntp_on: bool,
     local_domain: Option<&str>,
 ) -> String {
+    render_kea4_ddns(pools, dns_on, ntp_on, local_domain, None)
+}
+
+/// [`render_kea4`] plus the `dhcp-ddns` block when Kea DDNS is on.
+pub fn render_kea4_ddns(
+    pools: &[Resolved4],
+    dns_on: bool,
+    ntp_on: bool,
+    local_domain: Option<&str>,
+    ddns: Option<&DdnsSide>,
+) -> String {
     let mut ifaces: Vec<&str> = pools.iter().map(|r| r.dev.as_str()).collect();
     ifaces.sort();
     ifaces.dedup();
@@ -742,6 +753,14 @@ pub fn render_kea4(
     if !classes.is_empty() {
         doc["Dhcp4"]["client-classes"] = json!(classes);
     }
+    #[cfg(feature = "kea-ddns")]
+    if let Some(d) = ddns {
+        for (k, v) in crate::keaddns::kea_block(d) {
+            doc["Dhcp4"][k] = v;
+        }
+    }
+    #[cfg(not(feature = "kea-ddns"))]
+    let _ = ddns;
     format!(
         "{}{}\n",
         lan::header("//", "Kea DHCPv4 server"),
@@ -808,6 +827,26 @@ struct Plan {
     ntp_on: bool,
     /// `dns.local_domain`: default DHCP domain when a pool has none.
     local_domain: Option<String>,
+    /// Kea DDNS (USE=kea-ddns) switched on: what Kea is told about D2.
+    ddns: Option<DdnsSide>,
+}
+
+/// What the Kea DHCP servers are told about the DDNS daemon.
+#[cfg(feature = "kea-ddns")]
+pub type DdnsSide = crate::keaddns::DhcpSide;
+#[cfg(not(feature = "kea-ddns"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DdnsSide;
+
+/// `(Kea is the backend, every served subnet as CIDR)` for Kea DDNS: the
+/// reverse zones are derived from these.
+#[cfg(feature = "kea-ddns")]
+pub async fn ddns_subnets(store: &ConfigStore, env: &LanEnv) -> Result<(bool, Vec<String>)> {
+    let mut rep = ApplyReport::default();
+    let p = plan(store, env, &mut rep).await?;
+    let mut v: Vec<String> = p.v4.iter().map(|r| r.subnet.clone()).collect();
+    v.extend(p.v6.iter().map(|r| r.subnet.clone()));
+    Ok((p.backend == Backend::Kea, v))
 }
 
 async fn plan(store: &ConfigStore, env: &LanEnv, rep: &mut ApplyReport) -> Result<Plan> {
@@ -901,7 +940,22 @@ async fn plan(store: &ConfigStore, env: &LanEnv, rep: &mut ApplyReport) -> Resul
             .ok()
             .map(|d| d.trim().to_string())
             .filter(|d| !d.is_empty()),
+        ddns: if backend == Backend::Kea {
+            ddns_side(store).await?
+        } else {
+            None
+        },
     })
+}
+
+#[cfg(feature = "kea-ddns")]
+async fn ddns_side(store: &ConfigStore) -> Result<Option<DdnsSide>> {
+    crate::keaddns::dhcp_side(store).await
+}
+
+#[cfg(not(feature = "kea-ddns"))]
+async fn ddns_side(_store: &ConfigStore) -> Result<Option<DdnsSide>> {
+    Ok(None)
 }
 
 /// DHCP/RA/relay lines of `/etc/dnsmasq.conf` (see [`lan::sync_dnsmasq`]).
@@ -1130,7 +1184,13 @@ impl DhcpApplier {
                 KEA4_BIN,
                 ManagedFile {
                     path: KEA4_CONF,
-                    content: render_kea4(&p.v4, p.dns_on, p.ntp_on, p.local_domain.as_deref()),
+                    content: render_kea4_ddns(
+                        &p.v4,
+                        p.dns_on,
+                        p.ntp_on,
+                        p.local_domain.as_deref(),
+                        p.ddns.as_ref(),
+                    ),
                     mode: 0o640,
                     group: Some("dhcp"),
                     check: Some(vec![KEA4_BIN, "-t", "{}"]),
@@ -1142,7 +1202,7 @@ impl DhcpApplier {
                 dhcp6::KEA6_BIN,
                 ManagedFile {
                     path: dhcp6::KEA6_CONF,
-                    content: dhcp6::render_kea(&p.v6, p.dns_on),
+                    content: dhcp6::render_kea_ddns(&p.v6, p.dns_on, p.ddns.as_ref()),
                     mode: 0o640,
                     group: Some("dhcp"),
                     check: Some(vec![dhcp6::KEA6_BIN, "-t", "{}"]),

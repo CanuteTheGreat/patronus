@@ -19,6 +19,7 @@ pub mod guest;
 pub mod import_uci;
 pub mod init;
 pub mod ipdb;
+pub mod keaddns;
 pub mod metrics;
 #[cfg(feature = "plugins")]
 pub mod plugin;

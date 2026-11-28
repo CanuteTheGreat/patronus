@@ -274,6 +274,15 @@ fn dns_for(r: &Resolved6, dns_on: bool) -> Vec<String> {
 
 /// `/etc/kea/kea-dhcp6.conf` for the resolved pools.
 pub fn render_kea(pools: &[Resolved6], dns_on: bool) -> String {
+    render_kea_ddns(pools, dns_on, None)
+}
+
+/// [`render_kea`] plus the `dhcp-ddns` block when Kea DDNS is on.
+pub fn render_kea_ddns(
+    pools: &[Resolved6],
+    dns_on: bool,
+    ddns: Option<&crate::dhcp::DdnsSide>,
+) -> String {
     let mut ifaces: Vec<&str> = pools.iter().map(|r| r.dev.as_str()).collect();
     ifaces.sort();
     ifaces.dedup();
@@ -295,7 +304,8 @@ pub fn render_kea(pools: &[Resolved6], dns_on: bool) -> String {
             s
         })
         .collect();
-    let doc = json!({
+    #[allow(unused_mut)]
+    let mut doc = json!({
         "Dhcp6": {
             "interfaces-config": {"interfaces": ifaces},
             "lease-database": {"type": "memfile", "persist": true, "name": KEA6_LEASES, "lfc-interval": 3600},
@@ -303,6 +313,14 @@ pub fn render_kea(pools: &[Resolved6], dns_on: bool) -> String {
             "loggers": [{"name": "kea-dhcp6", "output-options": [{"output": "stdout"}], "severity": "INFO"}],
         }
     });
+    #[cfg(feature = "kea-ddns")]
+    if let Some(d) = ddns {
+        for (k, v) in crate::keaddns::kea_block(d) {
+            doc["Dhcp6"][k] = v;
+        }
+    }
+    #[cfg(not(feature = "kea-ddns"))]
+    let _ = ddns;
     format!(
         "{}{}\n",
         lan::header("//", "Kea DHCPv6 server"),

@@ -184,6 +184,8 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     v.push(Arc::new(crate::mdns::MdnsSvc));
     #[cfg(feature = "udp-relay")]
     v.push(Arc::new(crate::udprelay::UdpRelaySvc));
+    #[cfg(feature = "kea-ddns")]
+    v.push(Arc::new(crate::keaddns::KeaDdnsSvc));
     #[cfg(feature = "nat64")]
     v.push(Arc::new(crate::nat64::Nat64Svc));
     #[cfg(feature = "l2tp")]

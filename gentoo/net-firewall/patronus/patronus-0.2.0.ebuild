@@ -33,7 +33,7 @@ IUSE="
 	+monitoring prometheus netflow collectd
 	+captive-portal
 	intrusion-detection suricata snort
-	syslog igmp udp-relay nat64 l2tp upnp vrf web-proxy dynamic-routing sdwan
+	syslog igmp udp-relay kea-ddns nat64 l2tp upnp vrf web-proxy dynamic-routing sdwan
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp +plugins
@@ -59,6 +59,7 @@ REQUIRED_USE="
 	certificates? ( || ( acme certbot ) )
 	wireless? ( || ( hostapd iwd ) )
 	wifi-ap? ( segmentation )
+	kea-ddns? ( dhcp )
 	squid? ( !tinyproxy )
 	tinyproxy? ( !squid )
 	geoip2? ( !geoip )
@@ -87,6 +88,7 @@ RDEPEND="
 		!kea? ( net-dns/dnsmasq )
 	)
 	ntp? ( net-misc/chrony )
+	kea-ddns? ( net-misc/kea )
 	dns? (
 		unbound? ( net-dns/unbound )
 		bind? ( net-dns/bind )
@@ -265,6 +267,7 @@ src_configure() {
 		$(usex netflow "netflow" "")
 		$(usex igmp "igmp" "")
 		$(usex udp-relay "udp-relay" "")
+		$(usex kea-ddns "kea-ddns" "")
 		$(usex nat64 "nat64" "")
 		$(usex l2tp "l2tp" "")
 		$(usex upnp "upnp" "")
@@ -381,6 +384,7 @@ src_install() {
 		use netflow && webfeatures+=( netflow )
 		use igmp && webfeatures+=( igmp )
 		use udp-relay && webfeatures+=( udp-relay )
+		use kea-ddns && webfeatures+=( kea-ddns )
 		use nat64 && webfeatures+=( nat64 )
 		use l2tp && webfeatures+=( l2tp )
 		use upnp && webfeatures+=( upnp )

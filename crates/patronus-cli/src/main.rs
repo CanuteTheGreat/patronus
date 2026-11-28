@@ -205,6 +205,12 @@ enum Commands {
         action: GuestCommands,
     },
 
+    /// Kea DDNS (USE=kea-ddns)
+    KeaDdns {
+        #[command(subcommand)]
+        action: KeaDdnsCommands,
+    },
+
     /// UDP broadcast relay (USE=udp-relay)
     UdpRelay {
         #[command(subcommand)]
@@ -435,6 +441,21 @@ pub enum GuestCommands {
     Vouchers,
     /// Delete a voucher by id
     VoucherDelete { id: i64 },
+}
+
+#[derive(Subcommand)]
+enum KeaDdnsCommands {
+    /// Run the RFC 2136 receiver (what the patronus-daemon@kea-ddns-sink service does)
+    Run {
+        /// Generated receiver configuration (JSON)
+        #[arg(long)]
+        conf: PathBuf,
+        /// Where to write the counters and the registered names (JSON), refreshed every few seconds
+        #[arg(long)]
+        stats: Option<PathBuf>,
+    },
+    /// Print the Kea DDNS configuration the stored settings resolve to (the secret is hidden)
+    Show,
 }
 
 #[derive(Subcommand)]
@@ -783,6 +804,10 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "guest")]
         Commands::Guest { action } => {
             commands::guest::run(action, cli.db).await?;
+        }
+
+        Commands::KeaDdns { action } => {
+            commands::keaddns::run(action, cli.db).await?;
         }
 
         Commands::UdpRelay { action } => {

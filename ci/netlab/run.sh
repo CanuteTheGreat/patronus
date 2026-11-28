@@ -60,6 +60,8 @@ cp ci/guest-page-e2e.py "$OUT/"
 cp ci/dashboard-page-e2e.py ci/a11y/vendor/axe.min.js "$OUT/"
 # lane N reverse proxy UI scenario
 cp ci/revproxy-page-e2e.py "$OUT/"
+# lane J Kea DDNS UI scenario
+cp ci/kea-ddns-page-e2e.py "$OUT/"
 # lane J XDP data plane: the shipped BPF program source
 cp crates/patronus-ebpf/src/xdp_firewall.bpf.c "$OUT/"
 OLD_ENV=
@@ -90,6 +92,10 @@ printf 'slapd slapd/password1 password Ldap-Admin-Pw-1\\nslapd slapd/password2 p
 apt-get install -y -qq slapd ldap-utils >/dev/null
 # lane N scenarios (OpenVPN, Squid, UPnP, DHCPv6-PD): installed here while DNS still works
 apt-get install -y -qq --no-install-recommends openvpn squid miniupnpc radvd isc-dhcp-server git udhcpc >/dev/null
+# lane J Kea DDNS (lane-j-kea-ddns*.sh): Kea DHCPv4 + its DDNS daemon, BIND as the external RFC 2136 server. Kea's DHCP binary is
+# parked under another name: with it on its path the DHCP applier's `auto` backend would pick Kea in every other lane (they run dnsmasq)
+apt-get install -y -qq --no-install-recommends kea-dhcp4-server kea-dhcp-ddns-server bind9 >/dev/null
+mv /usr/sbin/kea-dhcp4 /usr/sbin/kea-dhcp4.parked
 apt-get install -y -qq --no-install-recommends miniupnpd-nftables >/dev/null 2>&1 || apt-get install -y -qq --no-install-recommends miniupnpd >/dev/null
 apt-get install -y -qq dhcpcd-base >/dev/null 2>&1 || apt-get install -y -qq dhcpcd5 >/dev/null 2>&1 || apt-get install -y -qq dhcpcd >/dev/null
 # lane N reverse proxy (lane-n-reverse-proxy*.sh): HAProxy, installed here while DNS still works

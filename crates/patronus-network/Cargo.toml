@@ -36,6 +36,8 @@ igmp = []
 mdns = []
 # UDP broadcast relay: built-in engine (`patronus udp-relay run`), no external daemon
 udp-relay = []
+# Kea DDNS: DHCP clients registered in DNS (Kea D2 + a built-in RFC 2136 receiver feeding Unbound)
+kea-ddns = ["dhcp"]
 nat64 = []
 l2tp = []
 upnp = []

@@ -273,6 +273,10 @@ that are not finished are listed separately under
   exports flow records (v5, v9 or IPFIX) to a collector. [C47]
 - IGMP proxy (USE=igmp): igmpproxy forwards multicast streams from the WAN to
   LAN interfaces, with the firewall rules it needs generated for it. [C48]
+- Kea DDNS (USE=kea-ddns): DHCP clients get a DNS name and a reverse name when they get a
+  lease, through Kea's DDNS daemon and signed RFC 2136 updates, either into the router's own
+  Unbound (a built-in receiver, loopback only, TSIG required) or to your own DNS server;
+  the records go when the lease does and the TSIG key is never shown again. [C1354]
 - NAT64 / DNS64 (USE=nat64): IPv6-only clients reach IPv4-only servers through
   tayga, and Unbound answers AAAA queries for IPv4-only names with addresses
   in the NAT64 prefix. [C49]

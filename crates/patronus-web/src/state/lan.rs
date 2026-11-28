@@ -160,6 +160,10 @@ fn svc_appliers(spec: &patronus_network::svc::Spec) -> Vec<&'static str> {
     if !spec.applier.is_empty() {
         v.push(spec.applier);
     }
+    // Kea DDNS: Kea's own config carries the dhcp-ddns block
+    if spec.slug == "kea-ddns" {
+        v.push("dhcp");
+    }
     if matches!(
         spec.slug,
         "igmp"

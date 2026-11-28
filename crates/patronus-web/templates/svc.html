@@ -246,6 +246,32 @@
         }
         renderStatus(d.status);
         if (SLUG === 'revproxy') revproxyExtras(d);
+        if (SLUG === 'kea-ddns') keaDdnsRecords();
+    }
+    async function keaDdnsRecords() {
+        let box = document.getElementById('kea-ddns-records');
+        if (!box) {
+            box = document.createElement('div'); box.id = 'kea-ddns-records'; box.className = 'card';
+            document.getElementById('svc-status-card').before(box);
+        }
+        box.textContent = '';
+        const h = document.createElement('div'); h.className = 'card-header';
+        const h2 = document.createElement('h2'); h2.className = 'card-title'; h2.textContent = 'Registered names'; h.appendChild(h2); box.appendChild(h);
+        const r = await api('POST', '/api/svc/kea-ddns/action/records', {});
+        if (!r) return;
+        const scroll = document.createElement('div'); scroll.className = 'svc-scroll'; scroll.tabIndex = 0; scroll.setAttribute('role', 'region'); scroll.setAttribute('aria-label', 'Registered names');
+        const t = document.createElement('table'); t.className = 'lan'; t.id = 'kea-ddns-table';
+        const head = document.createElement('tr');
+        for (const x of ['Name', 'Type', 'Value', 'TTL (s)']) { const th = document.createElement('th'); th.textContent = x; head.appendChild(th); }
+        t.appendChild(head);
+        for (const n of r.names) {
+            const tr = document.createElement('tr'); tr.dataset.name = n.name;
+            for (const v of [n.name, n.type, n.value, String(n.ttl)]) { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); }
+            t.appendChild(tr);
+        }
+        scroll.appendChild(t); box.appendChild(scroll);
+        if (!r.names.length) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'No names registered yet (local mode lists what the built-in receiver holds; an external server keeps its own records).'; box.appendChild(p); }
+        if (r.truncated) { const p = document.createElement('p'); p.className = 'svc-help'; p.textContent = 'Only the first ' + r.names.length + ' of ' + r.total + ' are listed.'; box.appendChild(p); }
     }
     async function revproxyExtras(d) {
         let box = document.getElementById('rp-problems');

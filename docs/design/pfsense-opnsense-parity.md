@@ -117,7 +117,7 @@ Status words: **present** = in the shipped binary, reachable from API/UI, covere
 | DHCPv6 server, Router Advertisements | Kea / radvd | present |
 | DHCP relay v4 | dnsmasq relay | present |
 | DHCP relay v6 | none | missing |
-| Kea DDNS agent (register DHCP clients in DNS) | none | missing |
+| Kea DDNS agent (register DHCP clients in DNS) | yes (lane-j-kea-ddns, USE=kea-ddns) | present |
 | DNS resolver (Unbound): overrides, DNSSEC, DoT, ACLs, blocklists, query forwarding, statistics | yes (lane-s-dns-dot, seg_dns blocklists) | present |
 | DNS forwarder (dnsmasq) | yes | present |
 | Dynamic DNS clients | yes | partial: no RFC 2136 (nsupdate) clients |
