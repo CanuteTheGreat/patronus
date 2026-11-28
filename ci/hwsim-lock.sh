@@ -115,7 +115,7 @@ hwsim_load() {
   HWSIM_LOADED=1
   ${HWSIM_DOCKER:-docker} network create --label "patronus.hwsim-loader-script=${2:-unknown}" --label "patronus.hwsim-loader-holder=$(hostname)" \
     --label "patronus.hwsim-loader-time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" --label "patronus.hwsim-loader-radios=$1" \
-    "${HWSIM_LOADER_NAME:-patronus-hwsim-loader}" >/dev/null 2>&1 || echo "::warning::could not record the mac80211_hwsim loader"; }
+    "${HWSIM_LOADER_NAME:-patronus-hwsim-loader}" >/dev/null 2>&1 || { echo "::error::could not record the mac80211_hwsim loader" >&2; return 1; }; }
 # hwsim_unload: unload ONLY a module this run loaded (never one a neighbour loaded), and drop the record.
 hwsim_unload() {
   [ -n "$HWSIM_LOADED" ] || return 0
