@@ -21,7 +21,7 @@
     {"id": "vpn", "path": "/vpn", "wait_for": ".sidebar-nav"},
     {"id": "wifi", "path": "/wifi", "wait_for": ".sidebar-nav"},
     {"id": "system", "path": "/system", "wait_for": "#users"},
-    {"id": "reverse-proxy", "path": "/svc/revproxy", "wait_for": "#svc-settings-form [name=enabled]"},
+    {"id": "reverse-proxy", "path": "/svc/revproxy", "wait_for": "#svc-settings-form [name=enabled]", "optional": true},
     {"id": "login-de", "path": "/login?lang=de", "auth": false, "wait_for": "#username"},
     {"id": "system-de", "path": "/system?lang=de", "wait_for": "#language-card"},
     {"id": "api-docs", "path": "/api/docs", "wait_for": ".api-op"}

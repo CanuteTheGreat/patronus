@@ -88,8 +88,12 @@ def main():
                         if not pg.get("auth", True) and logged_in:
                             ctx.clear_cookies()
                             logged_in = False
-                        page.goto(base + pg["path"], wait_until="load")
+                        resp = page.goto(base + pg["path"], wait_until="load")
                         label = f"{kind}/{vp}/{scheme}/{pg['id']}"
+                        if pg.get("optional") and resp is not None and resp.status == 404:
+                            # a page of a USE-gated feature the web image is built without (the route does not exist)
+                            log(f"skip {label}: {pg['path']} is not built into this image (optional page, 404)")
+                            continue
                         if pg.get("wait_for"):
                             try:
                                 page.wait_for_selector(pg["wait_for"], state="attached", timeout=30000)
