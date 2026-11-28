@@ -36,6 +36,8 @@ igmp = []
 mdns = []
 # UDP broadcast relay: built-in engine (`patronus udp-relay run`), no external daemon
 udp-relay = []
+# IP-in-IP / 6in4 / GIF-style tunnels: kernel links driven by `ip`, no extra package
+tunnels = []
 nat64 = []
 l2tp = []
 upnp = []

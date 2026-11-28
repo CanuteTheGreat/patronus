@@ -174,6 +174,7 @@ fn svc_appliers(spec: &patronus_network::svc::Spec) -> Vec<&'static str> {
             | "frr"
             | "edge"
             | "vrf"
+            | "tunnels"
             | "guest"
     ) {
         v.push("firewall");

@@ -424,6 +424,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "igmp",
         "mdns",
         "udp-relay",
+        "tunnels",
         "nat64",
         "upnp",
         "vrf",
@@ -468,6 +469,7 @@ pub(crate) const AP_ROUTER_JOBS: &[&str] = &[
     "sdwan-edge",
     "dynamic-routing",
     "vrf",
+    "tunnels",
     "web-proxy",
     "reverse-proxy",
 ];
@@ -581,6 +583,7 @@ pub fn absent_features(
             "udp-relay",
             "UDP broadcast relay (discovery across segments)",
         ),
+        ("tunnels", "IP tunnels (IPIP, 6in4, GIF)"),
         ("nat64", "NAT64 / DNS64"),
         ("upnp", "UPnP / NAT-PMP"),
         ("vrf", "VRFs"),
