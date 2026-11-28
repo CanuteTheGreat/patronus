@@ -23,7 +23,10 @@
 //! with `|` would inject SAE options, a newline would add a config line).
 
 use crate::supervise::{write_atomic, DaemonSpec, Supervisor};
+use crate::radio::{self, HostapdCaps, RadioCaps};
 use crate::wifichan::{self, Iw, IwTools, Mode};
+use crate::wifigen::{self, Plan};
+use patronus_config::seg_wifi_gen::Link;
 use async_trait::async_trait;
 use patronus_config::applier::{Applier, ApplyReport, Phase};
 use patronus_config::seg::{self, is_ifname, norm_mac};
@@ -136,15 +139,35 @@ fn render_sae_lines(net: &ApNet) -> Result<String> {
     Ok(o)
 }
 
-/// `hostapd.conf` for one network. `bridge` is the resolved bridge interface
-/// the AP joins; `psk_path` the `wpa_psk_file`.
+/// `hostapd.conf` for one network with the radio unknown (the pre-Wi-Fi 6 behaviour of `auto`; tests and
+/// dry runs without a radio). `bridge` is the resolved bridge interface the AP joins; `psk_path` the
+/// `wpa_psk_file`.
 pub fn render_hostapd(
     net: &ApNet,
     bridge: &str,
     psk_path: &Path,
     ctrl_dir: &Path,
 ) -> Result<String> {
+    let plan = wifigen::plan(&net.network, None, &HostapdCaps::full())?;
+    render_hostapd_with(net, bridge, psk_path, ctrl_dir, &plan, None)
+}
+
+/// `hostapd.conf` for one network (or, with `link`, one extra link of its multi-link access point) on the
+/// effective [`Plan`] (generation, width, discovery, multi-link) the radio and hostapd were probed for.
+pub fn render_hostapd_with(
+    net: &ApNet,
+    bridge: &str,
+    psk_path: &Path,
+    ctrl_dir: &Path,
+    plan: &Plan,
+    link: Option<&Link>,
+) -> Result<String> {
     let n = &net.network;
+    let (band, channel, width) = match link {
+        Some(l) => (l.band.as_str(), l.channel, l.width),
+        None => (n.band.as_str(), n.channel, plan.width),
+    };
+    let mld = !plan.links.is_empty();
     if !is_ifname(&n.ifname) || !is_ifname(bridge) {
         return Err(err("bad interface name"));
     }
@@ -162,9 +185,9 @@ pub fn render_hostapd(
             return Err(err(format!("unsafe path {s:?}")));
         }
     }
-    let hw_mode = match n.band.as_str() {
+    let hw_mode = match band {
         "2g" => "g",
-        "5g" => "a",
+        "5g" | "6g" => "a",
         b => return Err(err(format!("band {b:?} is not supported"))),
     };
     let (psk, sae) = match n.security.as_str() {
@@ -176,11 +199,15 @@ pub fn render_hostapd(
     if n.country.len() != 2 || !n.country.bytes().all(|b| b.is_ascii_uppercase()) {
         return Err(err("bad country code"));
     }
-    if n.channel == 0 {
+    if channel == 0 {
         return Err(err(format!(
             "network {}: the automatic channel is not chosen yet",
             n.name
         )));
+    }
+    if (band == "6g" || mld) && psk {
+        // the store refuses this; a hand-edited database must not put WPA2 on 6 GHz either
+        return Err(err(patronus_config::seg_wifi_gen::SIX_GHZ_SECURITY));
     }
     let mut km = Vec::new();
     if psk {
@@ -197,14 +224,33 @@ pub fn render_hostapd(
         ctrl_dir.display()
     ));
     o.push_str(&format!(
-        "country_code={}\nieee80211d=1\nhw_mode={hw_mode}\nchannel={}\nieee80211n=1\n",
-        n.country, n.channel
+        "country_code={}\nieee80211d=1\nhw_mode={hw_mode}\nchannel={channel}\n",
+        n.country
     ));
+    if band != "6g" {
+        o.push_str("ieee80211n=1\n");
+    }
     o.push_str(&crate::wifichan::conf_lines(
-        &n.band,
-        n.channel,
-        n.chan.width,
+        band,
+        channel,
+        width,
+        &plan.standard,
     ));
+    if let Some(c) = plan.bss_color {
+        o.push_str(&format!("he_bss_color={c}\n"));
+    }
+    if band == "6g" {
+        match plan.discovery.as_ref().map(|(k, i)| (k.as_str(), *i)) {
+            Some(("probe", i)) => o.push_str(&format!("unsol_bcast_probe_resp_interval={i}\n")),
+            Some(("fils", i)) => o.push_str(&format!(
+                "fils_discovery_min_interval={i}\nfils_discovery_max_interval={i}\n"
+            )),
+            _ => {}
+        }
+    }
+    if mld {
+        o.push_str("mld_ap=1\n");
+    }
     o.push_str(&format!(
         "auth_algs=1\nwpa=2\nrsn_pairwise=CCMP\nwpa_key_mgmt={}\n",
         km.join(" ")
@@ -215,7 +261,9 @@ pub fn render_hostapd(
         "ieee80211w=1\n"
     });
     if sae {
-        o.push_str("sae_pwe=2\n");
+        // 6 GHz (and a multi-link AP with a 6 GHz link) allows hash-to-element only
+        let six = band == "6g" || n.band == "6g" || plan.links.iter().any(|l| l.band == "6g");
+        o.push_str(if six { "sae_pwe=1\n" } else { "sae_pwe=2\n" });
     }
     o.push_str("# stations may only talk through the router\n");
     o.push_str(
@@ -341,6 +389,8 @@ pub struct WifiApplier {
     debounce: Duration,
     /// `iw` / `hostapd_cli` for channel measurements (a fake in tests)
     iw: Arc<dyn Iw>,
+    /// the installed hostapd's build options; `None` = read them from the binary
+    hcaps: Option<HostapdCaps>,
 }
 
 impl Default for WifiApplier {
@@ -364,6 +414,7 @@ impl Default for WifiApplier {
                         .unwrap_or_else(|_| DEFAULT_CTRL_DIR.into()),
                 ),
             }),
+            hcaps: None,
         }
     }
 }
@@ -387,7 +438,122 @@ impl WifiApplier {
             hostapd_cli: None,
             patronus: None,
             debounce: RESTART_DEBOUNCE,
+            hcaps: None,
         }
+    }
+    /// Pretend the installed hostapd has these build options (tests).
+    pub fn with_hostapd_caps(mut self, h: HostapdCaps) -> Self {
+        self.hcaps = Some(h);
+        self
+    }
+    /// The installed hostapd's build options.
+    pub fn hostapd_caps(&self) -> HostapdCaps {
+        if let Some(h) = &self.hcaps {
+            return h.clone();
+        }
+        self.hostapd_bin()
+            .map(|b| radio::hostapd_caps(&b))
+            .unwrap_or_default()
+    }
+    /// What the radio of `n` can do, read after its country's regulatory domain is set. `None` when the
+    /// radio cannot be probed (no `iw`, no such interface, or output without bands).
+    pub fn probe(&self, n: &seg_wifi::Network) -> Option<RadioCaps> {
+        if let Err(e) = self.iw.reg_set(&n.country) {
+            tracing::warn!("Wi-Fi {}: regulatory domain {}: {e}", n.name, n.country);
+        }
+        let c = radio::parse_caps(&self.iw.phy_info(&n.ifname).ok()?);
+        (!c.bands.is_empty()).then_some(c)
+    }
+    fn mlo_marker(&self, name: &str) -> PathBuf {
+        self.dir.join(format!("{name}.mlo-failed"))
+    }
+    /// The effective plan of `n`: probed radio + hostapd, and a multi-link set that already failed to come
+    /// up on this radio (marker file, cleared when the links change) runs as one link.
+    pub fn plan_of(&self, n: &seg_wifi::Network, h: &HostapdCaps) -> Result<Plan> {
+        let caps = self.probe(n);
+        let mut p = wifigen::plan(n, caps.as_ref(), h)?;
+        if !p.links.is_empty() {
+            if let Ok(t) = std::fs::read_to_string(self.mlo_marker(&n.name)) {
+                let (links, why) = t.split_once('\n').unwrap_or((t.as_str(), ""));
+                if links.trim() == n.gen.mlo_links {
+                    p.links.clear();
+                    p.warnings.push(format!(
+                        "multi-link (MLO) did not come up on this radio ({}): running one link; changing the links tries again",
+                        why.trim()
+                    ));
+                }
+            }
+        }
+        Ok(p)
+    }
+    /// `None` when every link (`<if>_link0..N`, hostapd's per-link control interfaces) reports ENABLED
+    /// within the network's `mlo_wait`; else why not.
+    async fn mlo_failed(&self, n: &seg_wifi::Network, extra: usize) -> Option<String> {
+        let (iw, ifn, wait) = (self.iw.clone(), n.ifname.clone(), n.gen.mlo_wait.max(1) as u64);
+        let mut last = String::new();
+        for _ in 0..wait {
+            if !self.sup.is_running(SVC_HOSTAPD, &n.name) {
+                return Some("hostapd exited when it started the links".into());
+            }
+            let (iw2, ifn2) = (iw.clone(), ifn.clone());
+            let up = tokio::task::spawn_blocking(move || {
+                (0..=extra)
+                    .map(|i| {
+                        iw2.hostapd_status(&format!("{ifn2}_link{i}"))
+                            .map(|t| t.lines().any(|l| l == "state=ENABLED"))
+                            .unwrap_or(false)
+                    })
+                    .collect::<Vec<bool>>()
+            })
+            .await
+            .unwrap_or_default();
+            if up.len() == extra + 1 && up.iter().all(|u| *u) {
+                return None;
+            }
+            last = format!(
+                "link{} not enabled after {wait} s",
+                up.iter().position(|u| !*u).unwrap_or(0)
+            );
+            let iw3 = iw.clone();
+            let _ = tokio::task::spawn_blocking(move || iw3.pause(1)).await;
+        }
+        Some(last)
+    }
+
+    /// hostapd's spec for a network on a plan: one config per link (`hostapd l0.conf l1.conf ...`).
+    fn spec_for(
+        &self,
+        net: &ApNet,
+        bridge: &str,
+        hostapd: &Path,
+        plan: &Plan,
+    ) -> Result<DaemonSpec> {
+        let n = &net.network;
+        let [conf_path, psk_path, _, _] = self.files(&n.name);
+        let mut argv = vec![
+            hostapd.to_string_lossy().to_string(),
+            conf_path.to_string_lossy().to_string(),
+        ];
+        let mut files = vec![(
+            conf_path,
+            render_hostapd_with(net, bridge, &psk_path, &self.ctrl_dir, plan, None)?,
+            0o600,
+        )];
+        for (i, l) in plan.links.iter().enumerate() {
+            let p = self.dir.join(format!("{}-link{}.conf", n.name, i + 1));
+            argv.push(p.to_string_lossy().to_string());
+            files.push((
+                p,
+                render_hostapd_with(net, bridge, &psk_path, &self.ctrl_dir, plan, Some(l))?,
+                0o600,
+            ));
+        }
+        Ok(DaemonSpec {
+            service: SVC_HOSTAPD,
+            instance: n.name.clone(),
+            argv,
+            files,
+        })
     }
     /// Channel measurements through another `iw` (tests).
     pub fn with_iw(mut self, iw: Arc<dyn Iw>) -> Self {
@@ -473,7 +639,8 @@ impl WifiApplier {
         }
         let (iw, n2) = (self.iw.clone(), n.clone());
         tokio::task::spawn_blocking(move || -> Result<(Vec<wifichan::Cand>, bool)> {
-            let phy = wifichan::parse_phy(&iw.phy_info(&n2.ifname).unwrap_or_default());
+            let _ = iw.reg_set(&n2.country);
+            let phy = wifichan::parse_phy(&iw.phy_info(&n2.ifname).unwrap_or_default(), &n2.band);
             let want = n2.chan.candidates(&n2.band);
             let allowed = wifichan::usable(&n2.band, n2.chan.width, &want, &phy);
             if allowed.is_empty() {
@@ -628,18 +795,8 @@ impl WifiApplier {
         let Some(hostapd) = self.hostapd_bin() else {
             return Ok(None);
         };
-        let [conf_path, psk_path, _, _] = self.files(&n.name);
-        let conf = render_hostapd(&net, &bridge, &psk_path, &self.ctrl_dir)?;
-        let spec = DaemonSpec {
-            service: SVC_HOSTAPD,
-            instance: n.name.clone(),
-            argv: vec![
-                hostapd.to_string_lossy().into(),
-                conf_path.to_string_lossy().into(),
-            ],
-            files: vec![(conf_path, conf, 0o600)],
-        };
-        Ok(Some(spec))
+        let plan = self.plan_of(n, &self.hostapd_caps())?;
+        Ok(Some(self.spec_for(&net, &bridge, &hostapd, &plan)?))
     }
 
     /// Re-check an automatic channel on a running radio: `confirm` samples `confirm_gap` s apart must all
@@ -784,9 +941,16 @@ impl WifiApplier {
         let mut how = "restart";
         if n.chan.csa != "off" && csa_capable {
             let (iw, ifn, band) = (self.iw.clone(), n.ifname.clone(), n.band.clone());
-            let (w, count) = (n.chan.width, n.chan.csa_count);
+            // the announcement names the generation and width the radio really runs
+            let mut at = n.clone();
+            at.channel = to;
+            let (w, std) = match self.plan_of(&at, &self.hostapd_caps()) {
+                Ok(p) => (p.width, p.standard),
+                Err(_) => (n.chan.width, "ac".to_string()),
+            };
+            let count = n.chan.csa_count;
             let r = tokio::task::spawn_blocking(move || {
-                wifichan::switch_by_csa(&*iw, &ifn, &band, to, w, count)
+                wifichan::switch_by_csa_std(&*iw, &ifn, &band, to, w, count, &std)
             })
             .await
             .map_err(|e| err(format!("channel switch task: {e}")))?;
@@ -884,8 +1048,13 @@ impl Applier for WifiApplier {
             ));
         };
         let cli = self.cli_bin();
+        let hcaps = self.hostapd_caps();
         for net0 in &nets {
             let n0 = &net0.network;
+            // the country's regulatory domain before anything reads the radio's channels
+            if let Err(e) = self.iw.reg_set(&n0.country) {
+                rep.warn(format!("Wi-Fi {}: regulatory domain {}: {e}", n0.name, n0.country));
+            }
             let Some(bridge) = self.bridge_of(store, &n0.segment).await else {
                 rep.warn(format!(
                     "Wi-Fi network {}: its segment {} has no bridge interface, not started",
@@ -902,26 +1071,63 @@ impl Applier for WifiApplier {
             netv.network.channel = chosen;
             let net = &netv;
             let n = &net.network;
-            let [conf_path, psk_path, script_path, stamp] = self.files(&n.name);
-            let conf = render_hostapd(net, &bridge, &psk_path, &self.ctrl_dir)?;
+            let [_, psk_path, script_path, stamp] = self.files(&n.name);
+            // what this radio + hostapd really run (fail closed: a 6 GHz block the regulatory domain does
+            // not open, or a radio without the band, keeps the network off)
+            let plan = match self.plan_of(n, &hcaps) {
+                Ok(p) => p,
+                Err(e) => {
+                    if was_running {
+                        self.sup.stop(SVC_HOSTAPD, &n.name).await?;
+                        self.sup.stop(SVC_EVENTS, &n.name).await?;
+                    }
+                    rep.warn(format!("Wi-Fi network {} not started: {e}", n.name));
+                    continue;
+                }
+            };
+            for w in &plan.warnings {
+                rep.warn(format!("Wi-Fi {}: {w}", n.name));
+            }
+            let mut spec = self.spec_for(net, &bridge, &hostapd, &plan)?;
             let psk = render_psk_file(net)?;
             let old_psk = std::fs::read_to_string(&psk_path).unwrap_or_default();
             let psk_changed = old_psk != psk;
-            let spec = DaemonSpec {
-                service: SVC_HOSTAPD,
-                instance: n.name.clone(),
-                argv: vec![
-                    hostapd.to_string_lossy().into(),
-                    conf_path.to_string_lossy().into(),
-                ],
-                files: vec![(conf_path.clone(), conf, 0o600)],
-            };
             // the PSK file first: a (re)started hostapd must read the new one
             write_atomic(&psk_path, &psk, 0o600)?;
             if was_running && !self.sup.up_to_date(&spec) {
                 self.debounce_wait(&stamp);
             }
-            let restarted = self.sup.ensure(&spec).await?;
+            let mut restarted = self.sup.ensure(&spec).await?;
+            if restarted && !plan.links.is_empty() {
+                // the driver's multi-link support only shows by trying: every link must come up
+                if let Some(why) = self.mlo_failed(n, plan.links.len()).await {
+                    let _ = write_atomic(
+                        &self.mlo_marker(&n.name),
+                        &format!("{}\n{why}\n", n.gen.mlo_links),
+                        0o600,
+                    );
+                    let mut one = plan.clone();
+                    one.links.clear();
+                    let extra: Vec<PathBuf> = spec.files.iter().skip(1).map(|f| f.0.clone()).collect();
+                    spec = self.spec_for(net, &bridge, &hostapd, &one)?;
+                    for p in extra {
+                        let _ = std::fs::remove_file(p);
+                    }
+                    self.sup.force_restart(&spec).await?;
+                    rep.warn(format!(
+                        "Wi-Fi {}: multi-link (MLO) did not come up ({why}): your card or driver does not support it as an access point; running one link on {}",
+                        n.name, n.ifname
+                    ));
+                    restarted = true;
+                } else {
+                    let _ = std::fs::remove_file(self.mlo_marker(&n.name));
+                    rep.applied(format!(
+                        "Wi-Fi {}: multi-link access point up with {} links",
+                        n.name,
+                        plan.links.len() + 1
+                    ));
+                }
+            }
             if restarted {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -929,7 +1135,7 @@ impl Applier for WifiApplier {
                     .unwrap_or(0);
                 let _ = write_atomic(&stamp, &now.to_string(), 0o600);
                 rep.applied(format!(
-                    "Wi-Fi {}: hostapd {} on {} (SSID {:?}, {} device credential(s))",
+                    "Wi-Fi {}: hostapd {} on {} (SSID {:?}, {}, {} MHz, {} device credential(s))",
                     n.name,
                     if was_running {
                         "restarted (SAE entries changed)"
@@ -938,6 +1144,8 @@ impl Applier for WifiApplier {
                     },
                     n.ifname,
                     n.ssid,
+                    wifigen::std_name(&plan.standard),
+                    plan.width,
                     net.creds.len()
                 ));
             } else if psk_changed {
@@ -1067,13 +1275,23 @@ impl Applier for WifiApplier {
                 }
                 out
             };
-            o.push_str(&format!("## {} ({})\n", conf.display(), name));
-            o.push_str(&redacted(render_hostapd(
-                &net,
-                &bridge,
-                &psk,
-                &self.ctrl_dir,
-            )?));
+            let plan = match self.plan_of(&net.network, &self.hostapd_caps()) {
+                Ok(p) => p,
+                Err(e) => {
+                    o.push_str(&format!("## {} ({name}): not started: {e}\n", conf.display()));
+                    continue;
+                }
+            };
+            for w in plan.warnings.iter().chain(plan.notes.iter()) {
+                o.push_str(&format!("# {w}\n"));
+            }
+            let hostapd = self.hostapd_bin().unwrap_or_else(|| PathBuf::from("hostapd"));
+            let spec = self.spec_for(&net, &bridge, &hostapd, &plan)?;
+            for (p, text, _) in &spec.files {
+                o.push_str(&format!("## {} ({})\n", p.display(), name));
+                o.push_str(&redacted(text.clone()));
+            }
+            let _ = &conf;
             o.push_str(&format!("## {}\n", psk.display()));
             o.push_str(&redacted(render_psk_file(&net)?));
         }
@@ -1085,6 +1303,7 @@ impl Applier for WifiApplier {
 
     async fn status(&self, store: &ConfigStore) -> Result<Value> {
         let mut nets = Vec::new();
+        let hcaps = self.hostapd_caps();
         for n in seg_wifi::list_networks(store).await? {
             let running = self.sup.is_running(SVC_HOSTAPD, &n.name);
             let stations: Vec<Value> = if running {
@@ -1124,13 +1343,32 @@ impl Applier for WifiApplier {
                 "recheck": n.channel == 0 && n.chan.recheck && !n.chan.recheck_time.is_empty(),
                 "recheck_time": n.chan.recheck_time,
             });
+            // asked for vs. what this radio + hostapd run, and why
+            let mut probe_net = n.clone();
+            if probe_net.channel == 0 {
+                probe_net.channel = st.as_ref().map(|s| s.channel).unwrap_or(0);
+            }
+            let gen = match self.plan_of(&probe_net, &hcaps) {
+                Ok(p) => json!({
+                    "asked": {"standard": n.gen.standard, "width": n.chan.width, "mlo_links": n.gen.mlo_links},
+                    "standard": p.standard, "standard_name": wifigen::std_name(&p.standard),
+                    "width": p.width, "bss_color": p.bss_color,
+                    "discovery": p.discovery.as_ref().map(|(k, i)| json!({"kind": k, "interval": i})),
+                    "links": p.links, "warnings": p.warnings, "notes": p.notes, "error": Value::Null,
+                }),
+                Err(e) => json!({
+                    "asked": {"standard": n.gen.standard, "width": n.chan.width, "mlo_links": n.gen.mlo_links},
+                    "error": e.to_string(), "warnings": [], "notes": [],
+                }),
+            };
             nets.push(json!({
                 "network": n.name, "ifname": n.ifname, "running": running,
-                "enabled": n.enabled, "stations": stations, "channel": chan,
+                "enabled": n.enabled, "stations": stations, "channel": chan, "generation": gen,
             }));
         }
         Ok(json!({
             "hostapd_installed": self.hostapd_bin().is_some(),
+            "hostapd": hcaps,
             "networks": nets,
             "radios": radios(),
         }))
@@ -1424,6 +1662,12 @@ mod tests {
         calls: Mutex<u64>,
         /// when set, every survey swaps `busy` with this map (two channels that trade places within the noise)
         flip: Mutex<Option<BTreeMap<i64, u64>>>,
+        /// `iw phy info` text instead of the plain 2.4 GHz channel list
+        phy: Mutex<Option<String>>,
+        /// countries `reg_set` was called with
+        regs: Mutex<Vec<String>>,
+        /// interfaces whose `hostapd_status` reports DISABLED (a link that did not come up)
+        down: Mutex<Vec<String>>,
     }
     impl Default for FakeIw {
         fn default() -> Self {
@@ -1439,6 +1683,9 @@ mod tests {
                 switches: Mutex::new(vec![]),
                 calls: Mutex::new(0),
                 flip: Mutex::new(None),
+                phy: Mutex::new(None),
+                regs: Mutex::new(vec![]),
+                down: Mutex::new(vec![]),
             }
         }
     }
@@ -1489,6 +1736,9 @@ mod tests {
             Ok(String::new())
         }
         fn phy_info(&self, _: &str) -> Result<String> {
+            if let Some(p) = self.phy.lock().unwrap().clone() {
+                return Ok(p);
+            }
             let mut o: String = (1..=13)
                 .map(|c| format!("\t\t\t* {} MHz [{c}] (20.0 dBm)\n", 2407 + c * 5))
                 .collect();
@@ -1500,11 +1750,16 @@ mod tests {
         fn mac_of(&self, i: &str) -> Option<String> {
             (i == "wlan0").then(|| "02:00:00:00:00:00".to_string())
         }
-        fn hostapd_status(&self, _: &str) -> Result<String> {
+        fn hostapd_status(&self, i: &str) -> Result<String> {
+            let st = if self.down.lock().unwrap().iter().any(|d| d == i) { "DISABLED" } else { "ENABLED" };
             Ok(format!(
-                "state=ENABLED\nchannel={}\n",
+                "state={st}\nchannel={}\n",
                 self.channel.lock().unwrap()
             ))
+        }
+        fn reg_set(&self, c: &str) -> Result<()> {
+            self.regs.lock().unwrap().push(c.to_string());
+            Ok(())
         }
         fn chan_switch(&self, _: &str, count: i64, freq: i64, _: &[String]) -> Result<String> {
             self.switches
@@ -2022,4 +2277,100 @@ mod tests {
         assert!(r.applied.iter().any(|x| x.contains("stopped")), "{r:?}");
         assert!(!l.apply.sup.is_running(SVC_HOSTAPD, "home") && !l.dir.join("home.psk").exists());
     }
+    const PHY_DE: &str = include_str!("testdata/iw-phy-hwsim-de.txt");
+    const PHY_WORLD: &str = include_str!("testdata/iw-phy-hwsim-world.txt");
+
+    fn six(f: impl FnOnce(&mut NetworkInput)) -> NetworkInput {
+        let mut i = NetworkInput {
+            band: Some("6g".into()),
+            channel: Some(37),
+            country: Some("DE".into()),
+            ..net_in("wpa3")
+        };
+        f(&mut i);
+        i
+    }
+
+    #[tokio::test]
+    async fn a_wifi7_radio_runs_6ghz_wifi7_at_320_mhz_with_sae_h2e() {
+        let l = lab().await;
+        *l.iw.phy.lock().unwrap() = Some(PHY_DE.into());
+        let a = WifiApplier { hcaps: Some(HostapdCaps::full()), ..l.apply.clone() };
+        seg_wifi::create_network(&l.store, &six(|i| i.chan.width = Some(320))).await.unwrap();
+        let r = a.apply(&l.store).await.unwrap();
+        assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+        let c = std::fs::read_to_string(l.dir.join("home.conf")).unwrap();
+        for line in ["hw_mode=a", "op_class=137", "channel=37", "ieee80211ax=1", "ieee80211be=1", "eht_oper_chwidth=9",
+                     "eht_oper_centr_freq_seg0_idx=31", "sae_pwe=1", "ieee80211w=2", "country_code=DE"] {
+            assert!(c.lines().any(|x| x == line), "{line} missing:\n{c}");
+        }
+        assert!(!c.contains("ieee80211n=1") && !c.contains("WPA-PSK") && !c.contains("unsol_bcast"), "{c}");
+        assert!(c.lines().any(|x| x.starts_with("he_bss_color=")));
+        assert_eq!(l.iw.regs.lock().unwrap()[0], "DE", "the country is set before the radio is read");
+        let st = a.status(&l.store).await.unwrap();
+        let g = &st["networks"][0]["generation"];
+        assert_eq!((g["standard"].as_str(), g["width"].as_i64()), (Some("be"), Some(320)), "{g}");
+        assert_eq!(st["hostapd"]["be"], true);
+    }
+
+    #[tokio::test]
+    async fn six_ghz_stays_off_where_the_regulatory_domain_says_no() {
+        let l = lab().await;
+        *l.iw.phy.lock().unwrap() = Some(PHY_WORLD.into());
+        let a = WifiApplier { hcaps: Some(HostapdCaps::full()), ..l.apply.clone() };
+        seg_wifi::create_network(&l.store, &six(|i| i.country = Some("US".into()))).await.unwrap();
+        let r = a.apply(&l.store).await.unwrap();
+        assert!(r.warnings.iter().any(|w| w.contains("not started") && w.contains("country US")), "{:?}", r.warnings);
+        assert!(!a.sup.is_running(SVC_HOSTAPD, "home"));
+        let st = a.status(&l.store).await.unwrap();
+        assert!(st["networks"][0]["generation"]["error"].as_str().unwrap().contains("regulatory"));
+    }
+
+    #[tokio::test]
+    async fn an_older_hostapd_runs_wifi6_and_says_why_not_7() {
+        let l = lab().await;
+        *l.iw.phy.lock().unwrap() = Some(PHY_DE.into());
+        let ax = HostapdCaps { be: false, mld: false, ..HostapdCaps::full() };
+        let a = WifiApplier { hcaps: Some(ax), ..l.apply.clone() };
+        let mut i = NetworkInput { band: Some("5g".into()), channel: Some(36), country: Some("DE".into()), ..net_in("wpa2") };
+        i.chan.width = Some(160);
+        i.gen.standard = Some("be".into());
+        seg_wifi::create_network(&l.store, &i).await.unwrap();
+        let r = a.apply(&l.store).await.unwrap();
+        assert!(r.warnings.iter().any(|w| w.contains("CONFIG_IEEE80211BE")), "{:?}", r.warnings);
+        let c = std::fs::read_to_string(l.dir.join("home.conf")).unwrap();
+        assert!(c.contains("ieee80211ax=1\nhe_oper_chwidth=2\nhe_oper_centr_freq_seg0_idx=50\n") && !c.contains("ieee80211be"), "{c}");
+        assert!(c.contains("vht_capab=[VHT160]") && c.contains("wpa_key_mgmt=WPA-PSK"), "WPA2 stays on 5 GHz:\n{c}");
+    }
+
+    #[tokio::test]
+    async fn multi_link_starts_every_link_or_falls_back_to_one() {
+        let l = lab().await;
+        *l.iw.phy.lock().unwrap() = Some(PHY_DE.into());
+        let a = WifiApplier { hcaps: Some(HostapdCaps::full()), ..l.apply.clone() };
+        let mut i = NetworkInput { band: Some("5g".into()), channel: Some(36), country: Some("DE".into()), ..net_in("wpa3") };
+        i.chan.width = Some(80);
+        i.gen.mlo_links = Some("6g/37/160".into());
+        i.gen.mlo_wait = Some(5);
+        let id = seg_wifi::create_network(&l.store, &i).await.unwrap();
+        let r = a.apply(&l.store).await.unwrap();
+        assert!(r.applied.iter().any(|x| x.contains("multi-link access point up with 2 links")), "{r:?}");
+        let c0 = std::fs::read_to_string(l.dir.join("home.conf")).unwrap();
+        let c1 = std::fs::read_to_string(l.dir.join("home-link1.conf")).unwrap();
+        assert!(c0.contains("mld_ap=1") && c0.contains("channel=36") && c0.contains("sae_pwe=1"), "{c0}");
+        assert!(c1.contains("mld_ap=1") && c1.contains("op_class=134") && c1.contains("channel=37") && c1.contains("interface=wlan0"), "{c1}");
+        // a driver whose second link never comes up: one link, said once, and not retried until the links change
+        l.iw.down.lock().unwrap().push("wlan0_link1".into());
+        i.gen.mlo_links = Some("6g/5/80".into());
+        seg_wifi::update_network(&l.store, id, &i).await.unwrap();
+        let r = a.apply(&l.store).await.unwrap();
+        assert!(r.warnings.iter().any(|w| w.contains("does not support it")), "{:?}", r.warnings);
+        let c0 = std::fs::read_to_string(l.dir.join("home.conf")).unwrap();
+        assert!(!c0.contains("mld_ap") && !l.dir.join("home-link1.conf").exists(), "{c0}");
+        let p = pid(&l);
+        let r = a.apply(&l.store).await.unwrap();
+        assert_eq!(pid(&l), p, "no restart loop");
+        assert!(r.warnings.iter().any(|w| w.contains("did not come up on this radio")), "{:?}", r.warnings);
+    }
+
 }

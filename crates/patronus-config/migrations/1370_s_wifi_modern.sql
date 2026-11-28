@@ -7,3 +7,4 @@ ALTER TABLE seg_wifi_networks ADD COLUMN bss_color INTEGER NOT NULL DEFAULT 0;  
 ALTER TABLE seg_wifi_networks ADD COLUMN discovery TEXT NOT NULL DEFAULT 'auto';    -- 6 GHz: auto | probe | fils | off
 ALTER TABLE seg_wifi_networks ADD COLUMN discovery_interval INTEGER NOT NULL DEFAULT 20; -- TU between discovery frames, 1-20
 ALTER TABLE seg_wifi_networks ADD COLUMN mlo_links TEXT NOT NULL DEFAULT '';        -- Wi-Fi 7 extra links: band/channel/width,...
+ALTER TABLE seg_wifi_networks ADD COLUMN mlo_wait INTEGER NOT NULL DEFAULT 20;       -- s every multi-link link gets to come up, 5-120

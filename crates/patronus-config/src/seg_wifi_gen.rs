@@ -18,6 +18,7 @@ pub const DEFAULT_BSS_COLOR: i64 = 0;
 pub const DEFAULT_DISCOVERY: &str = "auto";
 pub const DEFAULT_DISCOVERY_INTERVAL: i64 = 20;
 pub const DEFAULT_MLO_LINKS: &str = "";
+pub const DEFAULT_MLO_WAIT: i64 = 20;
 
 /// Generations, oldest first (the order `auto` climbs).
 pub const STANDARDS: &[&str] = &["n", "ac", "ax", "be"];
@@ -38,6 +39,8 @@ pub struct GenSettings {
     /// Wi-Fi 7 multi-link: extra links of the same radio, `band/channel/width` comma separated
     /// (e.g. `6g/37/320,2g/6/20`); empty = one link
     pub mlo_links: String,
+    /// seconds every link of a multi-link access point gets to come up before it falls back to one link
+    pub mlo_wait: i64,
 }
 
 impl Default for GenSettings {
@@ -48,6 +51,7 @@ impl Default for GenSettings {
             discovery: DEFAULT_DISCOVERY.into(),
             discovery_interval: DEFAULT_DISCOVERY_INTERVAL,
             mlo_links: DEFAULT_MLO_LINKS.into(),
+            mlo_wait: DEFAULT_MLO_WAIT,
         }
     }
 }
@@ -65,6 +69,8 @@ pub struct GenInput {
     pub discovery_interval: Option<i64>,
     #[serde(default)]
     pub mlo_links: Option<String>,
+    #[serde(default)]
+    pub mlo_wait: Option<i64>,
 }
 
 /// One extra link of a multi-link access point.
@@ -145,6 +151,9 @@ impl GenSettings {
         if let Some(v) = i.discovery_interval {
             g.discovery_interval = v;
         }
+        if let Some(v) = i.mlo_wait {
+            g.mlo_wait = v;
+        }
         if let Some(v) = &i.mlo_links {
             g.mlo_links = v
                 .split(',')
@@ -199,6 +208,12 @@ impl GenSettings {
             return Err(invalid(format!(
                 "discovery interval {}: 1 to 20 time units",
                 self.discovery_interval
+            )));
+        }
+        if !(5..=120).contains(&self.mlo_wait) {
+            return Err(invalid(format!(
+                "multi-link start wait {} s: 5 to 120",
+                self.mlo_wait
             )));
         }
         let links = parse_links(&self.mlo_links)?;
@@ -271,6 +286,7 @@ mod tests {
         assert!(g(|x| x.discovery = "beacon".into()).validate("6g", 20, "wpa3").is_err());
         assert!(g(|x| x.discovery_interval = 21).validate("6g", 20, "wpa3").is_err());
         assert!(g(|x| x.discovery_interval = 0).validate("6g", 20, "wpa3").is_err());
+        assert!(g(|x| x.mlo_wait = 4).validate("6g", 20, "wpa3").is_err());
     }
 
     #[test]

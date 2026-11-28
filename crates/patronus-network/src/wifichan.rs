@@ -267,6 +267,11 @@ pub trait Iw: Send + Sync {
     fn hostapd_status(&self, ifname: &str) -> Result<String>;
     fn chan_switch(&self, ifname: &str, count: i64, freq: i64, args: &[String]) -> Result<String>;
     fn pause(&self, secs: u64);
+    /// Set the regulatory domain (`iw reg set CC`) before the radio's channels are read: under the world
+    /// domain most 5 GHz and every 6 GHz channel is "no IR". Fakes keep the default (nothing to set).
+    fn reg_set(&self, _country: &str) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// The real tools: `iw`, `hostapd_cli`, sysfs.
@@ -444,6 +449,30 @@ impl Iw for IwTools {
             return Err(err(format!("chan_switch refused: {}", o.trim())));
         }
         Ok(o)
+    }
+    fn reg_set(&self, country: &str) -> Result<()> {
+        if country.len() != 2 || !country.bytes().all(|b| b.is_ascii_uppercase()) {
+            return Err(err(format!("bad country code {country:?}")));
+        }
+        let have = |c: &str| {
+            Command::new("iw")
+                .args(["reg", "get"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains(&format!("country {c}:")))
+                .unwrap_or(false)
+        };
+        if have(country) {
+            return Ok(());
+        }
+        run(Command::new("iw").args(["reg", "set", country]), "iw reg set")?;
+        // the kernel applies it asynchronously (regulatory.db lookup)
+        for _ in 0..20 {
+            if have(country) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        Ok(())
     }
     fn pause(&self, secs: u64) {
         std::thread::sleep(std::time::Duration::from_secs(secs));
@@ -924,7 +953,20 @@ pub fn switch_by_csa(
     width: i64,
     count: i64,
 ) -> Result<bool> {
-    let (f, args) = csa_args(band, ch, width);
+    switch_by_csa_std(iw, ifname, band, ch, width, count, "ac")
+}
+
+/// [`switch_by_csa`] for a generation (`he`/`eht` are named in the announcement).
+pub fn switch_by_csa_std(
+    iw: &dyn Iw,
+    ifname: &str,
+    band: &str,
+    ch: i64,
+    width: i64,
+    count: i64,
+    std: &str,
+) -> Result<bool> {
+    let (f, args) = csa_args_std(band, ch, width, std);
     iw.chan_switch(ifname, count, f, &args)?;
     // the announcement counts beacons (~102 ms each); then hostapd is on the new channel
     for _ in 0..(count / 5 + 6) {

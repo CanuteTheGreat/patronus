@@ -366,24 +366,26 @@ pub fn hostapd_caps_of(bin: &[u8], version: &str) -> HostapdCaps {
     }
 }
 
-/// Probe the installed hostapd.
+/// Probe the installed hostapd (its binary only: nothing is executed, so a wrapper or a stuck binary
+/// cannot hang an apply). The version is the `hostapd vX.Y` banner compiled into it.
 pub fn hostapd_caps(bin: &Path) -> HostapdCaps {
     let Ok(b) = std::fs::read(bin) else {
         return HostapdCaps::default();
     };
-    let v = Command::new(bin)
-        .arg("-v")
-        .output()
-        .map(|o| {
-            let t = String::from_utf8_lossy(&o.stderr).to_string()
-                + &String::from_utf8_lossy(&o.stdout);
-            t.split_whitespace()
-                .find(|w| w.starts_with('v') && w[1..].starts_with(|c: char| c.is_ascii_digit()))
-                .map(|w| w.trim_start_matches('v').to_string())
-                .unwrap_or_default()
-        })
-        .unwrap_or_default();
-    hostapd_caps_of(&b, &v)
+    hostapd_caps_of(&b, &banner_version(&b))
+}
+
+/// `2.12` from the `hostapd v2.12` banner in a binary (empty when absent).
+pub fn banner_version(bin: &[u8]) -> String {
+    let k = b"hostapd v";
+    let Some(i) = bin.windows(k.len()).position(|w| w == k) else {
+        return String::new();
+    };
+    bin[i + k.len()..]
+        .iter()
+        .take_while(|c| c.is_ascii_alphanumeric() || **c == b'.' || **c == b'-')
+        .map(|c| *c as char)
+        .collect()
 }
 
 /// `iw phy <phy> info` -> (AP mode supported, bands).
@@ -519,6 +521,8 @@ mod tests {
         let h = hostapd_caps_of(b"he_oper_chwidth\0eht_oper_chwidth\0mld_ap\0", "2.12");
         assert!(h.be && h.mld);
         assert!(!hostapd_caps_of(b"", "").installed);
+        assert_eq!(banner_version(b"\0hostapd v2.12\nUser space"), "2.12");
+        assert_eq!(banner_version(b"#!/bin/sh\nsleep 300\n"), "");
     }
 
     #[test]

@@ -318,6 +318,7 @@ fn network_row(r: &sqlx::sqlite::SqliteRow) -> Network {
             discovery: r.get("discovery"),
             discovery_interval: r.get("discovery_interval"),
             mlo_links: r.get("mlo_links"),
+            mlo_wait: r.get("mlo_wait"),
         },
         country: r.get("country"),
         restart_on_credential_change: security != "wpa2",
@@ -448,8 +449,8 @@ pub async fn create_network(store: &ConfigStore, i: &NetworkInput) -> Result<i64
         "INSERT INTO seg_wifi_networks (name, ifname, ssid, band, channel, country, security, segment, unknown_policy, enrol_secret, enabled, updated_at,
             chanlist, width, chan_recheck, chan_time, chan_hyst, chan_min_gain, chan_confirm, chan_confirm_gap, chan_csa,
             chan_csa_count, chan_rounds, chan_dwell, chan_bss_cost, chan_min_signal, chan_history,
-            standard, bss_color, discovery, discovery_interval, mlo_links)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?)",
+            standard, bss_color, discovery, discovery_interval, mlo_links, mlo_wait)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?)",
     )
     .bind(&i.name)
     .bind(&i.ifname)
@@ -483,6 +484,7 @@ pub async fn create_network(store: &ConfigStore, i: &NetworkInput) -> Result<i64
     .bind(&c.gen.discovery)
     .bind(c.gen.discovery_interval)
     .bind(&c.gen.mlo_links)
+    .bind(c.gen.mlo_wait)
     .execute(store.pool()?)
     .await
     .map_err(|e| unique(e, &format!("Wi-Fi network {} or interface {}", i.name, i.ifname)))?;
@@ -524,7 +526,7 @@ pub async fn update_network(store: &ConfigStore, id: i64, i: &NetworkInput) -> R
         "UPDATE seg_wifi_networks SET name=?, ifname=?, ssid=?, band=?, channel=?, country=?, security=?, segment=?, unknown_policy=?, enrol_secret=?, enabled=?, updated_at=?,
            chanlist=?, width=?, chan_recheck=?, chan_time=?, chan_hyst=?, chan_min_gain=?, chan_confirm=?, chan_confirm_gap=?,
            chan_csa=?, chan_csa_count=?, chan_rounds=?, chan_dwell=?, chan_bss_cost=?, chan_min_signal=?, chan_history=?,
-           standard=?, bss_color=?, discovery=?, discovery_interval=?, mlo_links=?
+           standard=?, bss_color=?, discovery=?, discovery_interval=?, mlo_links=?, mlo_wait=?
          WHERE id=?",
     )
     .bind(&i.name)
@@ -559,6 +561,7 @@ pub async fn update_network(store: &ConfigStore, id: i64, i: &NetworkInput) -> R
     .bind(&c.gen.discovery)
     .bind(c.gen.discovery_interval)
     .bind(&c.gen.mlo_links)
+    .bind(c.gen.mlo_wait)
     .bind(id)
     .execute(store.pool()?)
     .await

@@ -13,6 +13,10 @@
 # Usage:
 #   NETLAB_BIN_DIR=<dir with patronus-cli + patronus-web> ci/netlab/wifi-hwsim.sh
 #   HWSIM_CONTAINER=<running container with /t, hostapd, wpa_supplicant, iw> ci/netlab/wifi-hwsim.sh
+#   Wi-Fi 6/6E/7 + multi-link (lane-s-wifi-modern-hwsim.sh):
+#   HWSIM_MODPARAMS="mlo=1" HWSIM_RADIOS=4 HWSIM_HOSTAPD_SRC=2.12 HWSIM_SCENARIOS=lane-s-wifi-modern-hwsim.sh ci/netlab/wifi-hwsim.sh
+#   (HWSIM_MODPARAMS = extra mac80211_hwsim parameters; HWSIM_HOSTAPD_SRC = build that upstream hostapd/wpa_supplicant
+#   release with the Gentoo ebuild's options into /opt/wifi/wrap, first on the scenarios' PATH, ci/netlab/build-hostapd.sh)
 #
 # Hosts with the module: rw-man-02/03 (x86_64, kernel 7.0; the hwsim-x86_64 runner lane), rw-man-04/05
 # (arm64, untested); rw-man-01 (kernel 6.8) has none. Where the module cannot be loaded, or a scenario
@@ -39,7 +43,7 @@ fi
 # job container, through a throw-away privileged sibling that sees the host's /lib/modules
 modctl() { # load|unload
   local cmd="rmmod mac80211_hwsim"
-  [ "$1" = load ] && cmd="modprobe mac80211_hwsim radios=$RADIOS"
+  [ "$1" = load ] && cmd="modprobe mac80211_hwsim radios=$RADIOS ${HWSIM_MODPARAMS:-}"
   if $SUDO $cmd >/dev/null 2>&1; then return 0; fi
   docker run --rm --privileged -v /lib/modules:/lib/modules:ro "$IMAGE" sh -c \
     "command -v modprobe >/dev/null || (apt-get update -qq >/dev/null && apt-get install -y -qq kmod >/dev/null); $cmd" >/dev/null 2>&1
@@ -67,6 +71,10 @@ if [ -z "$C" ]; then
     --memory 2g --cpus 2 "$IMAGE" sleep infinity >/dev/null
   docker exec "$C" bash -c 'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq hostapd wpasupplicant iw nftables iproute2 curl python3 dnsmasq-base conntrack sqlite3 iputils-ping udhcpc iwd dbus-daemon >/dev/null'
   docker exec "$C" mkdir -p /t
+  if [ -n "${HWSIM_HOSTAPD_SRC:-}" ]; then
+    docker cp ci/netlab/build-hostapd.sh "$C:/t/"
+    docker exec "$C" bash /t/build-hostapd.sh "$HWSIM_HOSTAPD_SRC"
+  fi
   docker cp "$BIN/patronus-cli" "$C:/t/patronus"; docker cp "$BIN/patronus-web" "$C:/t/patronus-web"
   docker cp ci/netlab/lib.sh "$C:/t/"; for s in $SCENARIOS; do docker cp "ci/netlab/$s" "$C:/t/"; done
 fi
