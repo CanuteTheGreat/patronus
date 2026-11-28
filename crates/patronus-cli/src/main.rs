@@ -211,6 +211,12 @@ enum Commands {
         action: UdpRelayCommands,
     },
 
+    /// RFC 2136 dynamic DNS client (USE=rfc2136)
+    Rfc2136 {
+        #[command(subcommand)]
+        action: Rfc2136Commands,
+    },
+
     /// SD-WAN edge agent (join the overlay of a Patronus SD-WAN dashboard)
     Edge {
         #[command(subcommand)]
@@ -449,6 +455,21 @@ enum UdpRelayCommands {
         stats: Option<PathBuf>,
     },
     /// Print the configuration the relay would run with, from the store
+    Show,
+}
+
+#[derive(Subcommand)]
+enum Rfc2136Commands {
+    /// Run the client (what the patronus-daemon@rfc2136 service does)
+    Run {
+        /// Generated client configuration (JSON, carries the TSIG secrets)
+        #[arg(long)]
+        conf: PathBuf,
+        /// Where to write the per-client status (JSON), refreshed every pass
+        #[arg(long)]
+        stats: Option<PathBuf>,
+    },
+    /// Print the configuration the clients would run with, from the store (secrets masked)
     Show,
 }
 
@@ -787,6 +808,10 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::UdpRelay { action } => {
             commands::udprelay::run(action, cli.db).await?;
+        }
+
+        Commands::Rfc2136 { action } => {
+            commands::rfc2136::run(action, cli.db).await?;
         }
 
         Commands::Edge { action } => {

@@ -3,7 +3,7 @@
 # Distributed under the terms of the GNU General Public License v3
 
 # Multiplexed: /etc/init.d/patronus-daemon.<instance> -> patronus-daemon
-# (softflowd-<dev>, igmpproxy, udp-relay, tayga, xl2tpd, suricata). `patronus apply` and
+# (softflowd-<dev>, igmpproxy, udp-relay, rfc2136, tayga, xl2tpd, suricata). `patronus apply` and
 # the web UI create the symlink and start/stop the instance when the matching
 # feature page is switched on; the command line and its config are generated
 # from the config store into /var/lib/patronus/net. Do not add it to a
