@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import time
 
-from . import arch, hwprofile, initsys, luksroot, netvirt, portageperms, portableswap, secretcheck, testmachine, tpmunlock, zfsswap
+from . import arch, hwprofile, initsys, luksroot, netvirt, portageperms, portableswap, secretcheck, testmachine, tpmunlock, updchan, zfsswap
 
 LOG = "/var/log/live-installer.log"
 
@@ -519,6 +519,8 @@ def _default_fs(profile):
 def default_config(profile):
     fs, fs_why = _default_fs(profile)
     c = _default_config(profile, fs, fs_why)
+    from . import updchan
+    c["update_channel"] = updchan.default(profile)
     netvirt.defaults(c)
     apply_encryption_policy(profile, c)
     return c
@@ -544,13 +546,15 @@ def apply_encryption_policy(profile, c, tpm_ok=None):
 def _default_config(profile, fs, fs_why):
     return {
         "locale": "en_US.UTF-8", "keymap": "us", "timezone": "UTC",
-        "disks": [], "fs": fs, "fs_why": fs_why, "zfs_raid": "single", "luks_passphrase": "",
+        "disks": [], "fs": fs, "fs_why": fs_why, "zfs_raid": "single", "zfs_pool": "rpool", "luks_passphrase": "",
         "swap": "auto",              # auto (portable = hibernate swap, server = none) | none | hibernate  (portableswap.py)
         "desktop": {"enable": False, "user": "", "password": "", "password_hash": "", "autologin": False}, "hw": "auto",
         "hostname": profile["default_hostname"],
         "mgmt": {"iface": "", "mode": "dhcp", "address": "", "gateway": "", "dns": ""},
         "wan": {"iface": "", "mode": "dhcp", "address": "", "gateway": "", "dns": ""},
         "lan": {"iface": "", "mode": "static", "address": "192.168.1.1/24"},
+        "opt": [],                    # wan-lan products: OPT1, OPT2 ... interfaces (role only; addresses are set after install)
+        "update_channel": "",         # products with update_channels (updchan.py)
         "wifi": None,
         "root_password": "", "root_hash": "", "web_password": "",
         "ssh_keys": [], "ssh_password_auth": False, "email": "",
@@ -612,6 +616,8 @@ def config_from_answers(profile, path):
         c["desktop"].update({k: de[k] for k in ("enable", "user", "password", "password_hash", "autologin") if k in de})
     c["hw"] = a.get("hardware", {}).get("profile", "auto")
     c["zfs_raid"] = d.get("zfs_raid", "single")
+    if d.get("zfs_pool"):
+        c["zfs_pool"] = str(d["zfs_pool"]).strip()
     enc = d.get("encryption", d.get("encrypt", False))
     if profile.get("encryption") == "tpm-or-none":
         # appliance: encryption is decided by the machine (TPM present and working -> encrypted + unattended, else none); "auto" | "none" only
@@ -647,7 +653,11 @@ def config_from_answers(profile, path):
         if src.get("iface") == "none":
             c[sect]["iface"] = ""
             c[sect]["_none"] = True
+    opt = n.get("opt", [])
+    c["opt"] = [opt] if isinstance(opt, str) else [str(x) for x in opt]
     netvirt.from_answers(c, n)
+    from . import updchan
+    updchan.from_answers(c, a, profile)
     return c
 
 
@@ -676,6 +686,9 @@ def validate_config(profile, c, unattended=False, nic_names=None, require_secret
         rp = zfsroot.raid_problem(c["zfs_raid"], len(set(c["disks"])))
         if rp:
             errs.append(rp)
+        pp = zfsroot.pool_name_problem(zfsroot.pool_name(c))
+        if pp:
+            errs.append(pp)
     if c["fs"] != "zfs" and len(c["disks"]) > 1:
         errs.append("only ZFS uses more than one disk")
     if c.get("install_type") == "desktop":
@@ -739,7 +752,29 @@ def validate_config(profile, c, unattended=False, nic_names=None, require_secret
                     errs.append(f"{s} gateway: " + ip_problem(n["gateway"], n["address"]))
                 if n.get("dns") and dns_problem(n["dns"]):
                     errs.append(f"{s} dns: " + dns_problem(n["dns"]))
+    errs += opt_problems(profile, c, nic_names)
+    from . import updchan
+    if updchan.problem(profile, c.get("update_channel", "")):
+        errs.append(updchan.problem(profile, c.get("update_channel", "")))
     errs += netvirt.problems(profile, c, nic_names)
+    return errs
+
+
+def opt_problems(profile, c, nic_names=None):
+    """OPT interfaces: wan-lan products only, distinct, not the WAN/LAN port, present on this machine (when the NIC list is known)"""
+    opts = c.get("opt") or []
+    if not opts:
+        return []
+    if profile["network_mode"] != "wan-lan":
+        return ["network.opt: OPT interfaces exist only on WAN/LAN products"]
+    errs = []
+    if len(set(opts)) != len(opts):
+        errs.append("network.opt: an interface is listed twice")
+    for o in opts:
+        if o in (c["wan"].get("iface"), c["lan"].get("iface")):
+            errs.append(f"network.opt: {o} is already the WAN or LAN interface")
+        elif nic_names is not None and o not in nic_names:
+            errs.append(f"network.opt: no interface {o} on this machine ({', '.join(nic_names) or 'none found'})")
     return errs
 
 
@@ -1079,6 +1114,10 @@ class Installer:
             # the pool was created on the live system: give the installed system the same host id
             if os.path.exists("/etc/hostid"):
                 shutil.copy("/etc/hostid", f"{T}/etc/hostid")
+            # the initramfs imports the root pool BEFORE the installed /etc/hostid is readable: it must carry the same file, for this
+            # initramfs and every one a kernel update builds (dracut's zfs module installs it hostonly-only, so force it)
+            from . import zfsroot
+            self.write("/etc/dracut.conf.d/92-horcrux-hostid.conf", zfsroot.HOSTID_DRACUT_CONF)
             for svc in ("zfs-import", "zfs-mount"):
                 initsys.enable(self, svc, "boot")
         if c["root_hash"]:
@@ -1304,6 +1343,9 @@ class Installer:
             zfsroot.configure(self, self.cmdline_extra, self.kernel_glob)
         if hib:
             zfsswap.finish_config(self)   # fstab swap line, resume device, initramfs check (rebuilt here unless T2 did it)
+        if self.zfs():
+            from . import zfsroot
+            zfsroot.ensure_initramfs_hostid(self)     # whichever step built the initramfs (or none did): it must hold the pool's hostid
 
     def motd(self):
         return (f"\n  {self.p['title']} (installed {time.strftime('%F')})\n"
@@ -1345,6 +1387,23 @@ class Installer:
             self.log(f"removed the pinned interface-name from {n_pinned} NetworkManager profile(s)")
         if p["network_mode"] == "wan-lan":
             self.write_roles()
+        self.write_update_channel()
+
+    def write_update_channel(self):
+        """the update channel picked at install, into the product's config file ([update] channel; updchan.py)"""
+        from . import updchan
+        ch = self.c.get("update_channel", "")
+        if not (updchan.enabled(self.p) and ch):
+            return
+        rel = self.p["update_channel_file"]
+        path = self.target + rel
+        txt = open(path).read() if os.path.exists(path) else ""
+        st = os.stat(path) if os.path.exists(path) else None
+        open(path, "w").write(updchan.apply_toml(txt, ch))
+        if st:
+            os.chown(path, st.st_uid, st.st_gid)
+            os.chmod(path, st.st_mode & 0o7777)
+        self.log(f"update channel: {ch} ({rel} [update])")
 
     def write_roles(self):
         c = self.c
@@ -1357,7 +1416,9 @@ class Installer:
             open(path, "w").write(netvirt.apply_bootstrap(txt, c))
             self.log("first-boot network written to /etc/patronus/patronus.toml: " + "; ".join(netvirt.plan_lines(c)[:-1]))
         else:
-            open(path, "w").write(apply_roles(txt, wan, lan))
+            open(path, "w").write(apply_roles(txt, wan, lan, c.get("opt") or []))
+        if c.get("opt"):
+            self.log("OPT interfaces: " + ", ".join(f"OPT{i}={o}" for i, o in enumerate(c["opt"], 1)))
         self.run(["chgrp", "patronus", "/etc/patronus/patronus.toml"], chroot=True, check=False)
         self.run(["chmod", "0640", "/etc/patronus/patronus.toml"], chroot=True, check=False)
 
@@ -1418,6 +1479,7 @@ class Installer:
             raise InstallError("no initramfs in /boot")
 
     def write_zfs_grubcfg(self, L):
+        from . import zfsroot
         T = self.target
         kver = sorted(f for f in os.listdir(f"{T}/lib/modules"))[-1]
         extra = arch.console_args()
@@ -1430,7 +1492,7 @@ set timeout=3
 insmod ext2
 search --no-floppy --fs-uuid --set=root {boot_uuid}
 menuentry "{self.p['title']} (ZFS root)" {{
-    linux /vmlinuz-{kver} root=ZFS=rpool/ROOT zfsforce=1 ro {extra}
+    linux /vmlinuz-{kver} root=ZFS={zfsroot.pool_name(self.c)}/ROOT zfsforce=1 ro {extra}
     initrd /initramfs-{kver}.img
 }}
 """
