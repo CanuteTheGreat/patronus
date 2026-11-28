@@ -10,7 +10,7 @@
 use patronus_config::ConfigStore;
 use patronus_network::activity::{self, Host, RawSample, Snapshot};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
@@ -22,7 +22,9 @@ const WARMUP_MS: u64 = 700;
 pub struct Sampler {
     snap: RwLock<Option<Arc<Snapshot>>>,
     running: AtomicBool,
-    last_request: AtomicI64,
+    /// Unix seconds of the last request. A mutex, not an `AtomicI64`: the
+    /// 32-bit MIPS router targets have no 64-bit atomics.
+    last_request: Mutex<i64>,
     store: Mutex<Option<Arc<ConfigStore>>>,
     proc_root: PathBuf,
     passwd: PathBuf,
@@ -37,11 +39,15 @@ impl Sampler {
         Sampler {
             snap: RwLock::new(None),
             running: AtomicBool::new(false),
-            last_request: AtomicI64::new(0),
+            last_request: Mutex::new(0),
             store: Mutex::new(None),
             proc_root,
             passwd,
         }
+    }
+
+    fn last_request_secs(&self) -> i64 {
+        *self.last_request.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// The process-wide sampler over the real `/proc`.
@@ -53,7 +59,7 @@ impl Sampler {
     /// The newest snapshot (`None` while the first two samples are being
     /// taken), and make sure the background task is running.
     pub fn latest(self: &Arc<Self>, store: &Arc<ConfigStore>) -> Option<Arc<Snapshot>> {
-        self.last_request.store(now(), Ordering::Relaxed);
+        *self.last_request.lock().unwrap_or_else(|e| e.into_inner()) = now();
         *self.store.lock().unwrap_or_else(|e| e.into_inner()) = Some(store.clone());
         if !self.running.swap(true, Ordering::AcqRel) {
             let me = self.clone();
@@ -91,7 +97,7 @@ impl Sampler {
         let mut pause = Duration::from_millis(WARMUP_MS);
         loop {
             tokio::time::sleep(pause).await;
-            if now() - self.last_request.load(Ordering::Relaxed) > IDLE_STOP_SECS {
+            if now() - self.last_request_secs() > IDLE_STOP_SECS {
                 return;
             }
             if let Some(cur) = self.read().await {
@@ -117,7 +123,7 @@ impl Sampler {
             self.sample_until_idle().await;
             self.running.store(false, Ordering::Release);
             // a request that arrived between the last idle check and the flag reset
-            let asked = now() - self.last_request.load(Ordering::Relaxed) <= IDLE_STOP_SECS;
+            let asked = now() - self.last_request_secs() <= IDLE_STOP_SECS;
             if !asked || self.running.swap(true, Ordering::AcqRel) {
                 return;
             }
