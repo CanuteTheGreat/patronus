@@ -21,7 +21,7 @@
 //! All IO goes through [`Iw`] (`iw`, `hostapd_cli`, sysfs), so the scoring and decisions are unit-tested with
 //! canned `iw` output and the whole path is proven on mac80211_hwsim (ci/netlab/lane-s-wifi-chan-hwsim.sh).
 
-use patronus_config::seg_wifi_chan::{block_of, ht40_plus, ChanSettings};
+use patronus_config::seg_wifi_chan::{block_of, centre_of, ht40_plus, ChanSettings};
 use patronus_core::{Error, Result};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -31,9 +31,11 @@ fn err(m: impl std::fmt::Display) -> Error {
     Error::Network(format!("Wi-Fi channel: {m}"))
 }
 
-/// Channel number -> centre frequency (MHz) of a band (`2g` / `5g`).
+/// Channel number -> centre frequency (MHz) of a band (`2g` / `5g` / `6g`).
 pub fn c2f(band: &str, ch: i64) -> i64 {
-    if band == "2g" {
+    if band == "6g" {
+        5950 + ch * 5
+    } else if band == "2g" {
         if ch == 14 {
             2484
         } else {
@@ -45,12 +47,24 @@ pub fn c2f(band: &str, ch: i64) -> i64 {
 }
 
 pub fn f2c(f: i64) -> i64 {
-    if f >= 5000 {
+    if f >= 5955 {
+        (f - 5950) / 5
+    } else if f >= 5000 {
         (f - 5000) / 5
     } else if f == 2484 {
         14
     } else {
         (f - 2407) / 5
+    }
+}
+
+/// The band of a frequency (MHz).
+pub fn band_of(f: i64) -> Option<&'static str> {
+    match f {
+        2400..=2499 => Some("2g"),
+        4900..=5924 => Some("5g"),
+        5925..=7125 => Some("6g"),
+        _ => None,
     }
 }
 
@@ -212,17 +226,20 @@ pub struct PhyChannels {
     pub csa: bool,
 }
 
-pub fn parse_phy(text: &str) -> PhyChannels {
+pub fn parse_phy(text: &str, band: &str) -> PhyChannels {
     let mut p = PhyChannels::default();
     for l in text.lines() {
         let t = l.trim();
         if let Some(rest) = t.strip_prefix("* ") {
+            // "* 2412.0 MHz [1] (20.0 dBm) (no IR)" (iw 6 prints decimals; older iw does not)
             if let Some((f, tail)) = rest.split_once(" MHz [") {
-                if let (Ok(f), Some((ch, tail))) = (f.trim().parse::<i64>(), tail.split_once(']')) {
+                if let (Ok(f), Some((ch, tail))) = (f.trim().parse::<f64>(), tail.split_once(']')) {
                     if let Ok(ch) = ch.trim().parse::<i64>() {
-                        let _ = f;
-                        p.usable
-                            .insert(ch, !(tail.contains("disabled") || tail.contains("no IR")));
+                        // 6 GHz numbers repeat 2.4 GHz ones: keep the asked band only
+                        if band_of(f.round() as i64) == Some(band) {
+                            p.usable
+                                .insert(ch, !(tail.contains("disabled") || tail.contains("no IR")));
+                        }
                     }
                 }
             }
@@ -551,10 +568,19 @@ pub fn measure(
         // an access point whose last beacon is older than this measurement has gone: the kernel only forgets
         // it after about 30 s, and it must not cost the channel it used to be on
         let limit = started.elapsed().as_millis() as u64 + 1000;
-        heard.extend(parse_scan(&t).into_iter().filter(|b| b.age_ms <= limit));
+        // a multi-band radio hears (and surveys) its other bands too: only this band's channels count
+        heard.extend(
+            parse_scan(&t)
+                .into_iter()
+                .filter(|b| b.age_ms <= limit && band_of(b.freq) == Some(band)),
+        );
         // each dwell replaces the channel's survey entry: add up what this round measured off our own channel
         for e in parse_survey(&iw.survey(ifname).unwrap_or_default()) {
-            if e.in_use || e.active == 0 || home0.as_ref().is_some_and(|h| h.freq == e.freq) {
+            if e.in_use
+                || e.active == 0
+                || band_of(e.freq) != Some(band)
+                || home0.as_ref().is_some_and(|h| h.freq == e.freq)
+            {
                 continue;
             }
             let c = m.samples.entry(f2c(e.freq)).or_default();
@@ -663,7 +689,7 @@ pub fn score(
         let busy = if wt > 0.0 { sum / wt } else { 0.0 };
         let (mut co, mut adj) = (0i64, 0.0f64);
         for b in &nb {
-            if band == "5g" {
+            if band != "2g" {
                 if block.iter().any(|x| covers5(b, *x)) {
                     co += 1;
                 }
@@ -769,50 +795,115 @@ pub fn visit(band: &str, width: i64, cands: &[i64], phy: &PhyChannels) -> Vec<i6
 // moving
 // ---------------------------------------------------------------------------
 
-/// hostapd.conf lines of the channel at a width (empty for plain 20 MHz: unchanged from fixed-channel configs).
-pub fn conf_lines(band: &str, ch: i64, width: i64) -> String {
+fn rank(std: &str) -> usize {
+    match std {
+        "ac" => 1,
+        "ax" => 2,
+        "be" => 3,
+        _ => 0,
+    }
+}
+
+/// `*_oper_chwidth` value of a width (0 = 20/40, 1 = 80, 2 = 160, 9 = 320).
+fn oper_chwidth(width: i64) -> i64 {
+    match width {
+        80 => 1,
+        160 => 2,
+        320 => 9,
+        _ => 0,
+    }
+}
+
+/// hostapd.conf lines of the channel at a width for a generation (`std` = the EFFECTIVE `n`/`ac`/`ax`/`be`).
+/// Empty for plain 20 MHz Wi-Fi 4 (unchanged from fixed-channel configs).
+pub fn conf_lines(band: &str, ch: i64, width: i64, std: &str) -> String {
     let mut o = String::new();
-    match (band, width) {
-        (_, 40) | ("5g", 80) => {
-            let plus = if band == "2g" { ch <= 7 } else { ht40_plus(ch) };
-            o.push_str(&format!(
-                "ht_capab=[HT40{}]\n",
-                if plus { '+' } else { '-' }
-            ));
-            if band == "5g" && width == 80 {
-                let block = block_of(band, ch, 80);
-                let center = block.iter().sum::<i64>() / block.len() as i64;
-                o.push_str(&format!(
-                    "ieee80211ac=1\nvht_oper_chwidth=1\nvht_oper_centr_freq_seg0_idx={center}\n"
-                ));
-            }
+    let r = rank(std);
+    if band == "6g" {
+        // 6 GHz: no HT/VHT elements; the operating class names the width
+        if let Some(oc) = patronus_config::seg_wifi_chan::op_class_6g(width) {
+            o.push_str(&format!("op_class={oc}\n"));
         }
-        _ => {}
+    } else if width >= 40 {
+        let plus = if band == "2g" { ch <= 7 } else { ht40_plus(ch) };
+        o.push_str(&format!(
+            "ht_capab=[HT40{}]\n",
+            if plus { '+' } else { '-' }
+        ));
+        if band == "5g" && width >= 80 && r >= 1 {
+            let center = centre_of(band, ch, width).unwrap_or(ch);
+            if width == 160 {
+                o.push_str("vht_capab=[VHT160]\n");
+            }
+            o.push_str(&format!(
+                "ieee80211ac=1\nvht_oper_chwidth={}\nvht_oper_centr_freq_seg0_idx={center}\n",
+                oper_chwidth(width)
+            ));
+        }
+    }
+    if r >= 2 {
+        o.push_str("ieee80211ax=1\n");
+        if band != "2g" && (band == "6g" || width >= 80) {
+            // HE has no 320 MHz: it describes the 160 MHz half that holds the primary channel
+            let hw = width.min(160);
+            let center = centre_of(band, ch, hw).unwrap_or(ch);
+            o.push_str(&format!(
+                "he_oper_chwidth={}\nhe_oper_centr_freq_seg0_idx={center}\n",
+                oper_chwidth(hw)
+            ));
+        }
+    }
+    if r >= 3 {
+        o.push_str("ieee80211be=1\n");
+        if band != "2g" && (band == "6g" || width >= 80) {
+            let center = centre_of(band, ch, width).unwrap_or(ch);
+            o.push_str(&format!(
+                "eht_oper_chwidth={}\neht_oper_centr_freq_seg0_idx={center}\n",
+                oper_chwidth(width)
+            ));
+        }
     }
     o
 }
 
-/// `hostapd_cli chan_switch COUNT FREQ ARGS` for a primary channel at a width.
+/// `hostapd_cli chan_switch COUNT FREQ ARGS` for a primary channel at a width (Wi-Fi 4/5).
 pub fn csa_args(band: &str, ch: i64, width: i64) -> (i64, Vec<String>) {
+    csa_args_std(band, ch, width, "ac")
+}
+
+/// `hostapd_cli chan_switch COUNT FREQ ARGS` for a primary channel at a width and generation.
+pub fn csa_args_std(band: &str, ch: i64, width: i64, std: &str) -> (i64, Vec<String>) {
     let f = c2f(band, ch);
     let mut a: Vec<String> = Vec::new();
-    if width >= 40 {
-        let plus = if band == "2g" { ch <= 7 } else { ht40_plus(ch) };
-        let so = if plus { 1 } else { -1 };
-        let block = block_of(band, ch, width);
-        let ctr = block.iter().sum::<i64>() as f64 / block.len() as f64;
-        let cf = if band == "2g" {
-            f + so * 10
-        } else {
-            5000 + (ctr * 5.0).round() as i64
-        };
-        a.push(format!("sec_channel_offset={so}"));
-        a.push(format!("center_freq1={cf}"));
+    if band == "6g" {
+        if width >= 40 {
+            let ctr = centre_of(band, ch, width).unwrap_or(ch);
+            a.push(format!("center_freq1={}", c2f(band, ctr)));
+        }
+        a.push(format!("bandwidth={width}"));
+    } else {
+        if width >= 40 {
+            let plus = if band == "2g" { ch <= 7 } else { ht40_plus(ch) };
+            let so = if plus { 1 } else { -1 };
+            let cf = if band == "2g" {
+                f + so * 10
+            } else {
+                c2f(band, centre_of(band, ch, width).unwrap_or(ch))
+            };
+            a.push(format!("sec_channel_offset={so}"));
+            a.push(format!("center_freq1={cf}"));
+        }
+        a.push(format!("bandwidth={width}"));
+        a.push("ht".into());
+        if band == "5g" && width >= 80 {
+            a.push("vht".into());
+        }
     }
-    a.push(format!("bandwidth={width}"));
-    a.push("ht".into());
-    if band == "5g" && width == 80 {
-        a.push("vht".into());
+    if rank(std) >= 2 {
+        a.push("he".into());
+    }
+    if rank(std) >= 3 {
+        a.push("eht".into());
     }
     (f, a)
 }
@@ -935,8 +1026,15 @@ mod tests {
         let s = parse_survey("Survey data from wlan0\n\tfrequency:\t\t\t2412 MHz [in use]\n\tchannel active time:\t\t1000 ms\n\tchannel busy time:\t\t 250 ms\nSurvey data from wlan0\n\tfrequency:\t\t\t2437 MHz\n\tchannel active time:\t\t100 ms\n\tchannel busy time:\t\t 10 ms\n");
         assert_eq!(s.len(), 2);
         assert!(s[0].in_use && s[0].busy == 250 && s[1].active == 100);
-        let p = parse_phy("\t\t\t* 2412 MHz [1] (20.0 dBm)\n\t\t\t* 2467 MHz [12] (disabled)\n\t\t\t* 5260 MHz [52] (23.0 dBm) (no IR, radar detection)\n\t\t\t* channel_switch\n");
-        assert!(p.csa && p.usable[&1] && !p.usable[&12] && !p.usable[&52]);
+        let p = parse_phy("\t\t\t* 2412 MHz [1] (20.0 dBm)\n\t\t\t* 2467 MHz [12] (disabled)\n\t\t\t* 5260 MHz [52] (23.0 dBm) (no IR, radar detection)\n\t\t\t* channel_switch\n", "2g");
+        assert!(p.csa && p.usable[&1] && !p.usable[&12] && !p.usable.contains_key(&52));
+        let p5 = parse_phy("\t\t\t* 5260 MHz [52] (23.0 dBm) (no IR, radar detection)\n", "5g");
+        assert!(!p5.usable[&52]);
+        // iw 6 prints decimals; 6 GHz channel numbers repeat 2.4 GHz ones: each band keeps its own
+        let t = "\t\t\t* 2412.0 MHz [1] (20.0 dBm) (no IR)\n\t\t\t* 5955.0 MHz [1] (23.0 dBm)\n\t\t\t* 6135.0 MHz [37] (23.0 dBm)\n";
+        assert!(!parse_phy(t, "2g").usable[&1]);
+        let p6 = parse_phy(t, "6g");
+        assert!(p6.usable[&1] && p6.usable[&37] && p6.usable.len() == 2);
         assert_eq!(usable("2g", 20, &[1, 6, 12], &p), vec![1]);
         assert_eq!(
             usable("2g", 20, &[1, 6], &PhyChannels::default()),
@@ -1109,16 +1207,73 @@ mod tests {
                 "ht"
             ]
         );
-        assert_eq!(conf_lines("2g", 6, 20), "");
-        assert_eq!(conf_lines("2g", 1, 40), "ht_capab=[HT40+]\n");
-        let c = conf_lines("5g", 149, 80);
+        assert_eq!(conf_lines("2g", 6, 20, "n"), "");
+        assert_eq!(conf_lines("2g", 1, 40, "n"), "ht_capab=[HT40+]\n");
+        let c = conf_lines("5g", 149, 80, "ac");
         assert!(
             c.contains("[HT40+]")
                 && c.contains("vht_oper_centr_freq_seg0_idx=155")
                 && c.contains("ieee80211ac=1"),
             "{c}"
         );
-        assert!(conf_lines("5g", 40, 40).contains("[HT40-]"));
+        assert!(conf_lines("5g", 40, 40, "n").contains("[HT40-]"));
+    }
+
+    #[test]
+    fn six_ghz_frequencies() {
+        assert_eq!(c2f("6g", 1), 5955);
+        assert_eq!(c2f("6g", 37), 6135);
+        assert_eq!(c2f("6g", 233), 7115);
+        assert_eq!(f2c(6135), 37);
+        assert_eq!(f2c(5825), 165);
+        assert_eq!(band_of(6135), Some("6g"));
+        assert_eq!(band_of(5180), Some("5g"));
+        assert_eq!(band_of(2412), Some("2g"));
+    }
+
+    #[test]
+    fn wifi6_and_wifi7_conf_lines() {
+        // Wi-Fi 6 on 2.4 GHz: HE on, no centre lines (HT40 only)
+        let c = conf_lines("2g", 6, 20, "ax");
+        assert_eq!(c, "ieee80211ax=1\n");
+        // 5 GHz 80 MHz Wi-Fi 6: VHT and HE both describe the block
+        let c = conf_lines("5g", 36, 80, "ax");
+        for l in ["ht_capab=[HT40+]", "ieee80211ac=1", "vht_oper_chwidth=1", "vht_oper_centr_freq_seg0_idx=42",
+                  "ieee80211ax=1", "he_oper_chwidth=1", "he_oper_centr_freq_seg0_idx=42"] {
+            assert!(c.lines().any(|x| x == l), "{l} missing in\n{c}");
+        }
+        assert!(!c.contains("eht"), "{c}");
+        // 160 MHz needs the VHT160 capability named
+        let c = conf_lines("5g", 36, 160, "ax");
+        for l in ["vht_capab=[VHT160]", "vht_oper_chwidth=2", "vht_oper_centr_freq_seg0_idx=50", "he_oper_chwidth=2", "he_oper_centr_freq_seg0_idx=50"] {
+            assert!(c.lines().any(|x| x == l), "{l} missing in\n{c}");
+        }
+        // Wi-Fi 5 at 160 MHz: no HE
+        assert!(!conf_lines("5g", 100, 160, "ac").contains("ieee80211ax"));
+        // Wi-Fi 7 on 5 GHz
+        let c = conf_lines("5g", 36, 80, "be");
+        assert!(c.contains("ieee80211be=1\neht_oper_chwidth=1\neht_oper_centr_freq_seg0_idx=42\n"), "{c}");
+        // 6 GHz: operating class, no HT/VHT, HE centre always
+        let c = conf_lines("6g", 37, 160, "ax");
+        assert_eq!(c, "op_class=134\nieee80211ax=1\nhe_oper_chwidth=2\nhe_oper_centr_freq_seg0_idx=47\n");
+        let c = conf_lines("6g", 5, 20, "ax");
+        assert_eq!(c, "op_class=131\nieee80211ax=1\nhe_oper_chwidth=0\nhe_oper_centr_freq_seg0_idx=5\n");
+        // 320 MHz: HE describes the 160 MHz half that holds the primary, EHT the whole block
+        let c = conf_lines("6g", 37, 320, "be");
+        assert_eq!(c, "op_class=137\nieee80211ax=1\nhe_oper_chwidth=2\nhe_oper_centr_freq_seg0_idx=47\nieee80211be=1\neht_oper_chwidth=9\neht_oper_centr_freq_seg0_idx=31\n");
+    }
+
+    #[test]
+    fn channel_switch_names_he_and_eht() {
+        let (_, a) = csa_args_std("5g", 36, 80, "ax");
+        assert_eq!(a, ["sec_channel_offset=1", "center_freq1=5210", "bandwidth=80", "ht", "vht", "he"]);
+        let (f, a) = csa_args_std("6g", 37, 160, "be");
+        assert_eq!(f, 6135);
+        assert_eq!(a, ["center_freq1=6185", "bandwidth=160", "he", "eht"]);
+        let (_, a) = csa_args_std("6g", 37, 320, "be");
+        assert_eq!(a, ["center_freq1=6105", "bandwidth=320", "he", "eht"]);
+        // the old signature is the Wi-Fi 4/5 behaviour
+        assert_eq!(csa_args("5g", 36, 80), csa_args_std("5g", 36, 80, "ac"));
     }
 
     #[test]

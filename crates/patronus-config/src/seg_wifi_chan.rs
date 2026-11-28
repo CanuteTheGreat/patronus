@@ -33,7 +33,7 @@ pub const DEFAULT_HISTORY: i64 = 200;
 pub struct ChanSettings {
     /// candidate channels, comma separated; empty = the band's default list (see [`default_candidates`])
     pub chanlist: String,
-    /// channel width in MHz: 20, 40 or (5 GHz only) 80
+    /// channel width in MHz: 20, 40, 80/160 (5 and 6 GHz), 320 (6 GHz only)
     pub width: i64,
     /// nightly re-check of an automatic channel
     pub recheck: bool,
@@ -137,6 +137,8 @@ pub fn band_channels(band: &str) -> Vec<i64> {
             .chain((100..=144).step_by(4))
             .chain((149..=165).step_by(4))
             .collect(),
+        // 6 GHz (U-NII-5..8): 20 MHz channels 1, 5, ... 233
+        "6g" => (1..=233).step_by(4).collect(),
         _ => Vec::new(),
     }
 }
@@ -152,6 +154,12 @@ pub fn block80_start(c: i64) -> Option<i64> {
 /// pair above or below; 5 GHz 40/80 = the aligned block).
 pub fn block_of(band: &str, c: i64, width: i64) -> Vec<i64> {
     match (band, width) {
+        ("5g", 160) => match [36, 100].into_iter().find(|b| c >= *b && c <= *b + 28) {
+            Some(b) => (0..8).map(|i| b + i * 4).collect(),
+            None => Vec::new(),
+        },
+        ("6g", 20) => vec![c],
+        ("6g", 40 | 80 | 160 | 320) => block6(c, width),
         ("5g", 80) => match block80_start(c) {
             Some(b) => (0..4).map(|i| b + i * 4).collect(),
             None => vec![c],
@@ -175,6 +183,67 @@ pub fn block_of(band: &str, c: i64, width: i64) -> Vec<i64> {
     }
 }
 
+/// 6 GHz block of a primary channel: aligned groups of `width / 20` channels; 320 MHz uses the 320-1
+/// channelization (centres 31, 95, 159) and 320-2 (centre 191) for the channels above 189. Empty when the
+/// block would run past channel 233.
+fn block6(c: i64, width: i64) -> Vec<i64> {
+    if !(1..=233).contains(&c) || (c - 1) % 4 != 0 {
+        return Vec::new();
+    }
+    let n = width / 20;
+    let start = if width == 320 {
+        match c {
+            1..=189 => (c - 1) / 64 * 64 + 1,
+            193..=221 => 161,
+            _ => return Vec::new(),
+        }
+    } else {
+        (c - 1) / (4 * n) * (4 * n) + 1
+    };
+    let v: Vec<i64> = (0..n).map(|i| start + i * 4).collect();
+    if *v.last().unwrap_or(&999) > 233 {
+        return Vec::new();
+    }
+    v
+}
+
+/// Centre channel index of a primary channel's block at a width (`*_oper_centr_freq_seg0_idx`), `None` when the
+/// channel cannot carry that width.
+pub fn centre_of(band: &str, c: i64, width: i64) -> Option<i64> {
+    let b = block_of(band, c, width);
+    if b.is_empty() || (width >= 40 && b.len() as i64 != width / 20) {
+        return None;
+    }
+    Some((b[0] + b[b.len() - 1]) / 2)
+}
+
+/// 6 GHz global operating class of a channel width (802.11 Annex E: 131-134, 137).
+pub fn op_class_6g(width: i64) -> Option<i64> {
+    match width {
+        20 => Some(131),
+        40 => Some(132),
+        80 => Some(133),
+        160 => Some(134),
+        320 => Some(137),
+        _ => None,
+    }
+}
+
+/// 6 GHz preferred scanning channel (5, 21, 37, ... 229): clients look for access points here first.
+pub fn is_psc(c: i64) -> bool {
+    (5..=229).contains(&c) && (c - 5) % 16 == 0
+}
+
+/// Channel widths a band can carry (MHz).
+pub fn band_widths(band: &str) -> &'static [i64] {
+    match band {
+        "2g" => &[20, 40],
+        "5g" => &[20, 40, 80, 160],
+        "6g" => &[20, 40, 80, 160, 320],
+        _ => &[],
+    }
+}
+
 /// 5 GHz: is `c` the lower channel of its 40 MHz pair (secondary above = HT40+)?
 pub fn ht40_plus(c: i64) -> bool {
     matches!(
@@ -192,7 +261,22 @@ pub fn default_candidates(band: &str, width: i64) -> Vec<i64> {
         ("2g", _) => vec![1, 6, 11],
         ("5g", 80) => vec![36, 149],
         ("5g", 40) => vec![36, 44, 149, 157],
+        ("5g", 160) => vec![36],
         ("5g", _) => vec![36, 40, 44, 48, 149, 153, 157, 161, 165],
+        // 6 GHz: the preferred scanning channels, one per block at the width
+        ("6g", w) => {
+            let mut seen: Vec<i64> = Vec::new();
+            let mut out = Vec::new();
+            for c in band_channels("6g").into_iter().filter(|c| is_psc(*c)) {
+                if let Some(ctr) = centre_of("6g", c, w) {
+                    if !seen.contains(&ctr) {
+                        seen.push(ctr);
+                        out.push(c);
+                    }
+                }
+            }
+            out
+        }
         _ => Vec::new(),
     }
 }
@@ -216,6 +300,11 @@ pub fn parse_chanlist(band: &str, width: i64, s: &str) -> Result<Vec<i64>> {
         }
         if band == "5g" && width == 80 && block80_start(c).is_none() {
             return Err(invalid(format!("channel list: {c} is in no 80 MHz block")));
+        }
+        if (band == "6g" || width == 160) && centre_of(band, c, width).is_none() {
+            return Err(invalid(format!(
+                "channel list: {c} is in no {width} MHz block"
+            )));
         }
         if !out.contains(&c) {
             out.push(c);
@@ -286,15 +375,11 @@ impl ChanSettings {
     }
 
     pub fn validate(&self, band: &str) -> Result<()> {
-        match (band, self.width) {
-            (_, 20) | (_, 40) => {}
-            ("5g", 80) => {}
-            _ => {
-                return Err(invalid(format!(
-                    "width {} MHz for band {band}: 20 or 40 (80 on 5 GHz)",
-                    self.width
-                )))
-            }
+        if !band_widths(band).contains(&self.width) {
+            return Err(invalid(format!(
+                "width {} MHz for band {band}: 20 or 40 (80 and 160 on 5 and 6 GHz, 320 on 6 GHz only)",
+                self.width
+            )));
         }
         parse_chanlist(band, self.width, &self.chanlist)?;
         if !self.recheck_time.is_empty() {
@@ -649,5 +734,65 @@ mod tests {
         assert!(!default_candidates("5g", 20)
             .iter()
             .any(|c| (52..=144).contains(c)));
+    }
+
+    #[test]
+    fn six_ghz_channels_blocks_centres_and_operating_classes() {
+        let all = band_channels("6g");
+        assert_eq!((all[0], *all.last().unwrap(), all.len()), (1, 233, 59));
+        // 20/40/80/160 MHz blocks are aligned groups of 1/2/4/8 channels
+        assert_eq!(block_of("6g", 37, 40), vec![33, 37]);
+        assert_eq!(block_of("6g", 37, 80), vec![33, 37, 41, 45]);
+        assert_eq!(block_of("6g", 37, 160), (0..8).map(|i| 33 + i * 4).collect::<Vec<_>>());
+        // 320 MHz: 320-1 (centres 31/95/159) where it exists, 320-2 (191) above
+        assert_eq!(block_of("6g", 37, 320).first(), Some(&1));
+        assert_eq!(block_of("6g", 197, 320), (0..16).map(|i| 161 + i * 4).collect::<Vec<_>>());
+        assert!(block_of("6g", 229, 320).is_empty(), "no 320 MHz block above 221");
+        assert_eq!(centre_of("6g", 37, 20), Some(37));
+        assert_eq!(centre_of("6g", 37, 40), Some(35));
+        assert_eq!(centre_of("6g", 37, 80), Some(39));
+        assert_eq!(centre_of("6g", 37, 160), Some(47));
+        assert_eq!(centre_of("6g", 37, 320), Some(31));
+        assert_eq!(centre_of("6g", 197, 320), Some(191));
+        assert_eq!(centre_of("5g", 36, 80), Some(42));
+        assert_eq!(centre_of("5g", 36, 160), Some(50));
+        assert_eq!(centre_of("5g", 112, 160), Some(114));
+        assert_eq!(centre_of("5g", 149, 160), None, "149-161 is the last 5 GHz 80 MHz block");
+        assert_eq!(block_of("5g", 60, 160), (0..8).map(|i| 36 + i * 4).collect::<Vec<_>>());
+        assert_eq!(op_class_6g(20), Some(131));
+        assert_eq!(op_class_6g(40), Some(132));
+        assert_eq!(op_class_6g(80), Some(133));
+        assert_eq!(op_class_6g(160), Some(134));
+        assert_eq!(op_class_6g(320), Some(137));
+        assert_eq!(op_class_6g(60), None);
+        // preferred scanning channels: every 16th from 5
+        assert!(is_psc(5) && is_psc(37) && is_psc(229) && !is_psc(1) && !is_psc(33));
+        assert_eq!(default_candidates("6g", 20)[..3], [5, 21, 37]);
+        // one PSC per block at 160 MHz (8 blocks below 225; 229 is alone)
+        assert_eq!(default_candidates("6g", 160), vec![5, 37, 69, 101, 133, 165, 197]);
+        assert_eq!(default_candidates("6g", 320), vec![5, 69, 133, 197]);
+    }
+
+    #[test]
+    fn widths_per_band() {
+        let d = ChanSettings::default();
+        let w = |b: &str, v: i64| {
+            d.merged(b, &ChanInput { width: Some(v), ..Default::default() })
+        };
+        assert!(w("5g", 160).is_ok());
+        assert!(w("6g", 160).is_ok() && w("6g", 320).is_ok() && w("6g", 80).is_ok());
+        assert!(w("5g", 320).is_err() && w("2g", 160).is_err());
+        let e = w("5g", 320).unwrap_err().to_string();
+        assert!(e.contains("320") && e.contains("6 GHz"), "{e}");
+        // 6 GHz channel list: channels 1..233 step 4; at 160 MHz only channels inside a block
+        let l = |b: &str, width: i64, s: &str| {
+            d.merged(b, &ChanInput { width: Some(width), chanlist: Some(s.into()), ..Default::default() })
+        };
+        assert!(l("6g", 20, "5,37,229").is_ok());
+        assert!(l("6g", 20, "3").is_err() && l("6g", 20, "237").is_err());
+        assert!(l("6g", 160, "229").is_err());
+        assert!(l("6g", 320, "225").is_err());
+        assert!(l("5g", 160, "149").is_err() && l("5g", 160, "36,100").is_ok());
+        ChanSettings::default().validate("6g").unwrap();
     }
 }

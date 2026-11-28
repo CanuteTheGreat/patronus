@@ -15,6 +15,7 @@ pub mod policy;
 pub mod seg;
 pub mod seg_wifi;
 pub mod seg_wifi_chan;
+pub mod seg_wifi_gen;
 pub mod store;
 pub mod webui;
 

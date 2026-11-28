@@ -20,6 +20,7 @@
 
 use crate::seg::{self, db, invalid, now, unique, Device, DeviceInput};
 use crate::seg_wifi_chan::{ChanInput, ChanSettings};
+use crate::seg_wifi_gen::{GenInput, GenSettings};
 use crate::store::ConfigStore;
 use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,9 @@ pub struct Network {
     /// tuning of the automatic choice (also kept for a fixed channel, in case it is switched to auto)
     #[serde(flatten)]
     pub chan: ChanSettings,
+    /// Wi-Fi generation, BSS colour, 6 GHz discovery, multi-link (docs/WIFI-MODERN.md)
+    #[serde(flatten)]
+    pub gen: GenSettings,
     pub country: String,
     pub security: String,
     pub segment: String,
@@ -75,6 +79,8 @@ pub struct NetworkInput {
     pub enabled: Option<bool>,
     #[serde(default, flatten)]
     pub chan: ChanInput,
+    #[serde(default, flatten)]
+    pub gen: GenInput,
 }
 
 fn ser_channel<S: serde::Serializer>(c: &i64, s: S) -> std::result::Result<S::Ok, S::Error> {
@@ -238,7 +244,7 @@ fn check_ssid(s: &str) -> Result<()> {
 }
 
 fn check_channel(band: &str, ch: i64) -> Result<()> {
-    if ch == 0 && matches!(band, "2g" | "5g") {
+    if ch == 0 && matches!(band, "2g" | "5g" | "6g") {
         return Ok(()); // automatic
     }
     let ok = match band {
@@ -270,6 +276,7 @@ fn check_channel(band: &str, ch: i64) -> Result<()> {
                 | 161
                 | 165
         ),
+        "6g" => (1..=233).contains(&ch) && (ch - 1) % 4 == 0,
         _ => false,
     };
     if ok {
@@ -304,6 +311,13 @@ fn network_row(r: &sqlx::sqlite::SqliteRow) -> Network {
             bss_cost: r.get("chan_bss_cost"),
             min_signal: r.get("chan_min_signal"),
             history: r.get("chan_history"),
+        },
+        gen: GenSettings {
+            standard: r.get("standard"),
+            bss_color: r.get("bss_color"),
+            discovery: r.get("discovery"),
+            discovery_interval: r.get("discovery_interval"),
+            mlo_links: r.get("mlo_links"),
         },
         country: r.get("country"),
         restart_on_credential_change: security != "wpa2",
@@ -349,6 +363,7 @@ struct Checked {
     band: String,
     channel: i64,
     chan: ChanSettings,
+    gen: GenSettings,
     country: String,
     security: String,
     segment: String,
@@ -383,18 +398,32 @@ fn check_network(i: &NetworkInput, old: Option<&Network>) -> Result<Checked> {
             "channel {channel}: not in an 80 MHz block"
         )));
     }
+    if channel != 0 && !crate::seg_wifi_gen::channel_fits(&band, channel, chan.width) {
+        return Err(invalid(format!(
+            "channel {channel}: cannot carry {} MHz on {}",
+            chan.width,
+            crate::seg_wifi_gen::band_name(&band)
+        )));
+    }
     let country = i.country.clone().unwrap_or_else(|| "US".into());
     if country.len() != 2 || !country.bytes().all(|b| b.is_ascii_uppercase()) {
         return Err(invalid(format!(
             "country code {country:?}: two capital letters"
         )));
     }
-    let security = i.security.clone().unwrap_or_else(|| "wpa2".into());
+    // an update that names no security keeps the old one; a new 6 GHz network defaults to WPA3 (the only choice there)
+    let security = i
+        .security
+        .clone()
+        .or_else(|| old.map(|o| o.security.clone()))
+        .unwrap_or_else(|| if band == "6g" { "wpa3".into() } else { "wpa2".into() });
     if !SECURITIES.contains(&security.as_str()) {
         return Err(invalid(format!(
             "security {security:?}: wpa2, wpa2_wpa3 or wpa3"
         )));
     }
+    let gen = old.map(|o| o.gen.clone()).unwrap_or_default().merged(&i.gen);
+    gen.validate(&band, chan.width, &security)?;
     let segment = seg::check_segment(i.segment.as_deref().unwrap_or("@lan"))?;
     let policy = i.unknown_policy.clone().unwrap_or_else(|| "reject".into());
     if policy != "reject" && policy != "enrol" {
@@ -404,6 +433,7 @@ fn check_network(i: &NetworkInput, old: Option<&Network>) -> Result<Checked> {
         band,
         channel,
         chan,
+        gen,
         country,
         security,
         segment,
@@ -417,8 +447,9 @@ pub async fn create_network(store: &ConfigStore, i: &NetworkInput) -> Result<i64
     let r = sqlx::query(
         "INSERT INTO seg_wifi_networks (name, ifname, ssid, band, channel, country, security, segment, unknown_policy, enrol_secret, enabled, updated_at,
             chanlist, width, chan_recheck, chan_time, chan_hyst, chan_min_gain, chan_confirm, chan_confirm_gap, chan_csa,
-            chan_csa_count, chan_rounds, chan_dwell, chan_bss_cost, chan_min_signal, chan_history)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            chan_csa_count, chan_rounds, chan_dwell, chan_bss_cost, chan_min_signal, chan_history,
+            standard, bss_color, discovery, discovery_interval, mlo_links)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?)",
     )
     .bind(&i.name)
     .bind(&i.ifname)
@@ -447,6 +478,11 @@ pub async fn create_network(store: &ConfigStore, i: &NetworkInput) -> Result<i64
     .bind(c.chan.bss_cost)
     .bind(c.chan.min_signal)
     .bind(c.chan.history)
+    .bind(&c.gen.standard)
+    .bind(c.gen.bss_color)
+    .bind(&c.gen.discovery)
+    .bind(c.gen.discovery_interval)
+    .bind(&c.gen.mlo_links)
     .execute(store.pool()?)
     .await
     .map_err(|e| unique(e, &format!("Wi-Fi network {} or interface {}", i.name, i.ifname)))?;
@@ -487,7 +523,8 @@ pub async fn update_network(store: &ConfigStore, id: i64, i: &NetworkInput) -> R
     sqlx::query(
         "UPDATE seg_wifi_networks SET name=?, ifname=?, ssid=?, band=?, channel=?, country=?, security=?, segment=?, unknown_policy=?, enrol_secret=?, enabled=?, updated_at=?,
            chanlist=?, width=?, chan_recheck=?, chan_time=?, chan_hyst=?, chan_min_gain=?, chan_confirm=?, chan_confirm_gap=?,
-           chan_csa=?, chan_csa_count=?, chan_rounds=?, chan_dwell=?, chan_bss_cost=?, chan_min_signal=?, chan_history=?
+           chan_csa=?, chan_csa_count=?, chan_rounds=?, chan_dwell=?, chan_bss_cost=?, chan_min_signal=?, chan_history=?,
+           standard=?, bss_color=?, discovery=?, discovery_interval=?, mlo_links=?
          WHERE id=?",
     )
     .bind(&i.name)
@@ -517,6 +554,11 @@ pub async fn update_network(store: &ConfigStore, id: i64, i: &NetworkInput) -> R
     .bind(c.chan.bss_cost)
     .bind(c.chan.min_signal)
     .bind(c.chan.history)
+    .bind(&c.gen.standard)
+    .bind(c.gen.bss_color)
+    .bind(&c.gen.discovery)
+    .bind(c.gen.discovery_interval)
+    .bind(&c.gen.mlo_links)
     .bind(id)
     .execute(store.pool()?)
     .await
@@ -1020,6 +1062,8 @@ mod tests {
         let n = network_by_name(&s, "old").await.unwrap().unwrap();
         assert_eq!((n.channel, n.band.as_str()), (44, "5g"));
         assert_eq!(n.chan, ChanSettings::default());
+        // the generation columns' defaults are the documented ones
+        assert_eq!(n.gen, GenSettings::default());
         // an update that names no channel (or band) keeps both; tuning keys keep their old values
         let mut i = net("old", "wlan9", "wpa2");
         i.chan.hysteresis = Some(35);
@@ -1475,4 +1519,30 @@ mod tests {
         assert!(seg::list_devices(&s).await.unwrap().is_empty());
         assert!(list_credentials(&s).await.unwrap().is_empty());
     }
+    #[tokio::test]
+    async fn six_ghz_networks_are_wpa3_and_keep_their_generation_settings() {
+        let s = lab().await;
+        let mut i = NetworkInput { band: Some("6g".into()), ..net("six", "wlan6", "wpa2") };
+        let e = create_network(&s, &i).await.unwrap_err().to_string();
+        assert!(e.contains("6 GHz allows WPA3"), "{e}");
+        // without a security a new 6 GHz network is WPA3
+        i.security = None;
+        i.channel = Some(37);
+        i.chan.width = Some(320);
+        i.gen.standard = Some("be".into());
+        i.gen.mlo_links = Some("5g/36/80".into());
+        let id = create_network(&s, &i).await.unwrap();
+        let n = get_network(&s, id).await.unwrap().unwrap();
+        assert_eq!((n.security.as_str(), n.channel, n.chan.width), ("wpa3", 37, 320));
+        assert_eq!((n.gen.standard.as_str(), n.gen.mlo_links.as_str()), ("be", "5g/36/80"));
+        // a channel that cannot carry the width is refused with the band named
+        let bad = NetworkInput { channel: Some(229), ..i.clone() };
+        let e = update_network(&s, id, &bad).await.unwrap_err().to_string();
+        assert!(e.contains("6 GHz"), "{e}");
+        // an update without security keeps WPA3; moving it to WPA2 is refused
+        update_network(&s, id, &NetworkInput { security: None, ..net("six", "wlan6", "wpa3") }).await.unwrap();
+        assert!(update_network(&s, id, &net("six", "wlan6", "wpa2")).await.is_err());
+        assert_eq!(get_network(&s, id).await.unwrap().unwrap().gen.standard, "be");
+    }
+
 }

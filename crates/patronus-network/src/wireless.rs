@@ -1164,6 +1164,7 @@ mod tests {
                 band: "2g".into(),
                 channel: 6,
                 chan: patronus_config::seg_wifi_chan::ChanSettings::default(),
+                gen: patronus_config::seg_wifi_gen::GenSettings::default(),
                 country: "US".into(),
                 security: security.into(),
                 segment: "@lan".into(),

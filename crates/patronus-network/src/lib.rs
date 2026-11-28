@@ -139,6 +139,8 @@ pub mod wifi_client;
 #[cfg(feature = "wifi-ap")]
 pub mod wifichan;
 #[cfg(feature = "wifi-ap")]
+pub mod wifigen;
+#[cfg(feature = "wifi-ap")]
 pub mod wireless;
 
 #[cfg(feature = "intrusion-detection")]
