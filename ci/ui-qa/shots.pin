@@ -3,8 +3,8 @@
 # ci/ui-qa/run.sh (the CI job, or the same harness and Playwright image by hand) packed and ci/ui-qa/baseline.sh publish
 # uploaded as a Forgejo generic package. Bump = copy url + sha256 of a newer published set here after looking at its
 # diff report and screenshots. url = none: no baseline (the diff only packs).
-# Current: ui-kit-5 de320bd9 (612 pages, Playwright resolute image; checked against 5dc17926: 0 fail, 60 warn, 24 new).
-# Replaces 5dc17926, whose std dark-phone Monitoring shot had the History charts (taken after the first 5-minute
-# statistics point) while every other variant showed "Collecting"; the harness now pins the sampler to one tick per hour.
-url = https://git.canutethegreat.com/api/packages/CanuteTheGreat/generic/patronus-ui-shots/de320bd9/ui-shots-de320bd9.tar.gz
-sha256 = 43638cefb3d13374b7e49fd81aad67e1a47b717b9329304c2be7fa56adbec000
+# Current: ui-kit-5 0def513f-r20 (630 pages, Playwright resolute image; checked against de320bd9: 0 fail, 20 warn, 18 new).
+# Replaces de320bd9 after main's widget dashboard (customize mode, activity page, TCP port test on Diagnostics) was merged
+# into the kit branch: only the dashboard and diagnostics shots changed; the 18 new pages are the activity page variants.
+url = https://git.canutethegreat.com/api/packages/CanuteTheGreat/generic/patronus-ui-shots/0def513f-r20/ui-shots-0def513f-r20.tar.gz
+sha256 = c781d635a7a318df582c9f6193f696124f6aec38c29e4b11fbe5a21ed7ed2b0e
