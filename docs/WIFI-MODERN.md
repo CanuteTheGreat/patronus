@@ -74,11 +74,13 @@ hostapd works and Wi-Fi 7 settings run as Wi-Fi 6 with the warning above. Debian
   `patronus-network/src/testdata/`, plus a Wi-Fi 5 radio derived from it), the plan (auto, explicit, narrowed widths,
   6 GHz fail-closed, discovery, multi-link degradation), the rendered hostapd.conf, and the applier's multi-link
   fallback.
-- `ci/netlab/lane-s-wifi-modern-hwsim.sh` (nightly, `wifi-hwsim` job): real associations of a real wpa_supplicant
-  with the router's hostapd on mac80211_hwsim (kernel 7.0, `mlo=1`), hostapd/wpa_supplicant 2.12 built with the
-  Gentoo ebuild's options: Wi-Fi 6 at 80 and 160 MHz on 5 GHz, Wi-Fi 6E at 160 MHz on 6 GHz with a per-device SAE
-  password, the US fail-closed case, Wi-Fi 7 at 320 MHz, a two-link (5 + 6 GHz) multi-link association, and the
-  degradation on the distribution's older hostapd.
+- `ci/netlab/lane-s-wifi-modern-hwsim.sh` (nightly, `wifi-hwsim` job, two passes): real associations of a real
+  wpa_supplicant with the router's hostapd on mac80211_hwsim (kernel 7.0), hostapd/wpa_supplicant 2.12 built with the
+  Gentoo ebuild's options (`ci/netlab/build-hostapd.sh`, pinned tarballs). Pass 1 (module `mlo=0`): Wi-Fi 6 at 80 MHz
+  and at 160 MHz (after the 60 s DFS check) on 5 GHz, Wi-Fi 6E at 160 MHz on 6 GHz with a per-device SAE password, the
+  US fail-closed case, Wi-Fi 7 at 320 MHz, and the degradation on the distribution's older hostapd. Pass 2 (`mlo=1`,
+  multi-link radios): the same plus a two-link (5 + 6 GHz) multi-link association; hwsim's multi-link radios refuse
+  radar detection, so the DFS case is pass 1's.
 - **Not proven on real hardware.** No real Wi-Fi 6E or Wi-Fi 7 card has been tested yet. mac80211_hwsim implements
   the 802.11 state machines, not a radio: real drivers differ in which features they expose as an access point (many
   Wi-Fi 7 client cards do not do 6 GHz or MLO in AP mode at all; that is exactly what the capability probe reports).

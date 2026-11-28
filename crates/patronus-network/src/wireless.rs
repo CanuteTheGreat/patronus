@@ -22,16 +22,16 @@
 //! The renderers are pure and validate everything they write (a passphrase
 //! with `|` would inject SAE options, a newline would add a config line).
 
-use crate::supervise::{write_atomic, DaemonSpec, Supervisor};
 use crate::radio::{self, HostapdCaps, RadioCaps};
+use crate::supervise::{write_atomic, DaemonSpec, Supervisor};
 use crate::wifichan::{self, Iw, IwTools, Mode};
 use crate::wifigen::{self, Plan};
-use patronus_config::seg_wifi_gen::Link;
 use async_trait::async_trait;
 use patronus_config::applier::{Applier, ApplyReport, Phase};
 use patronus_config::seg::{self, is_ifname, norm_mac};
 use patronus_config::seg_wifi::{self, check_psk, check_sae, ApCred, ApNet};
 use patronus_config::seg_wifi_chan::{self, ChanEvent};
+use patronus_config::seg_wifi_gen::Link;
 use patronus_config::store::ConfigStore;
 use patronus_core::{Error, Result};
 use serde_json::{json, Value};
@@ -227,6 +227,11 @@ pub fn render_hostapd_with(
         "country_code={}\nieee80211d=1\nhw_mode={hw_mode}\nchannel={channel}\n",
         n.country
     ));
+    if band == "5g" {
+        // spectrum management: hostapd refuses radar (DFS) channels without it and then runs the channel
+        // availability check before it transmits; harmless on the other 5 GHz channels
+        o.push_str("ieee80211h=1\n");
+    }
     if band != "6g" {
         o.push_str("ieee80211n=1\n");
     }
@@ -489,7 +494,11 @@ impl WifiApplier {
     /// `None` when every link (`<if>_link0..N`, hostapd's per-link control interfaces) reports ENABLED
     /// within the network's `mlo_wait`; else why not.
     async fn mlo_failed(&self, n: &seg_wifi::Network, extra: usize) -> Option<String> {
-        let (iw, ifn, wait) = (self.iw.clone(), n.ifname.clone(), n.gen.mlo_wait.max(1) as u64);
+        let (iw, ifn, wait) = (
+            self.iw.clone(),
+            n.ifname.clone(),
+            n.gen.mlo_wait.max(1) as u64,
+        );
         let mut last = String::new();
         for _ in 0..wait {
             if !self.sup.is_running(SVC_HOSTAPD, &n.name) {
@@ -1053,7 +1062,10 @@ impl Applier for WifiApplier {
             let n0 = &net0.network;
             // the country's regulatory domain before anything reads the radio's channels
             if let Err(e) = self.iw.reg_set(&n0.country) {
-                rep.warn(format!("Wi-Fi {}: regulatory domain {}: {e}", n0.name, n0.country));
+                rep.warn(format!(
+                    "Wi-Fi {}: regulatory domain {}: {e}",
+                    n0.name, n0.country
+                ));
             }
             let Some(bridge) = self.bridge_of(store, &n0.segment).await else {
                 rep.warn(format!(
@@ -1108,7 +1120,8 @@ impl Applier for WifiApplier {
                     );
                     let mut one = plan.clone();
                     one.links.clear();
-                    let extra: Vec<PathBuf> = spec.files.iter().skip(1).map(|f| f.0.clone()).collect();
+                    let extra: Vec<PathBuf> =
+                        spec.files.iter().skip(1).map(|f| f.0.clone()).collect();
                     spec = self.spec_for(net, &bridge, &hostapd, &one)?;
                     for p in extra {
                         let _ = std::fs::remove_file(p);
@@ -1278,14 +1291,19 @@ impl Applier for WifiApplier {
             let plan = match self.plan_of(&net.network, &self.hostapd_caps()) {
                 Ok(p) => p,
                 Err(e) => {
-                    o.push_str(&format!("## {} ({name}): not started: {e}\n", conf.display()));
+                    o.push_str(&format!(
+                        "## {} ({name}): not started: {e}\n",
+                        conf.display()
+                    ));
                     continue;
                 }
             };
             for w in plan.warnings.iter().chain(plan.notes.iter()) {
                 o.push_str(&format!("# {w}\n"));
             }
-            let hostapd = self.hostapd_bin().unwrap_or_else(|| PathBuf::from("hostapd"));
+            let hostapd = self
+                .hostapd_bin()
+                .unwrap_or_else(|| PathBuf::from("hostapd"));
             let spec = self.spec_for(&net, &bridge, &hostapd, &plan)?;
             for (p, text, _) in &spec.files {
                 o.push_str(&format!("## {} ({})\n", p.display(), name));
@@ -1751,7 +1769,11 @@ mod tests {
             (i == "wlan0").then(|| "02:00:00:00:00:00".to_string())
         }
         fn hostapd_status(&self, i: &str) -> Result<String> {
-            let st = if self.down.lock().unwrap().iter().any(|d| d == i) { "DISABLED" } else { "ENABLED" };
+            let st = if self.down.lock().unwrap().iter().any(|d| d == i) {
+                "DISABLED"
+            } else {
+                "ENABLED"
+            };
             Ok(format!(
                 "state={st}\nchannel={}\n",
                 self.channel.lock().unwrap()
@@ -2295,21 +2317,47 @@ mod tests {
     async fn a_wifi7_radio_runs_6ghz_wifi7_at_320_mhz_with_sae_h2e() {
         let l = lab().await;
         *l.iw.phy.lock().unwrap() = Some(PHY_DE.into());
-        let a = WifiApplier { hcaps: Some(HostapdCaps::full()), ..l.apply.clone() };
-        seg_wifi::create_network(&l.store, &six(|i| i.chan.width = Some(320))).await.unwrap();
+        let a = WifiApplier {
+            hcaps: Some(HostapdCaps::full()),
+            ..l.apply.clone()
+        };
+        seg_wifi::create_network(&l.store, &six(|i| i.chan.width = Some(320)))
+            .await
+            .unwrap();
         let r = a.apply(&l.store).await.unwrap();
         assert!(r.warnings.is_empty(), "{:?}", r.warnings);
         let c = std::fs::read_to_string(l.dir.join("home.conf")).unwrap();
-        for line in ["hw_mode=a", "op_class=137", "channel=37", "ieee80211ax=1", "ieee80211be=1", "eht_oper_chwidth=9",
-                     "eht_oper_centr_freq_seg0_idx=31", "sae_pwe=1", "ieee80211w=2", "country_code=DE"] {
+        for line in [
+            "hw_mode=a",
+            "op_class=137",
+            "channel=37",
+            "ieee80211ax=1",
+            "ieee80211be=1",
+            "eht_oper_chwidth=9",
+            "eht_oper_centr_freq_seg0_idx=31",
+            "sae_pwe=1",
+            "ieee80211w=2",
+            "country_code=DE",
+        ] {
             assert!(c.lines().any(|x| x == line), "{line} missing:\n{c}");
         }
-        assert!(!c.contains("ieee80211n=1") && !c.contains("WPA-PSK") && !c.contains("unsol_bcast"), "{c}");
+        assert!(
+            !c.contains("ieee80211n=1") && !c.contains("WPA-PSK") && !c.contains("unsol_bcast"),
+            "{c}"
+        );
         assert!(c.lines().any(|x| x.starts_with("he_bss_color=")));
-        assert_eq!(l.iw.regs.lock().unwrap()[0], "DE", "the country is set before the radio is read");
+        assert_eq!(
+            l.iw.regs.lock().unwrap()[0],
+            "DE",
+            "the country is set before the radio is read"
+        );
         let st = a.status(&l.store).await.unwrap();
         let g = &st["networks"][0]["generation"];
-        assert_eq!((g["standard"].as_str(), g["width"].as_i64()), (Some("be"), Some(320)), "{g}");
+        assert_eq!(
+            (g["standard"].as_str(), g["width"].as_i64()),
+            (Some("be"), Some(320)),
+            "{g}"
+        );
         assert_eq!(st["hostapd"]["be"], true);
     }
 
@@ -2317,60 +2365,133 @@ mod tests {
     async fn six_ghz_stays_off_where_the_regulatory_domain_says_no() {
         let l = lab().await;
         *l.iw.phy.lock().unwrap() = Some(PHY_WORLD.into());
-        let a = WifiApplier { hcaps: Some(HostapdCaps::full()), ..l.apply.clone() };
-        seg_wifi::create_network(&l.store, &six(|i| i.country = Some("US".into()))).await.unwrap();
+        let a = WifiApplier {
+            hcaps: Some(HostapdCaps::full()),
+            ..l.apply.clone()
+        };
+        seg_wifi::create_network(&l.store, &six(|i| i.country = Some("US".into())))
+            .await
+            .unwrap();
         let r = a.apply(&l.store).await.unwrap();
-        assert!(r.warnings.iter().any(|w| w.contains("not started") && w.contains("country US")), "{:?}", r.warnings);
+        assert!(
+            r.warnings
+                .iter()
+                .any(|w| w.contains("not started") && w.contains("country US")),
+            "{:?}",
+            r.warnings
+        );
         assert!(!a.sup.is_running(SVC_HOSTAPD, "home"));
         let st = a.status(&l.store).await.unwrap();
-        assert!(st["networks"][0]["generation"]["error"].as_str().unwrap().contains("regulatory"));
+        assert!(st["networks"][0]["generation"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("regulatory"));
     }
 
     #[tokio::test]
     async fn an_older_hostapd_runs_wifi6_and_says_why_not_7() {
         let l = lab().await;
         *l.iw.phy.lock().unwrap() = Some(PHY_DE.into());
-        let ax = HostapdCaps { be: false, mld: false, ..HostapdCaps::full() };
-        let a = WifiApplier { hcaps: Some(ax), ..l.apply.clone() };
-        let mut i = NetworkInput { band: Some("5g".into()), channel: Some(36), country: Some("DE".into()), ..net_in("wpa2") };
+        let ax = HostapdCaps {
+            be: false,
+            mld: false,
+            ..HostapdCaps::full()
+        };
+        let a = WifiApplier {
+            hcaps: Some(ax),
+            ..l.apply.clone()
+        };
+        let mut i = NetworkInput {
+            band: Some("5g".into()),
+            channel: Some(36),
+            country: Some("DE".into()),
+            ..net_in("wpa2")
+        };
         i.chan.width = Some(160);
         i.gen.standard = Some("be".into());
         seg_wifi::create_network(&l.store, &i).await.unwrap();
         let r = a.apply(&l.store).await.unwrap();
-        assert!(r.warnings.iter().any(|w| w.contains("CONFIG_IEEE80211BE")), "{:?}", r.warnings);
+        assert!(
+            r.warnings.iter().any(|w| w.contains("CONFIG_IEEE80211BE")),
+            "{:?}",
+            r.warnings
+        );
         let c = std::fs::read_to_string(l.dir.join("home.conf")).unwrap();
-        assert!(c.contains("ieee80211ax=1\nhe_oper_chwidth=2\nhe_oper_centr_freq_seg0_idx=50\n") && !c.contains("ieee80211be"), "{c}");
-        assert!(c.contains("vht_capab=[VHT160]") && c.contains("wpa_key_mgmt=WPA-PSK"), "WPA2 stays on 5 GHz:\n{c}");
+        assert!(
+            c.contains("ieee80211ax=1\nhe_oper_chwidth=2\nhe_oper_centr_freq_seg0_idx=50\n")
+                && !c.contains("ieee80211be"),
+            "{c}"
+        );
+        assert!(
+            c.contains("vht_capab=[VHT160]") && c.contains("wpa_key_mgmt=WPA-PSK"),
+            "WPA2 stays on 5 GHz:\n{c}"
+        );
+        // 36-64 at 160 MHz holds radar channels: without 802.11h hostapd refuses them ("not allowed for AP mode")
+        assert!(c.lines().any(|l| l == "ieee80211h=1"), "{c}");
     }
 
     #[tokio::test]
     async fn multi_link_starts_every_link_or_falls_back_to_one() {
         let l = lab().await;
         *l.iw.phy.lock().unwrap() = Some(PHY_DE.into());
-        let a = WifiApplier { hcaps: Some(HostapdCaps::full()), ..l.apply.clone() };
-        let mut i = NetworkInput { band: Some("5g".into()), channel: Some(36), country: Some("DE".into()), ..net_in("wpa3") };
+        let a = WifiApplier {
+            hcaps: Some(HostapdCaps::full()),
+            ..l.apply.clone()
+        };
+        let mut i = NetworkInput {
+            band: Some("5g".into()),
+            channel: Some(36),
+            country: Some("DE".into()),
+            ..net_in("wpa3")
+        };
         i.chan.width = Some(80);
         i.gen.mlo_links = Some("6g/37/160".into());
         i.gen.mlo_wait = Some(5);
         let id = seg_wifi::create_network(&l.store, &i).await.unwrap();
         let r = a.apply(&l.store).await.unwrap();
-        assert!(r.applied.iter().any(|x| x.contains("multi-link access point up with 2 links")), "{r:?}");
+        assert!(
+            r.applied
+                .iter()
+                .any(|x| x.contains("multi-link access point up with 2 links")),
+            "{r:?}"
+        );
         let c0 = std::fs::read_to_string(l.dir.join("home.conf")).unwrap();
         let c1 = std::fs::read_to_string(l.dir.join("home-link1.conf")).unwrap();
-        assert!(c0.contains("mld_ap=1") && c0.contains("channel=36") && c0.contains("sae_pwe=1"), "{c0}");
-        assert!(c1.contains("mld_ap=1") && c1.contains("op_class=134") && c1.contains("channel=37") && c1.contains("interface=wlan0"), "{c1}");
+        assert!(
+            c0.contains("mld_ap=1") && c0.contains("channel=36") && c0.contains("sae_pwe=1"),
+            "{c0}"
+        );
+        assert!(
+            c1.contains("mld_ap=1")
+                && c1.contains("op_class=134")
+                && c1.contains("channel=37")
+                && c1.contains("interface=wlan0"),
+            "{c1}"
+        );
         // a driver whose second link never comes up: one link, said once, and not retried until the links change
         l.iw.down.lock().unwrap().push("wlan0_link1".into());
         i.gen.mlo_links = Some("6g/5/80".into());
         seg_wifi::update_network(&l.store, id, &i).await.unwrap();
         let r = a.apply(&l.store).await.unwrap();
-        assert!(r.warnings.iter().any(|w| w.contains("does not support it")), "{:?}", r.warnings);
+        assert!(
+            r.warnings.iter().any(|w| w.contains("does not support it")),
+            "{:?}",
+            r.warnings
+        );
         let c0 = std::fs::read_to_string(l.dir.join("home.conf")).unwrap();
-        assert!(!c0.contains("mld_ap") && !l.dir.join("home-link1.conf").exists(), "{c0}");
+        assert!(
+            !c0.contains("mld_ap") && !l.dir.join("home-link1.conf").exists(),
+            "{c0}"
+        );
         let p = pid(&l);
         let r = a.apply(&l.store).await.unwrap();
         assert_eq!(pid(&l), p, "no restart loop");
-        assert!(r.warnings.iter().any(|w| w.contains("did not come up on this radio")), "{:?}", r.warnings);
+        assert!(
+            r.warnings
+                .iter()
+                .any(|w| w.contains("did not come up on this radio")),
+            "{:?}",
+            r.warnings
+        );
     }
-
 }

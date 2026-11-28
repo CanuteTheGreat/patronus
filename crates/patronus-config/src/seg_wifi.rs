@@ -417,13 +417,22 @@ fn check_network(i: &NetworkInput, old: Option<&Network>) -> Result<Checked> {
         .security
         .clone()
         .or_else(|| old.map(|o| o.security.clone()))
-        .unwrap_or_else(|| if band == "6g" { "wpa3".into() } else { "wpa2".into() });
+        .unwrap_or_else(|| {
+            if band == "6g" {
+                "wpa3".into()
+            } else {
+                "wpa2".into()
+            }
+        });
     if !SECURITIES.contains(&security.as_str()) {
         return Err(invalid(format!(
             "security {security:?}: wpa2, wpa2_wpa3 or wpa3"
         )));
     }
-    let gen = old.map(|o| o.gen.clone()).unwrap_or_default().merged(&i.gen);
+    let gen = old
+        .map(|o| o.gen.clone())
+        .unwrap_or_default()
+        .merged(&i.gen);
     gen.validate(&band, chan.width, &security)?;
     let segment = seg::check_segment(i.segment.as_deref().unwrap_or("@lan"))?;
     let policy = i.unknown_policy.clone().unwrap_or_else(|| "reject".into());
@@ -1525,7 +1534,10 @@ mod tests {
     #[tokio::test]
     async fn six_ghz_networks_are_wpa3_and_keep_their_generation_settings() {
         let s = lab().await;
-        let mut i = NetworkInput { band: Some("6g".into()), ..net("six", "wlan6", "wpa2") };
+        let mut i = NetworkInput {
+            band: Some("6g".into()),
+            ..net("six", "wlan6", "wpa2")
+        };
         let e = create_network(&s, &i).await.unwrap_err().to_string();
         assert!(e.contains("6 GHz allows WPA3"), "{e}");
         // without a security a new 6 GHz network is WPA3
@@ -1536,16 +1548,38 @@ mod tests {
         i.gen.mlo_links = Some("5g/36/80".into());
         let id = create_network(&s, &i).await.unwrap();
         let n = get_network(&s, id).await.unwrap().unwrap();
-        assert_eq!((n.security.as_str(), n.channel, n.chan.width), ("wpa3", 37, 320));
-        assert_eq!((n.gen.standard.as_str(), n.gen.mlo_links.as_str()), ("be", "5g/36/80"));
+        assert_eq!(
+            (n.security.as_str(), n.channel, n.chan.width),
+            ("wpa3", 37, 320)
+        );
+        assert_eq!(
+            (n.gen.standard.as_str(), n.gen.mlo_links.as_str()),
+            ("be", "5g/36/80")
+        );
         // a channel that cannot carry the width is refused with the band named
-        let bad = NetworkInput { channel: Some(229), ..i.clone() };
+        let bad = NetworkInput {
+            channel: Some(229),
+            ..i.clone()
+        };
         let e = update_network(&s, id, &bad).await.unwrap_err().to_string();
         assert!(e.contains("6 GHz"), "{e}");
         // an update without security keeps WPA3; moving it to WPA2 is refused
-        update_network(&s, id, &NetworkInput { security: None, ..net("six", "wlan6", "wpa3") }).await.unwrap();
-        assert!(update_network(&s, id, &net("six", "wlan6", "wpa2")).await.is_err());
-        assert_eq!(get_network(&s, id).await.unwrap().unwrap().gen.standard, "be");
+        update_network(
+            &s,
+            id,
+            &NetworkInput {
+                security: None,
+                ..net("six", "wlan6", "wpa3")
+            },
+        )
+        .await
+        .unwrap();
+        assert!(update_network(&s, id, &net("six", "wlan6", "wpa2"))
+            .await
+            .is_err());
+        assert_eq!(
+            get_network(&s, id).await.unwrap().unwrap().gen.standard,
+            "be"
+        );
     }
-
 }

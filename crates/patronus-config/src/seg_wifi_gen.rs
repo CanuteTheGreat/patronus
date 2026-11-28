@@ -109,7 +109,11 @@ pub fn parse_links(s: &str) -> Result<Vec<Link>> {
     let mut out: Vec<Link> = Vec::new();
     for t in s.split(',').map(str::trim).filter(|t| !t.is_empty()) {
         let p: Vec<&str> = t.split('/').map(str::trim).collect();
-        let bad = || invalid(format!("multi-link link {t:?}: band/channel/width, e.g. 6g/37/320"));
+        let bad = || {
+            invalid(format!(
+                "multi-link link {t:?}: band/channel/width, e.g. 6g/37/320"
+            ))
+        };
         if p.len() != 3 {
             return Err(bad());
         }
@@ -126,12 +130,21 @@ pub fn parse_links(s: &str) -> Result<Vec<Link>> {
             )));
         }
         if out.iter().any(|l| l.band == band) {
-            return Err(invalid(format!("multi-link: two links on {}", band_name(&band))));
+            return Err(invalid(format!(
+                "multi-link: two links on {}",
+                band_name(&band)
+            )));
         }
-        out.push(Link { band, channel, width });
+        out.push(Link {
+            band,
+            channel,
+            width,
+        });
     }
     if out.len() > 2 {
-        return Err(invalid("multi-link: at most two extra links (one per other band)"));
+        return Err(invalid(
+            "multi-link: at most two extra links (one per other band)",
+        ));
     }
     Ok(out)
 }
@@ -187,7 +200,9 @@ impl GenSettings {
             _ => {}
         }
         if width == 160 && self.standard == "n" {
-            return Err(invalid("160 MHz needs Wi-Fi 5 or newer (standard ac, ax, be or auto)"));
+            return Err(invalid(
+                "160 MHz needs Wi-Fi 5 or newer (standard ac, ax, be or auto)",
+            ));
         }
         if width == 320 && !matches!(self.standard.as_str(), "auto" | "be") {
             return Err(invalid("320 MHz is Wi-Fi 7 only (standard be or auto)"));
@@ -265,27 +280,54 @@ mod tests {
     #[test]
     fn six_ghz_is_wpa3_only_and_says_why() {
         for sec in ["wpa2", "wpa2_wpa3"] {
-            let e = GenSettings::default().validate("6g", 80, sec).unwrap_err().to_string();
+            let e = GenSettings::default()
+                .validate("6g", 80, sec)
+                .unwrap_err()
+                .to_string();
             assert!(e.contains("WPA3") && e.contains("Per-device"), "{e}");
         }
-        assert!(g(|x| x.standard = "ac".into()).validate("6g", 80, "wpa3").is_err());
-        assert!(g(|x| x.standard = "n".into()).validate("6g", 20, "wpa3").is_err());
-        assert!(g(|x| x.standard = "ax".into()).validate("6g", 160, "wpa3").is_ok());
+        assert!(g(|x| x.standard = "ac".into())
+            .validate("6g", 80, "wpa3")
+            .is_err());
+        assert!(g(|x| x.standard = "n".into())
+            .validate("6g", 20, "wpa3")
+            .is_err());
+        assert!(g(|x| x.standard = "ax".into())
+            .validate("6g", 160, "wpa3")
+            .is_ok());
     }
 
     #[test]
     fn standards_and_widths_must_fit_each_other() {
-        assert!(g(|x| x.standard = "ac".into()).validate("2g", 20, "wpa2").is_err());
-        assert!(g(|x| x.standard = "wifi9".into()).validate("5g", 20, "wpa2").is_err());
-        assert!(g(|x| x.standard = "n".into()).validate("5g", 160, "wpa2").is_err());
-        assert!(g(|x| x.standard = "ac".into()).validate("5g", 160, "wpa2").is_ok());
-        assert!(g(|x| x.standard = "ax".into()).validate("6g", 320, "wpa3").is_err());
-        assert!(g(|x| x.standard = "be".into()).validate("6g", 320, "wpa3").is_ok());
+        assert!(g(|x| x.standard = "ac".into())
+            .validate("2g", 20, "wpa2")
+            .is_err());
+        assert!(g(|x| x.standard = "wifi9".into())
+            .validate("5g", 20, "wpa2")
+            .is_err());
+        assert!(g(|x| x.standard = "n".into())
+            .validate("5g", 160, "wpa2")
+            .is_err());
+        assert!(g(|x| x.standard = "ac".into())
+            .validate("5g", 160, "wpa2")
+            .is_ok());
+        assert!(g(|x| x.standard = "ax".into())
+            .validate("6g", 320, "wpa3")
+            .is_err());
+        assert!(g(|x| x.standard = "be".into())
+            .validate("6g", 320, "wpa3")
+            .is_ok());
         assert!(g(|x| x.bss_color = 64).validate("5g", 20, "wpa2").is_err());
         assert!(g(|x| x.bss_color = 63).validate("5g", 20, "wpa2").is_ok());
-        assert!(g(|x| x.discovery = "beacon".into()).validate("6g", 20, "wpa3").is_err());
-        assert!(g(|x| x.discovery_interval = 21).validate("6g", 20, "wpa3").is_err());
-        assert!(g(|x| x.discovery_interval = 0).validate("6g", 20, "wpa3").is_err());
+        assert!(g(|x| x.discovery = "beacon".into())
+            .validate("6g", 20, "wpa3")
+            .is_err());
+        assert!(g(|x| x.discovery_interval = 21)
+            .validate("6g", 20, "wpa3")
+            .is_err());
+        assert!(g(|x| x.discovery_interval = 0)
+            .validate("6g", 20, "wpa3")
+            .is_err());
         assert!(g(|x| x.mlo_wait = 4).validate("6g", 20, "wpa3").is_err());
     }
 
@@ -295,17 +337,40 @@ mod tests {
         assert_eq!(
             parse_links("6g/37/320, 2g/6/20").unwrap(),
             vec![
-                Link { band: "6g".into(), channel: 37, width: 320 },
-                Link { band: "2g".into(), channel: 6, width: 20 }
+                Link {
+                    band: "6g".into(),
+                    channel: 37,
+                    width: 320
+                },
+                Link {
+                    band: "2g".into(),
+                    channel: 6,
+                    width: 20
+                }
             ]
         );
         l("6g/37/320").validate("5g", 80, "wpa3").unwrap();
         // WPA3 only, Wi-Fi 7 only, other bands only, sane links only
-        assert!(l("6g/37/320").validate("5g", 80, "wpa2").unwrap_err().to_string().contains("WPA3"));
-        let ax = GenSettings { standard: "ax".into(), ..l("6g/37/160") };
+        assert!(l("6g/37/320")
+            .validate("5g", 80, "wpa2")
+            .unwrap_err()
+            .to_string()
+            .contains("WPA3"));
+        let ax = GenSettings {
+            standard: "ax".into(),
+            ..l("6g/37/160")
+        };
         assert!(ax.validate("5g", 80, "wpa3").is_err());
         assert!(l("5g/36/80").validate("5g", 80, "wpa3").is_err());
-        for bad in ["6g/37", "6g/36/20", "6g/229/160", "5g/165/40", "7g/1/20", "6g/37/320,6g/5/20", "x"] {
+        for bad in [
+            "6g/37",
+            "6g/36/20",
+            "6g/229/160",
+            "5g/165/40",
+            "7g/1/20",
+            "6g/37/320,6g/5/20",
+            "x",
+        ] {
             assert!(parse_links(bad).is_err(), "{bad}");
         }
         assert!(parse_links("").unwrap().is_empty());
@@ -320,6 +385,9 @@ mod tests {
             mlo_links: Some(" 6g/37/320 , ".into()),
             ..Default::default()
         });
-        assert_eq!((m.standard.as_str(), m.mlo_links.as_str()), ("be", "6g/37/320"));
+        assert_eq!(
+            (m.standard.as_str(), m.mlo_links.as_str()),
+            ("be", "6g/37/320")
+        );
     }
 }

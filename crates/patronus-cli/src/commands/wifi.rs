@@ -211,7 +211,9 @@ pub async fn radios(db: Option<PathBuf>, as_json: bool) -> anyhow::Result<()> {
     if as_json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&serde_json::json!({"hostapd": h, "radios": radios, "networks": plans}))?
+            serde_json::to_string_pretty(
+                &serde_json::json!({"hostapd": h, "radios": radios, "networks": plans})
+            )?
         );
         return Ok(());
     }
@@ -227,7 +229,12 @@ pub async fn radios(db: Option<PathBuf>, as_json: bool) -> anyhow::Result<()> {
         println!("hostapd: not installed");
     }
     for r in &radios {
-        println!("{} ({}): {}", r.phy, r.ifaces.join(", "), r.supports.join(", "));
+        println!(
+            "{} ({}): {}",
+            r.phy,
+            r.ifaces.join(", "),
+            r.supports.join(", ")
+        );
         for o in &r.offer {
             match &o.reason {
                 None => println!(

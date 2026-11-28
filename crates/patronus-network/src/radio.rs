@@ -562,7 +562,11 @@ mod tests {
     fn the_world_domain_blocks_6ghz_and_says_so() {
         let c = parse_caps(WORLD);
         assert_eq!(c.usable("6g", 37), Some(false));
-        assert_eq!(c.usable("5g", 36), Some(false), "no IR before a country is set");
+        assert_eq!(
+            c.usable("5g", 36),
+            Some(false),
+            "no IR before a country is set"
+        );
         assert!(!c.ap_band("6g"));
         let six = c.offer().into_iter().find(|x| x.band == "6g").unwrap();
         assert!(!six.ap && six.reason.unwrap().contains("regulatory"));

@@ -464,7 +464,10 @@ impl Iw for IwTools {
         if have(country) {
             return Ok(());
         }
-        run(Command::new("iw").args(["reg", "set", country]), "iw reg set")?;
+        run(
+            Command::new("iw").args(["reg", "set", country]),
+            "iw reg set",
+        )?;
         // the kernel applies it asynchronously (regulatory.db lookup)
         for _ in 0..20 {
             if have(country) {
@@ -1070,7 +1073,10 @@ mod tests {
         assert!(s[0].in_use && s[0].busy == 250 && s[1].active == 100);
         let p = parse_phy("\t\t\t* 2412 MHz [1] (20.0 dBm)\n\t\t\t* 2467 MHz [12] (disabled)\n\t\t\t* 5260 MHz [52] (23.0 dBm) (no IR, radar detection)\n\t\t\t* channel_switch\n", "2g");
         assert!(p.csa && p.usable[&1] && !p.usable[&12] && !p.usable.contains_key(&52));
-        let p5 = parse_phy("\t\t\t* 5260 MHz [52] (23.0 dBm) (no IR, radar detection)\n", "5g");
+        let p5 = parse_phy(
+            "\t\t\t* 5260 MHz [52] (23.0 dBm) (no IR, radar detection)\n",
+            "5g",
+        );
         assert!(!p5.usable[&52]);
         // iw 6 prints decimals; 6 GHz channel numbers repeat 2.4 GHz ones: each band keeps its own
         let t = "\t\t\t* 2412.0 MHz [1] (20.0 dBm) (no IR)\n\t\t\t* 5955.0 MHz [1] (23.0 dBm)\n\t\t\t* 6135.0 MHz [37] (23.0 dBm)\n";
@@ -1280,26 +1286,48 @@ mod tests {
         assert_eq!(c, "ieee80211ax=1\n");
         // 5 GHz 80 MHz Wi-Fi 6: VHT and HE both describe the block
         let c = conf_lines("5g", 36, 80, "ax");
-        for l in ["ht_capab=[HT40+]", "ieee80211ac=1", "vht_oper_chwidth=1", "vht_oper_centr_freq_seg0_idx=42",
-                  "ieee80211ax=1", "he_oper_chwidth=1", "he_oper_centr_freq_seg0_idx=42"] {
+        for l in [
+            "ht_capab=[HT40+]",
+            "ieee80211ac=1",
+            "vht_oper_chwidth=1",
+            "vht_oper_centr_freq_seg0_idx=42",
+            "ieee80211ax=1",
+            "he_oper_chwidth=1",
+            "he_oper_centr_freq_seg0_idx=42",
+        ] {
             assert!(c.lines().any(|x| x == l), "{l} missing in\n{c}");
         }
         assert!(!c.contains("eht"), "{c}");
         // 160 MHz needs the VHT160 capability named
         let c = conf_lines("5g", 36, 160, "ax");
-        for l in ["vht_capab=[VHT160]", "vht_oper_chwidth=2", "vht_oper_centr_freq_seg0_idx=50", "he_oper_chwidth=2", "he_oper_centr_freq_seg0_idx=50"] {
+        for l in [
+            "vht_capab=[VHT160]",
+            "vht_oper_chwidth=2",
+            "vht_oper_centr_freq_seg0_idx=50",
+            "he_oper_chwidth=2",
+            "he_oper_centr_freq_seg0_idx=50",
+        ] {
             assert!(c.lines().any(|x| x == l), "{l} missing in\n{c}");
         }
         // Wi-Fi 5 at 160 MHz: no HE
         assert!(!conf_lines("5g", 100, 160, "ac").contains("ieee80211ax"));
         // Wi-Fi 7 on 5 GHz
         let c = conf_lines("5g", 36, 80, "be");
-        assert!(c.contains("ieee80211be=1\neht_oper_chwidth=1\neht_oper_centr_freq_seg0_idx=42\n"), "{c}");
+        assert!(
+            c.contains("ieee80211be=1\neht_oper_chwidth=1\neht_oper_centr_freq_seg0_idx=42\n"),
+            "{c}"
+        );
         // 6 GHz: operating class, no HT/VHT, HE centre always
         let c = conf_lines("6g", 37, 160, "ax");
-        assert_eq!(c, "op_class=134\nieee80211ax=1\nhe_oper_chwidth=2\nhe_oper_centr_freq_seg0_idx=47\n");
+        assert_eq!(
+            c,
+            "op_class=134\nieee80211ax=1\nhe_oper_chwidth=2\nhe_oper_centr_freq_seg0_idx=47\n"
+        );
         let c = conf_lines("6g", 5, 20, "ax");
-        assert_eq!(c, "op_class=131\nieee80211ax=1\nhe_oper_chwidth=0\nhe_oper_centr_freq_seg0_idx=5\n");
+        assert_eq!(
+            c,
+            "op_class=131\nieee80211ax=1\nhe_oper_chwidth=0\nhe_oper_centr_freq_seg0_idx=5\n"
+        );
         // 320 MHz: HE describes the 160 MHz half that holds the primary, EHT the whole block
         let c = conf_lines("6g", 37, 320, "be");
         assert_eq!(c, "op_class=137\nieee80211ax=1\nhe_oper_chwidth=2\nhe_oper_centr_freq_seg0_idx=47\nieee80211be=1\neht_oper_chwidth=9\neht_oper_centr_freq_seg0_idx=31\n");
@@ -1308,7 +1336,17 @@ mod tests {
     #[test]
     fn channel_switch_names_he_and_eht() {
         let (_, a) = csa_args_std("5g", 36, 80, "ax");
-        assert_eq!(a, ["sec_channel_offset=1", "center_freq1=5210", "bandwidth=80", "ht", "vht", "he"]);
+        assert_eq!(
+            a,
+            [
+                "sec_channel_offset=1",
+                "center_freq1=5210",
+                "bandwidth=80",
+                "ht",
+                "vht",
+                "he"
+            ]
+        );
         let (f, a) = csa_args_std("6g", 37, 160, "be");
         assert_eq!(f, 6135);
         assert_eq!(a, ["center_freq1=6185", "bandwidth=160", "he", "eht"]);

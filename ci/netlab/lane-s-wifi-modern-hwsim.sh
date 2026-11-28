@@ -2,9 +2,11 @@
 # Lane S (f): Wi-Fi 6 / 6E / 7 on the standard tier, on mac80211_hwsim, through the shipped binaries (patronus apply +
 # patronus-web API + the real hostapd/wpa_supplicant), docs/WIFI-MODERN.md.
 #
-# Needs (ci/netlab/wifi-hwsim.sh with HWSIM_MODPARAMS="mlo=1" HWSIM_HOSTAPD_SRC=<version>): 4 hwsim radios loaded with
-# mlo=1, and a hostapd + wpa_supplicant built with CONFIG_IEEE80211AX/BE (the Gentoo ebuild's options) first on PATH;
-# the distribution's older hostapd stays at /usr/sbin/hostapd for the degradation check.
+# Needs (ci/netlab/wifi-hwsim.sh with HWSIM_HOSTAPD_SRC=<version>): hwsim radios and a hostapd + wpa_supplicant built
+# with CONFIG_IEEE80211AX/BE (the Gentoo ebuild's options) first on PATH; the distribution's older hostapd stays at
+# /usr/sbin/hostapd for the degradation check. Runs twice in the nightly: with the module's mlo=0 (everything but
+# multi-link) and with mlo=1 (multi-link radios; their radar detection is refused by hwsim, so the 160 MHz DFS case
+# is the mlo=0 pass's).
 # Radios: 0 = the router's access point, 1 = the station.
 #
 # Proves (every association is a real SAE handshake of the station with the router's hostapd):
@@ -34,6 +36,7 @@ command -v hostapd >/dev/null && command -v wpa_supplicant >/dev/null && command
 HAPD=$(command -v hostapd)
 grep -a eht_oper_chwidth "$HAPD" >/dev/null && grep -a mld_ap "$HAPD" >/dev/null \
   || { echo "SKIP lane-s-wifi-modern-hwsim: $HAPD has no 802.11be/MLD support (run wifi-hwsim.sh with HWSIM_HOSTAPD_SRC)"; exit 0; }
+MLO=$(cat /sys/module/mac80211_hwsim/parameters/mlo 2>/dev/null || echo N)
 phy_of() { # K -> the phy with that radio's MAC in this namespace
   local f
   for f in /sys/class/ieee80211/*/macaddress; do
@@ -132,7 +135,7 @@ sqlite3 "$DB" "INSERT OR REPLACE INTO lan_settings (key, value, updated_at) VALU
 sqlite3 "$DB" "INSERT OR IGNORE INTO interface_addresses (interface_name, address, prefix_len, family) VALUES ('br0','192.168.50.1',24,'ipv4'); UPDATE interfaces SET ipv4_mode='static' WHERE name='br0';"
 nl_apply "$DB" || { cat "$NL_OUT"; nl_fail "boot apply failed"; }
 nl_web_start "$DB"; nl_login
-nl_ok "booted: router LAN = br0, AP radio $IF1, station radio $SIF (hwsim, $("$HAPD" -v 2>&1 | head -1))"
+nl_ok "booted: router LAN = br0, AP radio $IF1, station radio $SIF (hwsim, $("$HAPD" -v 2>&1 | head -1 || true))"
 
 NET='"name":"home","ssid":"'$SSID'","ifname":"'$IF1'","segment":"@lan","unknown_policy":"reject","country":"'$CC'"'
 put_net() { # JSON fields (after the common ones)
@@ -161,12 +164,15 @@ assert g["standard"] == "ax" and g["width"] == 80 and not g["warnings"], g
 assert 1 <= g["bss_color"] <= 63, g
 PY
 nl_ok "API: the radio supports Wi-Fi 7, 2.4/5/6 GHz, 320 MHz, WPA3; hostapd has AX+BE+MLD; the network runs Wi-Fi 6 at 80 MHz"
-conf_has hw_mode=a channel=36 ieee80211ax=1 he_oper_chwidth=1 he_oper_centr_freq_seg0_idx=42 ieee80211w=2
+conf_has hw_mode=a channel=36 ieee80211h=1 ieee80211ax=1 he_oper_chwidth=1 he_oper_centr_freq_seg0_idx=42 ieee80211w=2
 sta_start "$SECRET"
 expect_assoc "5 GHz Wi-Fi 6 at 80 MHz" HE 5180
 nl_ok "Wi-Fi 6 (802.11ax) at 80 MHz on 5 GHz: the station associated with HE on 5180 MHz with its own SAE password and pings the router"
 
 # --- 2. ax160: 160 MHz on 5 GHz (36-64 holds radar channels: hostapd waits out the 60 s availability check) -----------
+if [ "$MLO" = Y ]; then
+  echo "    (mlo=1 radios: hwsim refuses radar detection (EBUSY), the 160 MHz DFS case runs in the mlo=0 pass)"
+else
 put_net '"band":"5g","channel":36,"width":160,"security":"wpa3","standard":"ax"'
 conf_has vht_capab=[VHT160] vht_oper_chwidth=2 he_oper_chwidth=2 he_oper_centr_freq_seg0_idx=50
 echo "... DFS channel availability check (60 s)"
@@ -175,6 +181,7 @@ sta_start "$SECRET"
 expect_assoc "5 GHz Wi-Fi 6 at 160 MHz" HE 5180
 R iw dev "$IF1" info | grep 'width: 160 MHz' >/dev/null || { R iw dev "$IF1" info; nl_fail "the radio is not at 160 MHz"; }
 nl_ok "Wi-Fi 6 at 160 MHz on 5 GHz (after the DFS check): associated with HE, the radio reports width 160 MHz"
+fi
 
 # --- 3. 6e: 6 GHz is WPA3-only; a per-device SAE password on channel 37 at 160 MHz --------------------------------------
 nl_api PUT "/segmentation/wifi/networks/$NID" "{$NET,\"band\":\"6g\",\"channel\":37,\"width\":160,\"security\":\"wpa2\",\"standard\":\"ax\"}"
@@ -212,6 +219,9 @@ R iw dev "$IF1" info | grep 'width: 320 MHz' >/dev/null || { R iw dev "$IF1" inf
 nl_ok "Wi-Fi 7 (802.11be) at 320 MHz on 6 GHz: associated with EHT, the radio reports width 320 MHz"
 
 # --- 6. mlo: one SSID over 5 GHz and 6 GHz -----------------------------------------------------------------------------------
+if [ "$MLO" != Y ]; then
+  echo "    (mlo=0 radios: the multi-link case runs in the mlo=1 pass)"
+else
 put_net '"band":"5g","channel":36,"width":80,"security":"wpa3","standard":"be","mlo_links":"6g/37/160"'
 two_links() { [ "$(R ls "$CTRL" 2>/dev/null | grep -c "^${IF1}_link")" -ge 2 ] && R hostapd_cli -p "$CTRL" -i "${IF1}_link1" status 2>/dev/null | grep 'state=ENABLED' >/dev/null; }
 nl_wait 40 two_links || { ls "$CTRL"; nl_fail "the multi-link access point did not bring up both links"; }
@@ -229,10 +239,11 @@ g = json.load(open(sys.argv[1]))["status"]["networks"][0]["generation"]
 assert g["standard"] == "be" and [l["band"] for l in g["links"]] == ["6g"] and not g["warnings"], g
 PY
 nl_ok "Wi-Fi 7 multi-link: one SSID on 5 GHz (36/80) + 6 GHz (37/160), the station is associated over both links and pings"
+fi
 
 # --- 7. old: a hostapd built without 802.11be degrades to Wi-Fi 6 on one link, and says why ---------------------------------
 if [ -x /usr/sbin/hostapd ] && ! grep -a eht_oper_chwidth /usr/sbin/hostapd >/dev/null; then
-  OLD=$(/usr/sbin/hostapd -v 2>&1 | head -1)
+  OLD=$(/usr/sbin/hostapd -v 2>&1 | head -1 || true)
   mkdir -p /opt/wifi/old; ln -sf /usr/sbin/hostapd /opt/wifi/old/hostapd; ln -sf /usr/sbin/hostapd_cli /opt/wifi/old/hostapd_cli
   PATH=/opt/wifi/old:$PATH nl_apply "$DB" || { cat "$NL_OUT"; nl_fail "apply with the old hostapd failed"; }
   grep -q 'CONFIG_IEEE80211BE' "$NL_OUT" && grep -q 'AP MLD' "$NL_OUT" || { cat "$NL_OUT"; nl_fail "the apply does not name the missing hostapd build options"; }

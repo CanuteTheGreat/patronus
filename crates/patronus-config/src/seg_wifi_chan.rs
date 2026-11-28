@@ -743,11 +743,20 @@ mod tests {
         // 20/40/80/160 MHz blocks are aligned groups of 1/2/4/8 channels
         assert_eq!(block_of("6g", 37, 40), vec![33, 37]);
         assert_eq!(block_of("6g", 37, 80), vec![33, 37, 41, 45]);
-        assert_eq!(block_of("6g", 37, 160), (0..8).map(|i| 33 + i * 4).collect::<Vec<_>>());
+        assert_eq!(
+            block_of("6g", 37, 160),
+            (0..8).map(|i| 33 + i * 4).collect::<Vec<_>>()
+        );
         // 320 MHz: 320-1 (centres 31/95/159) where it exists, 320-2 (191) above
         assert_eq!(block_of("6g", 37, 320).first(), Some(&1));
-        assert_eq!(block_of("6g", 197, 320), (0..16).map(|i| 161 + i * 4).collect::<Vec<_>>());
-        assert!(block_of("6g", 229, 320).is_empty(), "no 320 MHz block above 221");
+        assert_eq!(
+            block_of("6g", 197, 320),
+            (0..16).map(|i| 161 + i * 4).collect::<Vec<_>>()
+        );
+        assert!(
+            block_of("6g", 229, 320).is_empty(),
+            "no 320 MHz block above 221"
+        );
         assert_eq!(centre_of("6g", 37, 20), Some(37));
         assert_eq!(centre_of("6g", 37, 40), Some(35));
         assert_eq!(centre_of("6g", 37, 80), Some(39));
@@ -757,8 +766,15 @@ mod tests {
         assert_eq!(centre_of("5g", 36, 80), Some(42));
         assert_eq!(centre_of("5g", 36, 160), Some(50));
         assert_eq!(centre_of("5g", 112, 160), Some(114));
-        assert_eq!(centre_of("5g", 149, 160), None, "149-161 is the last 5 GHz 80 MHz block");
-        assert_eq!(block_of("5g", 60, 160), (0..8).map(|i| 36 + i * 4).collect::<Vec<_>>());
+        assert_eq!(
+            centre_of("5g", 149, 160),
+            None,
+            "149-161 is the last 5 GHz 80 MHz block"
+        );
+        assert_eq!(
+            block_of("5g", 60, 160),
+            (0..8).map(|i| 36 + i * 4).collect::<Vec<_>>()
+        );
         assert_eq!(op_class_6g(20), Some(131));
         assert_eq!(op_class_6g(40), Some(132));
         assert_eq!(op_class_6g(80), Some(133));
@@ -769,7 +785,10 @@ mod tests {
         assert!(is_psc(5) && is_psc(37) && is_psc(229) && !is_psc(1) && !is_psc(33));
         assert_eq!(default_candidates("6g", 20)[..3], [5, 21, 37]);
         // one PSC per block at 160 MHz (8 blocks below 225; 229 is alone)
-        assert_eq!(default_candidates("6g", 160), vec![5, 37, 69, 101, 133, 165, 197]);
+        assert_eq!(
+            default_candidates("6g", 160),
+            vec![5, 37, 69, 101, 133, 165, 197]
+        );
         assert_eq!(default_candidates("6g", 320), vec![5, 69, 133, 197]);
     }
 
@@ -777,7 +796,13 @@ mod tests {
     fn widths_per_band() {
         let d = ChanSettings::default();
         let w = |b: &str, v: i64| {
-            d.merged(b, &ChanInput { width: Some(v), ..Default::default() })
+            d.merged(
+                b,
+                &ChanInput {
+                    width: Some(v),
+                    ..Default::default()
+                },
+            )
         };
         assert!(w("5g", 160).is_ok());
         assert!(w("6g", 160).is_ok() && w("6g", 320).is_ok() && w("6g", 80).is_ok());
@@ -786,7 +811,14 @@ mod tests {
         assert!(e.contains("320") && e.contains("6 GHz"), "{e}");
         // 6 GHz channel list: channels 1..233 step 4; at 160 MHz only channels inside a block
         let l = |b: &str, width: i64, s: &str| {
-            d.merged(b, &ChanInput { width: Some(width), chanlist: Some(s.into()), ..Default::default() })
+            d.merged(
+                b,
+                &ChanInput {
+                    width: Some(width),
+                    chanlist: Some(s.into()),
+                    ..Default::default()
+                },
+            )
         };
         assert!(l("6g", 20, "5,37,229").is_ok());
         assert!(l("6g", 20, "3").is_err() && l("6g", 20, "237").is_err());
