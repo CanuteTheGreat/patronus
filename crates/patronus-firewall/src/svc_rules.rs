@@ -826,11 +826,26 @@ mod tests {
             f.contains("input ip saddr 203.0.113.9 ip daddr 198.51.100.2 meta l4proto 41 accept"),
             "{f}"
         );
-        assert!(f.contains("input ip saddr 203.0.113.20 meta l4proto 4 accept"), "{f}");
-        assert!(f.contains("input ip saddr 203.0.113.30 meta l4proto { 4, 41 } accept"), "{f}");
-        assert!(f.contains("input iifname \"tn-he\" meta l4proto { icmp, ipv6-icmp } accept"), "{f}");
-        assert!(!f.contains("203.0.113.40"), "disabled tunnels open nothing: {f}");
-        assert!(!f.contains("bad;x") && !f.contains("203.0.113.50") && !f.contains("not-an-ip"), "{f}");
+        assert!(
+            f.contains("input ip saddr 203.0.113.20 meta l4proto 4 accept"),
+            "{f}"
+        );
+        assert!(
+            f.contains("input ip saddr 203.0.113.30 meta l4proto { 4, 41 } accept"),
+            "{f}"
+        );
+        assert!(
+            f.contains("input iifname \"tn-he\" meta l4proto { icmp, ipv6-icmp } accept"),
+            "{f}"
+        );
+        assert!(
+            !f.contains("203.0.113.40"),
+            "disabled tunnels open nothing: {f}"
+        );
+        assert!(
+            !f.contains("bad;x") && !f.contains("203.0.113.50") && !f.contains("not-an-ip"),
+            "{f}"
+        );
     }
 
     #[tokio::test]

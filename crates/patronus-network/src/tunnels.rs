@@ -179,7 +179,53 @@ impl Svc for TunnelsSvc {
                 parse_tunnel(&merged)?;
             }
         }
-        svc::save_row(store, c, id, body).await
+        // renaming a tunnel carries its routes along
+        let old_name = match (coll, id) {
+            ("tunnels", Some(id)) => svc::raw_rows(store, c)
+                .await?
+                .into_iter()
+                .find(|r| r["id"].as_i64() == Some(id))
+                .map(|r| text(&r, "name")),
+            _ => None,
+        };
+        let saved = svc::save_row(store, c, id, body).await?;
+        if let (Some(old), Some(id)) = (old_name, id) {
+            let new = svc::raw_rows(store, c)
+                .await?
+                .into_iter()
+                .find(|r| r["id"].as_i64() == Some(id))
+                .map(|r| text(&r, "name"))
+                .unwrap_or_default();
+            if !new.is_empty() && new != old {
+                sqlx::query("UPDATE ip_tunnel_routes SET tunnel = ? WHERE tunnel = ?")
+                    .bind(&new)
+                    .bind(&old)
+                    .execute(store.pool()?)
+                    .await
+                    .map_err(|e| Error::Config(format!("rename tunnel routes: {e}")))?;
+            }
+        }
+        Ok(saved)
+    }
+
+    /// Deleting a tunnel deletes the routes that went over it.
+    async fn delete_row(&self, store: &ConfigStore, coll: &str, id: i64) -> Result<()> {
+        let c = svc::find_coll(&SPEC, coll)?;
+        if coll == "tunnels" {
+            if let Some(name) = svc::raw_rows(store, c)
+                .await?
+                .into_iter()
+                .find(|r| r["id"].as_i64() == Some(id))
+                .map(|r| text(&r, "name"))
+            {
+                sqlx::query("DELETE FROM ip_tunnel_routes WHERE tunnel = ?")
+                    .bind(name)
+                    .execute(store.pool()?)
+                    .await
+                    .map_err(|e| Error::Config(format!("delete tunnel routes: {e}")))?;
+            }
+        }
+        svc::delete_row(store, c, id).await
     }
 }
 
@@ -293,9 +339,11 @@ pub fn parse_tunnel(r: &serde_json::Map<String, Value>) -> Result<Tunnel> {
             KINDS.join(", ")
         )));
     }
-    let remote: Ipv4Addr = text(r, "remote")
-        .parse()
-        .map_err(|_| invalid(format!("tunnel {name}: remote endpoint must be an IPv4 address")))?;
+    let remote: Ipv4Addr = text(r, "remote").parse().map_err(|_| {
+        invalid(format!(
+            "tunnel {name}: remote endpoint must be an IPv4 address"
+        ))
+    })?;
     if !usable_endpoint(remote) {
         return Err(invalid(format!(
             "tunnel {name}: {remote} cannot be a remote endpoint"
@@ -305,7 +353,9 @@ pub fn parse_tunnel(r: &serde_json::Map<String, Value>) -> Result<Tunnel> {
         "" => None,
         s => {
             let l: Ipv4Addr = s.parse().map_err(|_| {
-                invalid(format!("tunnel {name}: local endpoint must be an IPv4 address"))
+                invalid(format!(
+                    "tunnel {name}: local endpoint must be an IPv4 address"
+                ))
             })?;
             if !usable_endpoint(l) {
                 return Err(invalid(format!(
@@ -343,7 +393,11 @@ pub fn parse_tunnel(r: &serde_json::Map<String, Value>) -> Result<Tunnel> {
     if !(576..=9000).contains(&mtu) {
         return Err(invalid(format!("tunnel {name}: MTU 576-9000")));
     }
-    if [&address, &address2].iter().any(|a| matches!(a, Some(a) if a.contains(':'))) && mtu < 1280 {
+    if [&address, &address2]
+        .iter()
+        .any(|a| matches!(a, Some(a) if a.contains(':')))
+        && mtu < 1280
+    {
         return Err(invalid(format!(
             "tunnel {name}: IPv6 needs an MTU of at least 1280"
         )));
@@ -397,8 +451,8 @@ fn parse_inner(
         }
         ("sit", ipnetwork::IpNetwork::V4(_)) => {
             return Err(invalid(format!(
-                "tunnel {name}: a 6in4 (sit) tunnel carries IPv6 only (use type ipip or gif for IPv4)"
-            )))
+            "tunnel {name}: a 6in4 (sit) tunnel carries IPv6 only (use type ipip or gif for IPv4)"
+        )))
         }
         _ => {}
     }
@@ -451,11 +505,12 @@ pub fn plan(
         for b in &live[i + 1..] {
             // the kernel keys a tunnel by (protocol family, local, remote);
             // gif (mode any) overlaps both of the others
-            let overlap = a.kernel().0 == b.kernel().0 && a.local == b.local && a.remote == b.remote
-                && (a.kind == b.kind || a.kind == "gif" || b.kind == "gif");
-            let any_overlap = a.remote == b.remote
+            let overlap = a.kernel().0 == b.kernel().0
                 && a.local == b.local
-                && (a.kind == "gif" || b.kind == "gif");
+                && a.remote == b.remote
+                && (a.kind == b.kind || a.kind == "gif" || b.kind == "gif");
+            let any_overlap =
+                a.remote == b.remote && a.local == b.local && (a.kind == "gif" || b.kind == "gif");
             if overlap || any_overlap {
                 return Err(invalid(format!(
                     "tunnels {} and {} have the same endpoints and overlapping types; the kernel cannot tell their packets apart",
@@ -468,7 +523,9 @@ pub fn plan(
         let t = text(r, "tunnel");
         let d = text(r, "destination");
         let Some(tun) = out.tunnels.iter().find(|x| x.name == t) else {
-            return Err(invalid(format!("route {d} refers to the unknown tunnel {t:?}")));
+            return Err(invalid(format!(
+                "route {d} refers to the unknown tunnel {t:?}"
+            )));
         };
         let n: ipnetwork::IpNetwork = d
             .parse()
@@ -629,8 +686,15 @@ fn addrs_of(dev: &str) -> Vec<String> {
 
 /// Routes of protocol [`ROUTE_PROTO`] (family flag `-4` / `-6`): (dst, dev).
 fn own_routes(fam: &str) -> Vec<(String, String)> {
-    let out = ip(&[fam, "-j", "route", "show", "proto", &ROUTE_PROTO.to_string()])
-        .unwrap_or_default();
+    let out = ip(&[
+        fam,
+        "-j",
+        "route",
+        "show",
+        "proto",
+        &ROUTE_PROTO.to_string(),
+    ])
+    .unwrap_or_default();
     let Ok(Value::Array(v)) = serde_json::from_str::<Value>(&out) else {
         return Vec::new();
     };
@@ -798,7 +862,9 @@ pub fn reconcile(want: &Plan, rep: &mut ApplyReport) -> Result<()> {
             }
             rep.applied(format!(
                 "created {dev} ({} {} -> {})",
-                t.kind, t.local.map(|l| l.to_string()).unwrap_or("any".into()), t.remote
+                t.kind,
+                t.local.map(|l| l.to_string()).unwrap_or("any".into()),
+                t.remote
             ));
         }
         let mtu = t.mtu.to_string();
@@ -841,7 +907,16 @@ pub fn reconcile(want: &Plan, rep: &mut ApplyReport) -> Result<()> {
                 continue;
             }
             if wr.get(&key).map(|(d, _)| d.as_str()) != Some(dev.as_str()) {
-                let _ = ip(&[fam, "route", "del", &dst, "dev", &dev, "proto", &ROUTE_PROTO.to_string()]);
+                let _ = ip(&[
+                    fam,
+                    "route",
+                    "del",
+                    &dst,
+                    "dev",
+                    &dev,
+                    "proto",
+                    &ROUTE_PROTO.to_string(),
+                ]);
                 rep.applied(format!("removed route {dst} dev {dev}"));
             }
         }
@@ -878,7 +953,10 @@ pub fn render(p: &Plan) -> String {
     let mut s = String::new();
     for t in p.tunnels.iter().filter(|t| t.enabled) {
         s.push_str(&format!("ip {}\n", t.create_args().join(" ")));
-        s.push_str(&format!("ip link set dev {} mtu {} alias {ALIAS} up\n", t.dev, t.mtu));
+        s.push_str(&format!(
+            "ip link set dev {} mtu {} alias {ALIAS} up\n",
+            t.dev, t.mtu
+        ));
         for a in t.addrs() {
             s.push_str(&format!("ip addr replace {a} dev {}\n", t.dev));
         }
@@ -1036,13 +1114,54 @@ mod tests {
         assert!(bad("mtu", "1000").contains("1280"));
         let mut r = sit();
         r.insert("kind".into(), "ipip".into());
-        assert!(parse_tunnel(&r).unwrap_err().to_string().contains("IPv4 only"));
+        assert!(parse_tunnel(&r)
+            .unwrap_err()
+            .to_string()
+            .contains("IPv4 only"));
         let mut r = sit();
         r.insert("address".into(), "".into());
         assert!(parse_tunnel(&r)
             .unwrap_err()
             .to_string()
             .contains("needs an inner address"));
+    }
+
+    #[test]
+    fn gif_carries_one_address_of_each_family() {
+        let mut r = sit();
+        r.insert("kind".into(), "gif".into());
+        r.insert("address".into(), "10.97.0.1/30".into());
+        r.insert("address2".into(), "2001:db8:97::1/64".into());
+        r.insert("default_route".into(), "0".into());
+        let t = parse_tunnel(&r).unwrap();
+        assert_eq!(t.addrs(), vec!["10.97.0.1/30", "2001:db8:97::1/64"]);
+        // the same family twice, or a second address without a first
+        r.insert("address2".into(), "10.97.1.1/30".into());
+        assert!(parse_tunnel(&r)
+            .unwrap_err()
+            .to_string()
+            .contains("one IPv4 and one IPv6"));
+        r.insert("address2".into(), "2001:db8:97::1/64".into());
+        r.insert("address".into(), "".into());
+        assert!(parse_tunnel(&r)
+            .unwrap_err()
+            .to_string()
+            .contains("needs the first"));
+        // only gif may carry two
+        let mut r = sit();
+        r.insert("kind".into(), "sit".into());
+        r.insert("address2".into(), "2001:db8:99::1/64".into());
+        assert!(parse_tunnel(&r)
+            .unwrap_err()
+            .to_string()
+            .contains("gif tunnels only"));
+        // the default route follows the first address's family
+        let mut r = sit();
+        r.insert("kind".into(), "gif".into());
+        r.insert("address".into(), "10.97.0.1/30".into());
+        r.insert("address2".into(), "2001:db8:97::1/64".into());
+        let p = plan(&[r], &[], true).unwrap();
+        assert!(wanted_routes(&p).contains_key(&("-4".to_string(), "default".to_string())));
     }
 
     #[test]
@@ -1078,13 +1197,13 @@ mod tests {
         assert!(plan(&[a.clone(), i], &[], true).is_err());
         // routes
         let ok = row(&[("tunnel", "he"), ("destination", "2001:db8:ffff::/48")]);
-        let p = plan(&[a.clone()], &[ok], true).unwrap();
+        let p = plan(std::slice::from_ref(&a), &[ok], true).unwrap();
         assert_eq!(
             p.routes,
             vec![("tn-he".to_string(), "2001:db8:ffff::/48".to_string())]
         );
         let v4 = row(&[("tunnel", "he"), ("destination", "10.5.0.0/16")]);
-        assert!(plan(&[a.clone()], &[v4], true).is_err());
+        assert!(plan(std::slice::from_ref(&a), &[v4], true).is_err());
         let ghost = row(&[("tunnel", "nope"), ("destination", "2001:db8::/32")]);
         assert!(plan(&[a], &[ghost], true).is_err());
     }
@@ -1093,7 +1212,10 @@ mod tests {
     fn wanted_routes_include_default_and_networks() {
         let mut a = sit();
         a.insert("name".into(), "he".into());
-        let routes = [row(&[("tunnel", "he"), ("destination", "2001:db8:ffff::5/48")])];
+        let routes = [row(&[
+            ("tunnel", "he"),
+            ("destination", "2001:db8:ffff::5/48"),
+        ])];
         let p = plan(&[a], &routes, true).unwrap();
         let w = wanted_routes(&p);
         assert_eq!(
@@ -1108,7 +1230,9 @@ mod tests {
     fn nft_script_clamps_only_tunnel_links() {
         let p = plan(&[sit()], &[], true).unwrap();
         let s = nft_script(&p);
-        assert!(s.contains("oifname { \"tn-he\" } tcp flags syn / syn,rst tcp option maxseg size set rt mtu"));
+        assert!(s.contains(
+            "oifname { \"tn-he\" } tcp flags syn / syn,rst tcp option maxseg size set rt mtu"
+        ));
         assert!(s.contains("iifname { \"tn-he\" }"));
         assert!(s.starts_with("add table inet patronus_tunnel\ndelete table"));
         let off = plan(&[sit()], &[], false).unwrap();
@@ -1182,7 +1306,12 @@ mod tests {
             .unwrap_err();
         assert!(e.to_string().contains("IPv4 only"), "{e}");
         let e = svc
-            .save_row(&s, "tunnels", None, &json!({"name": "Bad", "remote": "203.0.113.9"}))
+            .save_row(
+                &s,
+                "tunnels",
+                None,
+                &json!({"name": "Bad", "remote": "203.0.113.9"}),
+            )
             .await
             .unwrap_err();
         assert!(e.to_string().to_lowercase().contains("lowercase"), "{e}");
@@ -1204,9 +1333,34 @@ mod tests {
         assert!(r.contains("ip link add name tn-he type sit mode ip6ip remote 203.0.113.9"));
         assert!(r.contains("ip addr replace 2001:db8:1::2/64 dev tn-he"));
         assert!(r.contains("ip -6 route replace 2001:db8:ffff::/48 dev tn-he proto 248"));
+        // renaming carries the routes; deleting a tunnel deletes its routes
+        svc.save_row(&s, "tunnels", Some(id), &json!({"name": "he2"}))
+            .await
+            .unwrap();
+        let p = load(&s).await.unwrap();
+        assert_eq!(
+            p.routes,
+            vec![("tn-he2".to_string(), "2001:db8:ffff::/48".to_string())]
+        );
+        svc.delete_row(&s, "tunnels", id).await.unwrap();
+        let p = load(&s).await.unwrap();
+        assert!(p.tunnels.is_empty() && p.routes.is_empty());
+        svc.save_row(
+            &s,
+            "tunnels",
+            None,
+            &json!({"name": "he", "remote": "203.0.113.9"}),
+        )
+        .await
+        .unwrap();
         // a duplicate name is refused by the unique key
         let dup = svc
-            .save_row(&s, "tunnels", None, &json!({"name": "he", "remote": "203.0.113.10"}))
+            .save_row(
+                &s,
+                "tunnels",
+                None,
+                &json!({"name": "he", "remote": "203.0.113.10"}),
+            )
             .await;
         assert!(dup.is_err());
     }

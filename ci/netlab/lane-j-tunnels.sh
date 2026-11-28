@@ -51,6 +51,9 @@ far_up() {
 ifidx() { R cat "/sys/class/net/$1/ifindex"; }
 lk() { R ip -d link show "$1"; }
 has_link() { R ip link show "$1" >/dev/null 2>&1; }
+# nft prints protocol numbers by name (4 = ipencap, 41 = ipv6): match either spelling
+fw_rx() { R nft list ruleset | grep -E -- "$1" >/dev/null; }
+fw_proto() { fw_rx "ip saddr $1 .*meta l4proto $2 accept"; }
 rm_has() { local out; out=$(R nft list ruleset); grep -F -- "$1" <<<"$out" >/dev/null; }
 tid() { nl_api GET /svc/tunnels; nl_json "$NL_OUT" "[r['id'] for r in d['collections']['tunnels'] if r['name']=='$1'][0]"; }
 syn_mss() { # DEV: the MSS of the SYN the client's connection sends into DEV
@@ -106,7 +109,9 @@ lk tn-site | grep -E "mtu 1480" >/dev/null || nl_fail "tn-site has the wrong MTU
 R ip -4 addr show dev tn-site | grep "inet 10.99.0.1/30" >/dev/null || nl_fail "tn-site has no inner address"
 R ip link show tn-site | grep -E "<[^>]*UP" >/dev/null || nl_fail "tn-site is not up"
 nl_ok "tn-site: type ipip, $FAR_SIT <- $NL_RTR_WAN, ttl 64, mtu 1480, address 10.99.0.1/30, up, owned by Patronus"
-nl_assert_nft_has "ip saddr $FAR_SIT ip daddr $NL_RTR_WAN meta l4proto 4 accept" 'iifname "tn-site" meta l4proto { icmp, ipv6-icmp } accept'
+fw_proto "$FAR_SIT ip daddr $NL_RTR_WAN" '(4|ipencap)' || { R nft list ruleset; nl_fail "no accept for protocol 4 from $FAR_SIT"; }
+nl_assert_nft_has 'iifname "tn-site" meta l4proto { icmp, ipv6-icmp } accept'
+nl_ok "the firewall accepts protocol 4 from the remote endpoint to the local one, and ICMP on the link"
 # the far end pings first: a NEW inbound protocol-4 flow needs the firewall's rule
 INET ping -c2 -W2 10.99.0.1 >/dev/null || { R nft list ruleset | grep -i "l4proto"; nl_fail "the far end cannot ping the router through the tunnel"; }
 nl_ok "far end -> router: ping through the IPIP tunnel (inbound protocol 4 accepted from the remote)"
@@ -138,7 +143,7 @@ echo "=== 6in4 (sit) next to IPIP on the same endpoints"
 nl_api_ok "add the 6in4 tunnel (default IPv6 route)" POST /svc/tunnels/tunnels "{\"name\":\"he\",\"kind\":\"sit\",\"remote\":\"$FAR_SIT\",\"local\":\"$NL_RTR_WAN\",\"address\":\"2001:db8:6::1/64\",\"default_route\":true,\"metric\":512}"
 lk tn-he | grep -E "sit (ip6ip )?remote $FAR_SIT local $NL_RTR_WAN" >/dev/null || { lk tn-he; nl_fail "tn-he has the wrong type or endpoints"; }
 R ip -6 addr show dev tn-he | grep "inet6 2001:db8:6::1/64" >/dev/null || nl_fail "tn-he has no inner IPv6 address"
-nl_assert_nft_has "ip saddr $FAR_SIT ip daddr $NL_RTR_WAN meta l4proto 41 accept"
+fw_proto "$FAR_SIT ip daddr $NL_RTR_WAN" '(41|ipv6)' || { R nft list ruleset; nl_fail "no accept for protocol 41 from $FAR_SIT"; }
 INET ping -6 -c2 -W2 2001:db8:6::1 >/dev/null || nl_fail "the far end cannot ping the router over 6in4"
 nl_ok "far end -> router over 6in4 (protocol 41 accepted from the remote)"
 R ping -6 -c2 -W2 2001:db8:6::2 >/dev/null || nl_fail "the router cannot ping the far end over 6in4"
@@ -154,7 +159,7 @@ nl_ok "an overlapping duplicate is refused with 400, no link"
 echo "=== GIF-style: IPv4 and IPv6 on one link"
 nl_api_ok "add the GIF tunnel" POST /svc/tunnels/tunnels "{\"name\":\"gif1\",\"kind\":\"gif\",\"remote\":\"$FAR_GIF\",\"address\":\"10.97.0.1/30\",\"address2\":\"2001:db8:97::1/64\"}"
 lk tn-gif1 | grep -E "sit any remote $FAR_GIF" >/dev/null || { lk tn-gif1; nl_fail "tn-gif1 is not a generic (mode any) tunnel to the far end"; }
-nl_assert_nft_has "ip saddr $FAR_GIF meta l4proto { 4, 41 } accept"
+fw_proto "$FAR_GIF" '\{ (4|ipencap), (41|ipv6) \}' || { R nft list ruleset; nl_fail "no accept for protocols 4 and 41 from $FAR_GIF"; }
 R ping -c2 -W2 10.97.0.2 >/dev/null || nl_fail "IPv4 over the GIF link failed"
 R ping -6 -c2 -W2 2001:db8:97::2 >/dev/null || nl_fail "IPv6 over the GIF link failed"
 INET ping -c2 -W2 10.97.0.1 >/dev/null || nl_fail "far end -> router IPv4 over GIF failed"
@@ -219,7 +224,7 @@ HE=$(tid he)
 nl_api_ok "disable 6in4" PUT /svc/tunnels/tunnels/$HE '{"enabled":false}'
 has_link tn-he && nl_fail "tn-he still exists although disabled"
 R ip -6 route show default | grep tn-he >/dev/null && nl_fail "the default IPv6 route over the disabled tunnel is still there"
-rm_has "meta l4proto 41 accept" && nl_fail "protocol 41 is still accepted"
+fw_proto "$FAR_SIT ip daddr $NL_RTR_WAN" '(41|ipv6)' && nl_fail "protocol 41 is still accepted"
 R ping -c1 -W2 10.99.0.2 >/dev/null || nl_fail "disabling one tunnel broke another"
 nl_ok "disabled: link, default route and protocol-41 rule gone; the IPIP tunnel is unaffected"
 nl_api_ok "enable 6in4 again" PUT /svc/tunnels/tunnels/$HE '{"enabled":true}'
@@ -241,10 +246,12 @@ C ping -c2 -W2 10.77.0.1 >/dev/null || nl_fail "the route behind the far end is 
 [ "$(syn_mss tn-site)" = 1440 ] || nl_fail "MSS clamp missing after the reboot"
 nl_ok "after a reboot: three tunnels, addresses, routes, firewall rules and the MSS clamp are back from the store alone"
 
-echo "=== delete everything"
+echo "=== delete everything (a tunnel takes its routes with it)"
+# the reboot made fresh namespaces: put a foreign link back so the cleanup proves it is left alone
+R ip link add foo0 type ipip remote 192.0.2.9 local "$NL_RTR_WAN"
 for n in site he gif1; do nl_api_ok "delete $n" DELETE /svc/tunnels/tunnels/$(tid $n); done
 nl_api GET /svc/tunnels
-for r in $(nl_json "$NL_OUT" "' '.join(str(x['id']) for x in d['collections']['routes'])"); do nl_api_ok "delete route $r" DELETE /svc/tunnels/routes/$r; done
+[ "$(nl_json "$NL_OUT" "len(d['collections']['routes'])")" = 0 ] || nl_fail "deleting a tunnel left its routes in the configuration"
 [ -z "$(R ip -br link show | grep '^tn-' || true)" ] || nl_fail "tn-* links left after deleting every tunnel"
 has_link foo0 || nl_fail "the foreign link went too"
 R nft list table inet patronus_tunnel >/dev/null 2>&1 && nl_fail "tunnel table left"
