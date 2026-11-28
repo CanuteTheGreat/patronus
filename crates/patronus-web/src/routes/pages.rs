@@ -210,7 +210,6 @@ pub async fn dashboard(State(state): State<AppState>, user: crate::auth::AuthUse
         iface_rows,
         hidden_stubs,
         ui,
-        ap: crate::routes::api::wifi::role() == crate::routes::api::setup::DeviceRole::Ap,
         cpu_level: cpu_level.class(),
         mem_level: mem_level.class(),
         disk_level: disk_level.class(),

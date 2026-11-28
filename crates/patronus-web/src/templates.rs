@@ -31,8 +31,6 @@ pub struct DashboardTemplate {
     pub hidden_stubs: usize,
     /// Display settings (usage thresholds, live refresh interval).
     pub ui: patronus_config::uiprefs::UiPrefs,
-    /// This unit is an access point (`PATRONUS_DEVICE_ROLE=ap`): router tiles are left out.
-    pub ap: bool,
     /// ui-kit tone class of CPU / memory / disk usage against the thresholds ("", "warn", "crit").
     pub cpu_level: &'static str,
     pub mem_level: &'static str,
@@ -849,7 +847,6 @@ mod tests {
             iface_rows: vec![],
             hidden_stubs: 0,
             ui: patronus_config::uiprefs::UiPrefs::default(),
-            ap: false,
             cpu_level: "",
             mem_level: "",
             disk_level: "",
@@ -912,8 +909,11 @@ mod tests {
         );
         t.dhcp_leases = Some(0);
         assert!(t.render().unwrap().contains(r#"id="dhcp-leases">0</div>"#));
-        // an access point leaves addresses to the main router: no router tiles
-        t.ap = true;
+        // an access point leaves addresses to the main router: no router widgets in its layout
+        t.widgets = crate::dashboard::all_on(crate::dashboard::Viewer {
+            role: crate::auth::UserRole::Admin,
+            access_point: true,
+        });
         let ap = t.render().unwrap();
         assert!(
             !ap.contains(r#"id="dhcp-leases""#)
@@ -1179,8 +1179,20 @@ mod tests {
     fn templates_use_pat_notice_not_alert() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
         let mut bad = Vec::new();
-        for e in std::fs::read_dir(&dir).unwrap().flatten() {
-            let p = e.path();
+        // every template, widgets/ and other subdirectories included
+        let mut files = Vec::new();
+        let mut todo = vec![dir.clone()];
+        while let Some(d) = todo.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    todo.push(p);
+                } else {
+                    files.push(p);
+                }
+            }
+        }
+        for p in files {
             let text = std::fs::read_to_string(&p).unwrap();
             for (i, line) in text.lines().enumerate() {
                 if line.trim_start().starts_with("//") {
