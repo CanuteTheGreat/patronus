@@ -61,7 +61,6 @@ REQUIRED_USE="
 	certificates? ( || ( acme certbot ) )
 	wireless? ( || ( hostapd iwd ) )
 	wifi-ap? ( segmentation )
-	wifi7? ( wifi-ap )
 	squid? ( !tinyproxy )
 	tinyproxy? ( !squid )
 	geoip2? ( !geoip )
@@ -131,7 +130,7 @@ RDEPEND="
 	wifi-ap? ( net-wireless/hostapd net-wireless/iw )
 	# Wi-Fi 7 (802.11be) and multi-link need hostapd 2.11+ built with CONFIG_IEEE80211BE (Gentoo builds it so);
 	# without it Patronus probes the installed hostapd and runs Wi-Fi 7 settings as Wi-Fi 6 (docs/WIFI-MODERN.md)
-	wifi7? ( >=net-wireless/hostapd-2.11 )
+	wifi-ap? ( wifi7? ( >=net-wireless/hostapd-2.11 ) )
 	wifi-client? ( net-wireless/wpa_supplicant net-wireless/iw )
 	qos? ( sys-apps/iproute2 )
 	tc? ( sys-apps/iproute2 )

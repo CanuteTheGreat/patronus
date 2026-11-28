@@ -71,7 +71,7 @@ configuration with the warnings as comments.
 ## Gentoo packaging
 
 `net-wireless/hostapd-2.11` (stable on amd64/arm64) and `2.12` build `CONFIG_IEEE80211AX` and `CONFIG_IEEE80211BE`.
-Wi-Fi 7 and multi-link need that floor: `USE=wifi7` (default on) pulls `>=net-wireless/hostapd-2.11`; without it any
+Wi-Fi 7 and multi-link need that floor: `USE=wifi7` (default on; with USE=wifi-ap) pulls `>=net-wireless/hostapd-2.11`; without it any
 hostapd works and Wi-Fi 7 settings run as Wi-Fi 6 with the warning above. Debian and Ubuntu build hostapd without
 `CONFIG_IEEE80211BE` (Ubuntu 25.10's 2.11 included), Debian trixie ships 2.10.
 
