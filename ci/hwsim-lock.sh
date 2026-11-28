@@ -44,23 +44,27 @@ HWSIM_LOADED=
 hwsim_module_loaded() { grep '^mac80211_hwsim ' "${HWSIM_PROCROOT:-/proc}/modules" >/dev/null 2>&1; }
 # The probe runs in the HOST's pid+net namespaces (a throw-away container), because a job container has its own sysfs.
 # Live = any of: use count != 0; a radio (platform device hwsimN) that the host namespace does not see any more (it was
-# moved into a container's namespace: that container is using it); a radio's netdev with carrier (an unattended wlan0 that the host merely set UP is NOT live); a hostapd/wpa_supplicant/
-# iwd/ap-steer process in any pid namespace. Prints the reason and exits 1 when live, exits 0 when idle.
+# moved into a container's namespace: that container is using it); a radio's netdev with carrier (an unattended wlan0 that the host merely set UP is NOT live); a hostapd/ap-steer process, or a
+# wpa_supplicant/iwd whose command line names a radio's netdev, in any pid namespace (a host's own wpa_supplicant that
+# manages real Wi-Fi is not live). Prints the reason and exits 1 when live, exits 0 when idle.
 HWSIM_PROBE_SH='
 P=${HWSIM_PROCROOT:-/proc}; S=${HWSIM_SYSROOT:-/sys}
 rc=$(awk '"'"'$1=="mac80211_hwsim"{print $3}'"'"' "$P/modules" 2>/dev/null)
 [ -n "$rc" ] && [ "$rc" != 0 ] && { echo "module use count $rc"; exit 1; }
 nr=0; for d in "$S"/bus/platform/drivers/mac80211_hwsim/hwsim[0-9]*; do [ -e "$d" ] && nr=$((nr+1)); done
 nv=0
-for p in "$S"/class/ieee80211/*; do [ -e "$p" ] || continue
+NAMES=; for p in "$S"/class/ieee80211/*; do [ -e "$p" ] || continue
   case $(readlink -f "$p/device" 2>/dev/null) in *hwsim*) nv=$((nv+1));; esac
-  for n in "$p"/device/net/*; do [ -d "$n" ] || continue
+  for n in "$p"/device/net/*; do [ -d "$n" ] || continue; NAMES="$NAMES ${n##*/}"
     [ "$(cat "$n/carrier" 2>/dev/null)" = 1 ] && { echo "radio netdev ${n##*/} has carrier (an AP is beaconing or a station is associated)"; exit 1; }
   done
 done
 [ "$nv" -lt "$nr" ] && { echo "$((nr-nv)) of $nr radios are in another network namespace (in use)"; exit 1; }
-for c in "$P"/[0-9]*/comm; do [ -r "$c" ] || continue
-  case $(cat "$c" 2>/dev/null) in hostapd|wpa_supplicant|iwd|ap-steer) echo "$(cat "$c") is running (pid ${c%/comm})"; exit 1;; esac
+for c in "$P"/[0-9]*/comm; do [ -r "$c" ] || continue; d=${c%/comm}; k=$(cat "$c" 2>/dev/null)
+  case $k in
+    hostapd|ap-steer) echo "$k is running (pid ${d##*/})"; exit 1;;
+    wpa_supplicant|iwd) for n in $NAMES; do tr "\\0" " " < "$d/cmdline" 2>/dev/null | grep -F -e "$n" >/dev/null && { echo "$k (pid ${d##*/}) is bound to $n"; exit 1; }; done;;
+  esac
 done
 exit 0'
 # hwsim_module_busy: 0 (and the reason on stdout) when something may still be using the module, 1 when it is provably idle.

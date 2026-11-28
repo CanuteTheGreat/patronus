@@ -44,7 +44,8 @@ mk 4 3 0; t "one radio moved into another namespace -> refused" refuse
 mk 3 3 0; echo 1 > "$W/s/devices/hwsim1/net/wlan1/carrier"; t "a radio netdev has carrier -> refused" refuse
 mk 3 3 0; t "radios merely set UP by the host (no carrier) -> idle, unloaded" unload
 mk 3 3 0; mkdir -p "$W/p/4242"; echo hostapd > "$W/p/4242/comm"; t "hostapd running -> refused" refuse
-mk 3 3 0; mkdir -p "$W/p/4243"; echo wpa_supplicant > "$W/p/4243/comm"; t "wpa_supplicant running -> refused" refuse
+mk 3 3 0; mkdir -p "$W/p/4243"; echo wpa_supplicant > "$W/p/4243/comm"; printf 'wpa_supplicant\0-B\0-iwlan1\0' > "$W/p/4243/cmdline"; t "wpa_supplicant bound to a radio's netdev -> refused" refuse
+mk 3 3 0; mkdir -p "$W/p/4245"; echo wpa_supplicant > "$W/p/4245/comm"; printf 'wpa_supplicant\0-u\0-s\0' > "$W/p/4245/cmdline"; t "the host's own dbus wpa_supplicant (no radio named) -> idle, unloaded" unload
 mk 3 3 0; mkdir -p "$W/p/4244"; echo bash > "$W/p/4244/comm"; t "unrelated process -> still idle, unloaded" unload
 mk 3 3 0; FAKE_RUNNING=1 t "a running hwsim test container -> refused" refuse
 mk 3 3 0; FAKE_HOLDER=deadbeef0001 FAKE_HOLDER_ALIVE=1 t "loader's job container still alive -> refused" refuse
