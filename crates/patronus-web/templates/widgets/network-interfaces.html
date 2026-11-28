@@ -3,7 +3,7 @@
     {% if iface_rows.is_empty() %}
     <div class="ui-grid-state">No network interfaces found.</div>
     {% else %}
-    <div class="ui-grid-wrap" style="border:0;border-radius:0">
+    <div class="ui-grid-wrap" style="border:0;border-radius:0" role="region" tabindex="0" aria-label="Network interfaces (scrolls sideways on a narrow screen)">
         <table class="ui-grid" data-ui-grid="dash-ifaces">
             <thead><tr><th data-sort>Interface</th><th data-sort>State</th><th>Addresses</th><th class="num" data-col="rate">Rate &darr; / &uarr;</th><th class="num" data-sort data-type="num">Received</th><th class="num" data-sort data-type="num">Sent</th></tr></thead>
             <tbody>

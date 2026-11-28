@@ -148,8 +148,8 @@ pub async fn dashboard(State(state): State<AppState>, user: crate::auth::AuthUse
     let (layout, customized) = crate::routes::api::dashboard::resolved(&state, &user.session).await;
     let drawn = |id: &str| layout.widgets.iter().any(|w| w.id == id && w.on);
     // Live rates over a short window (same sampler the Monitoring page uses), read once for the
-    // Interfaces table and the Traffic widget; skipped when neither is drawn.
-    let stats = if drawn("interfaces") || drawn("traffic") {
+    // Network interfaces table and the Traffic widget; skipped when neither is drawn.
+    let stats = if drawn("network-interfaces") || drawn("traffic") {
         let sample = host::sample(std::time::Duration::from_millis(300)).await;
         state.monitoring.interface_stats_from(&sample)
     } else {
@@ -159,10 +159,12 @@ pub async fn dashboard(State(state): State<AppState>, user: crate::auth::AuthUse
         .iter()
         .map(|s| (s.name.clone(), format!("{} / {}", s.rx_rate, s.tx_rate)))
         .collect();
+    let (iface_rows, hidden_stubs) = dash_iface_rows(&interfaces, &roles, &rates);
     let traffic: Vec<crate::templates::DashTraffic> = if drawn("traffic") {
         stats
             .into_iter()
-            .filter(|s| s.name != "lo")
+            // the same devices as the interface rows (no loopback, no idle kernel placeholders)
+            .filter(|s| iface_rows.iter().any(|r| r.name == s.name))
             .map(|s| crate::templates::DashTraffic {
                 name: s.name,
                 rx: s.rx_rate,
@@ -172,7 +174,6 @@ pub async fn dashboard(State(state): State<AppState>, user: crate::auth::AuthUse
     } else {
         vec![]
     };
-    let (iface_rows, hidden_stubs) = dash_iface_rows(&interfaces, &roles, &rates);
     let (mut widgets, hidden_widgets) = crate::dashboard::split(&layout);
     // A tile without data draws nothing (no DHCP server, no interface rates).
     widgets.retain(|w| match w.id {

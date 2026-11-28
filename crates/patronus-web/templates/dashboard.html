@@ -9,7 +9,10 @@
     .dash-bar [hidden], .dash-hidden[hidden] { display: none !important; }
     .dash-edit-tools { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
     .dash-grid { align-items: stretch; }
-    .widget { position: relative; min-width: 0; }
+    .widget { position: relative; min-width: 0; display: flex; flex-direction: column; }
+    /* tiles of one row share the row height */
+    .widget > .widget-body { flex: 1; display: flex; flex-direction: column; }
+    .widget > .widget-body > * { flex: 1; }
     .widget.widget-wide { grid-column: 1 / -1; }
     .widget > .widget-body > .stat-card { height: 100%; box-sizing: border-box; }
     .widget > .widget-body > .ui-panel { margin-bottom: 0; }
@@ -36,6 +39,7 @@
     .stat-card h2 a { margin-left: auto; }
     .stat-card h2 a:hover, .ui-panel-head a:hover { text-decoration: underline; }
     .iface-role { margin-right: 4px; }
+    .nw { white-space: nowrap; }
     .svc-list { display: flex; flex-wrap: wrap; gap: 6px; }
 </style>
 {% endblock %}
