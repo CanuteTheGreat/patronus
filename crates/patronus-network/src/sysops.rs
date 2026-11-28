@@ -270,13 +270,33 @@ fi; \
 if [ \"$(awk '/^MemTotal:/{print int($2/1048576)}' /proc/meminfo)\" -lt 3 ]; then \
 export MAKEOPTS=-j1 EMERGE_DEFAULT_OPTS=\"$EMERGE_DEFAULT_OPTS --jobs=1\"; fi; ";
 
+/// OpenZFS 2.3 -> 2.4, run once before a full update. Since 2.4 Gentoo builds the kernel module in
+/// sys-fs/zfs itself (USE=modules) and sys-fs/zfs blocks the retired sys-fs/zfs-kmod. Installs made with
+/// 2.3 carry the image's /etc/portage/package.mask/zfs (it kept the 2.3 zfs/zfs-kmod pair together) and
+/// sys-fs/zfs-kmod in the world file; with either one left, `emerge @world` silently skips the ZFS update
+/// forever. The unowned pair mask (nothing but those two lines) is moved aside and zfs-kmod is deselected
+/// once the tree offers sys-fs/zfs >= 2.4; the update then replaces zfs-kmod. Pools are never upgraded.
+/// Paths can be redirected for tests (PATRONUS_PORTAGE_ETC, PATRONUS_WORLD, PATRONUS_MIGRATED).
+const ZFS24_MIGRATE: &str = r#"pe=${PATRONUS_PORTAGE_ETC:-/etc/portage}; pw=${PATRONUS_WORLD:-/var/lib/portage/world}; zm=$pe/package.mask/zfs
+if [ -f "$zm" ] && ! qfile -q "$zm" >/dev/null 2>&1 && [ -z "$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' -e '^>=sys-fs/zfs-2\.4$' -e '^>=sys-fs/zfs-kmod-2\.4$' "$zm")" ]; then
+  md=${PATRONUS_MIGRATED:-/var/lib/patronus/migrated}; mkdir -p "$md" && mv "$zm" "$md/package.mask.zfs-$(date +%Y%m%d%H%M%S)" && echo "patronus-update: moved the OpenZFS 2.3 pair mask $zm aside"
+fi
+if grep -qx 'sys-fs/zfs-kmod' "$pw" 2>/dev/null; then
+  case "$(portageq best_visible / sys-fs/zfs 2>/dev/null)" in
+    sys-fs/zfs-2.[4-9]*|sys-fs/zfs-2.[1-9][0-9]*|sys-fs/zfs-[3-9]*) emerge --deselect sys-fs/zfs-kmod && echo 'patronus-update: deselected the retired sys-fs/zfs-kmod (the module is part of sys-fs/zfs since 2.4)' ;;
+  esac
+fi
+"#;
+
 fn apply_script(scope: &str) -> String {
-    let emerge = match scope {
-        "patronus" => format!("emerge --oneshot --update --quiet-build {PATRONUS_ATOM}"),
-        _ => "emerge --update --changed-use --newuse --deep --with-bdeps=y --quiet-build @world"
-            .to_string(),
-    };
-    format!("{BOOT_GUARD}{emerge}")
+    match scope {
+        "patronus" => format!(
+            "{BOOT_GUARD}emerge --oneshot --update --quiet-build {PATRONUS_ATOM}"
+        ),
+        _ => format!(
+            "{BOOT_GUARD}{ZFS24_MIGRATE}emerge --update --changed-use --newuse --deep --with-bdeps=y --quiet-build @world"
+        ),
+    }
 }
 
 /// The result of the last finished check job (what is pending).
@@ -909,6 +929,65 @@ Total: 4 packages (1 upgrade, 1 new, 1 reinstall), Size of downloads: 120 KiB\n"
         let ok = run(0);
         assert!(ok.status.success());
         assert!(String::from_utf8_lossy(&ok.stdout).contains("EMERGE-RAN"));
+    }
+
+    #[test]
+    fn world_update_retires_zfs_kmod_and_the_old_pair_mask_first() {
+        // stubbed qfile/portageq/emerge/blkid: an OpenZFS 2.3 install (image pair mask, zfs-kmod in world), tree offers 2.4.4
+        let d = tempfile::tempdir().unwrap();
+        let bin = d.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let w = |n: &str, body: &str| {
+            use std::os::unix::fs::PermissionsExt;
+            let p = bin.join(n);
+            std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        w("blkid", "exit 1");
+        w("qfile", "exit 1");
+        w("emerge", "echo \"EMERGE:$*\"");
+        let etc = d.path().join("etc");
+        std::fs::create_dir_all(etc.join("package.mask")).unwrap();
+        let mask = etc.join("package.mask/zfs");
+        let world = d.path().join("world");
+        let run = |best: &str| {
+            w("portageq", &format!("echo {best}"));
+            let o = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(apply_script("world"))
+                .env(
+                    "PATH",
+                    format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+                )
+                .env("PATRONUS_PORTAGE_ETC", &etc)
+                .env("PATRONUS_WORLD", &world)
+                .env("PATRONUS_MIGRATED", d.path().join("migrated"))
+                .output()
+                .unwrap();
+            assert!(o.status.success());
+            String::from_utf8_lossy(&o.stdout).into_owned()
+        };
+        let pair =
+            "# keep zfs and zfs-kmod a matching pair\n>=sys-fs/zfs-2.4\n>=sys-fs/zfs-kmod-2.4\n";
+        std::fs::write(&mask, pair).unwrap();
+        std::fs::write(&world, "sys-fs/zfs\nsys-fs/zfs-kmod\n").unwrap();
+        let out = run("sys-fs/zfs-2.4.4");
+        assert!(!mask.exists(), "{out}");
+        let desel = out.find("EMERGE:--deselect sys-fs/zfs-kmod").expect(&out);
+        let upd = out.find("EMERGE:--update").expect(&out);
+        assert!(desel < upd, "{out}");
+        assert_eq!(
+            std::fs::read_dir(d.path().join("migrated"))
+                .unwrap()
+                .count(),
+            1
+        );
+        // a mask that carries anything else is the administrator's: kept; a 2.3-only tree: no deselect
+        std::fs::write(&mask, format!("{pair}>=sys-fs/zfs-2.5\n")).unwrap();
+        let out = run("sys-fs/zfs-2.3.9");
+        assert!(mask.exists() && !out.contains("--deselect"), "{out}");
+        // the Patronus-only update never touches the world file
+        assert!(!apply_script("patronus").contains("--deselect"));
     }
 
     #[test]
